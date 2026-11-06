@@ -60,9 +60,11 @@ Based on official MeshCentral source (`pluginHandler.js`, `webserver.js`, `db.js
   `selectedDevices` list) — used here for the panel-open button. Selected node ids arrive on the
   **top level** as `command.selectedDevices` (NOT `command.src`); `uiCustomEvent` is called on
   every plugin for every Custom UI event.
-- **Browser functions:** listed in `obj.exports`, serialized into `/pluginHandler.js`; server pushes
-  `{action:'plugin', plugin:'inventoryscanner', method:'inventoryCsv'|'openAssessment', ...}` and the front-end
-  calls `obj.<method>(server, message)`.
+- **Browser functions:** listed in `obj.exports`; pluginHandler stringifies them via `Function.toString()` into
+  a standalone browser namespace (`obj.<plugin>.<method>`) whose root has NO server properties - exported
+  function bodies must therefore never reference `obj.*` (embed literals like the shortName in URLs!).
+  Server pushes `{action:'plugin', plugin:'inventoryscanner', method:'inventoryCsv'|'openAssessment', ...}`
+  and the front-end calls the exported function. `tools/test-plugin.js` guards this invariant.
 - **DB ids:** node `_id` = `node/<domain>/<id>`; sysinfo = `'si' + node._id` (doc under `rec.doc`);
   mesh `_id` = `mesh/<domain>/<name>`.
 - **OS fields:** there is **no** `node.os`/`node.platform`. Use `node.osdesc` (display string) and

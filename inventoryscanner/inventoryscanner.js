@@ -3331,7 +3331,10 @@ obj.loadNvdFromAllFiles = function () {
     obj.openAssessment = function (server, message) {
         try {
             if (typeof window === 'undefined') return;
-            window.open('/pluginadmin.ashx?pin=' + obj.shortName + '&action=show', '_blank');
+            // IMPORTANT: exported functions are serialized via Function.toString() into
+            // the browser's pluginHandler namespace, which has no server-scope properties -
+            // never reference them here, embed literals instead.
+            window.open('/pluginadmin.ashx?pin=inventoryscanner&action=show', '_blank');
         } catch (e) { }
     };
 

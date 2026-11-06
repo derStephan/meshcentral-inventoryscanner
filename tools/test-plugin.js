@@ -429,6 +429,14 @@ steps.push(function (next) {
     next();
 });
 
+// ---- exported browser functions are namespace-serialized: no server-scope refs ----
+steps.push(function (next) {
+    check('exports list matches function definitions', Array.isArray(obj.exports) && obj.exports.length === 2, obj.exports);
+    var bad = obj.exports.filter(function (name) { return typeof obj[name] === 'function' && /\bobj\./.test(obj[name].toString()); });
+    check('browser exports reference no server obj.*', bad.length === 0, bad);
+    next();
+});
+
 (function run(i) {
     if (i >= steps.length) {
         console.log(failures === 0 ? '\ntest-plugin: ALL PASSED' : '\ntest-plugin: ' + failures + ' FAILURE(S)');
