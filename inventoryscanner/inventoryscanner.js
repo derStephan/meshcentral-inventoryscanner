@@ -155,9 +155,71 @@ module.exports.inventoryscanner = function (parent) {
         obj.loadPluginSettings();
         obj.installRouteHook();
         obj.ensureNvdData();
+        // Self-heal: check if NVD timer is stale (> 1 week since last successful update)
+        obj.checkAndRepairNvdTimer();
         obj.scheduleUpdate();
         obj.scheduleScans();
         obj.scheduleInventoryCollection();
+    };
+
+    /**
+     * @brief Self-heal for NVD update timer. If last successful update is older than
+     * updateHours (or missing), re-arm the scheduler and notify admins.
+     */
+    obj.checkAndRepairNvdTimer = function () {
+        try {
+            var cfg = obj.effectiveSectionConfig('vulnerabilityScanner');
+            var hours = (cfg && typeof cfg.updateHours === 'number' && cfg.updateHours >= 1) ? cfg.updateHours : 168;
+            var maxAge = hours * 3600 * 1000;
+            var stale = false;
+            if (!obj.lastUpdate) {
+                obj.nvdLog('NVD timer self-heal: no lastUpdate recorded, scheduling update');
+                stale = true;
+            } else {
+                var age = Date.now() - Date.parse(obj.lastUpdate);
+                if (isNaN(age) || age > maxAge) {
+                    obj.nvdLog('NVD timer self-heal: lastUpdate is ' + Math.round(age / 3600000) + 'h old (max ' + hours + 'h), scheduling update');
+                    stale = true;
+                }
+            }
+            if (stale) {
+                obj.scheduleUpdate();
+                // Notify admins if data is older than 1 week (7 days)
+                var weekMs = 7 * 24 * 3600 * 1000;
+                if (!obj.lastUpdate || (Date.now() - Date.parse(obj.lastUpdate) > weekMs)) {
+                    obj.notifyAdminsNvdStale(obj.lastUpdate, hours);
+                }
+            }
+        } catch (e) {
+            obj.debug('plugin:inventory_scanner', 'NVD timer self-heal error:', e.message);
+        }
+    };
+
+    /**
+     * @brief Notify admins that NVD database is stale.
+     * @param {string|null} lastUpdate - The lastUpdate timestamp or null.
+     * @param {number} updateHours - Configured update interval in hours.
+     */
+    obj.notifyAdminsNvdStale = function (lastUpdate, updateHours) {
+        var msg = 'NVD vulnerability database is stale';
+        if (lastUpdate) {
+            var ageHours = Math.round((Date.now() - Date.parse(lastUpdate)) / 3600000);
+            msg += ' (last successful update ' + ageHours + ' hours ago, configured interval ' + updateHours + 'h)';
+        } else {
+            msg += ' (no successful update recorded)';
+        }
+        msg += '. Scheduled update has been re-triggered.';
+        var event = {
+            etype: 'server',
+            action: 'msg',
+            type: 'notify',
+            id: Math.random(),
+            tag: 'ServerNotify',
+            value: msg,
+            title: 'NVD Database Stale'
+        };
+        try { obj.meshServer.DispatchEvent(['*'], obj, event); }
+        catch (e) { obj.debug('plugin:inventory_scanner', 'Error dispatching NVD stale notification:', e.message); }
     };
 
     // ---- Custom CPE mapping (admin-editable) ----
@@ -392,9 +454,16 @@ module.exports.inventoryscanner = function (parent) {
             if (cfg && (typeof cfg.updateHours === 'number') && (cfg.updateHours >= 1)) { hours = cfg.updateHours; }
         } catch (e) { }
         obj.debug('plugin:inventory_scanner', 'Next NVD update scheduled in', hours, 'hours');
+        var gen = obj.timerGen;
         obj.longTimeout(function () {
-            obj.downloadNvdDatabase(true); // refresh current year's feed on scheduled runs
-            obj.scheduleUpdate();
+            if (gen !== obj.timerGen) { return; }
+            obj.downloadNvdDatabase(true, function (err) {
+                if (gen !== obj.timerGen) { return; }
+                if (!err) {
+                    obj.updateTimerArmed = true;
+                }
+                obj.scheduleUpdate();
+            });
         }, hours * 3600 * 1000);
     };
 
@@ -1123,12 +1192,13 @@ module.exports.inventoryscanner = function (parent) {
         });
     };
 
-    /**
+/**
      * @brief Download the NVD feeds for all years from FIRST_YEAR to the current year.
      * @param {boolean} refreshCurrentYear - If true, re-download the current year's feed
      * even when a file already exists (used by the scheduled update).
+     * @param {function} [callback] - Called with (err) when all downloads complete.
      */
-    obj.downloadNvdDatabase = function (refreshCurrentYear) {
+    obj.downloadNvdDatabase = function (refreshCurrentYear, callback) {
         var current = obj.currentYear();
         var years = [];
         for (var y = obj.FIRST_YEAR; y <= current; y++) { years.push(y); }
@@ -1136,23 +1206,26 @@ module.exports.inventoryscanner = function (parent) {
         // Load the years sequentially (one after another) instead of all at once:
         // NVD rate-limits the many simultaneous large downloads, which previously
         // left only the tiny .meta files behind. A short pause between years and a
-        // per-year retry make the download robust.
+        // per-year retry with exponential backoff make the download robust.
         var pending = years.filter(function (year) {
             var jsonPath = path.join(obj.nvdDataPath, 'nvdcve-2.0-' + year + '.json');
             var isCurrent = (year === current);
             return !(fs.existsSync(jsonPath) && !(refreshCurrentYear && isCurrent));
         });
-        if (pending.length === 0) { obj.loadNvdFromAllFiles(); return; }
+        if (pending.length === 0) { obj.loadNvdFromAllFiles(); if (callback) callback(null); return; }
 
         var failed = 0;
         var idx = 0;
 
         var next = function () {
             if (idx >= pending.length) {
-                obj.lastUpdate = new Date().toISOString();
-                obj.loadNvdFromAllFiles();
+                if (failed === 0) {
+                    obj.lastUpdate = new Date().toISOString();
+                    obj.loadNvdFromAllFiles();
+                }
                 obj.nvdLog('NVD download run finished. Failures: ' + failed + ' of ' + pending.length + '. Years attempted: ' + pending.join(', '));
                 obj.debug('plugin:inventory_scanner', 'NVD download finished, failures:', failed, 'of', pending.length);
+                if (callback) callback(failed === 0 ? null : new Error('Some downloads failed'));
                 return;
             }
             var year = pending[idx];
@@ -1163,15 +1236,17 @@ module.exports.inventoryscanner = function (parent) {
                 obj.downloadYear(year, function (err) {
                     if (err) {
                         obj.debug('plugin:inventory_scanner', 'NVD', year, 'download failed (attempt', attempt + '):', err.message);
+                        // Exponential backoff: 5s, 30s, 2min, then give up
+                        var delay = attempt === 1 ? 5000 : (attempt === 2 ? 30000 : 120000);
                         if (attempt < 3) {
-                            obj.nvdLog('NVD ' + year + ': download failed (' + err.message + '), retrying in 5s');
-                            setTimeout(tryDownload, 5000); // retry after a pause
+                            obj.nvdLog('NVD ' + year + ': download failed (' + err.message + '), retrying in ' + (delay / 1000) + 's');
+                            setTimeout(tryDownload, delay);
                             return;
                         }
                         failed++;
                         idx++;
                         obj.nvdLog('NVD ' + year + ': giving up after ' + attempt + ' attempts');
-                        setTimeout(next, 2000); // brief pause before the next year
+                        setTimeout(next, 2000);
                         return;
                     }
                     idx++;
@@ -1180,7 +1255,7 @@ module.exports.inventoryscanner = function (parent) {
                 });
             };
             tryDownload();
-};
+        };
         next();
     };
 

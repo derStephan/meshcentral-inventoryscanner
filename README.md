@@ -131,6 +131,10 @@ On a configurable interval (e.g. monthly) the server re-scans all groups, stores
    `"selection"` field is always enabled - the "Vulnerability Assessment" button above opens the
    panel in a new tab at any time.
 
+   > Brace watch: `customui` must be a property **inside** the `"": { ... }` domain object - at the
+   > same level as `title` or `certUrl`. If a `}` closes the domain before `customui`, it becomes a
+   > sibling of the domain, stays valid JSON, and MeshCentral silently ignores it (no buttons, no error).
+
    That is it for `config.json` - no other manual edits are ever needed. Scanner and collection
    settings are managed in the panel’s [Settings tab](#configuration) (effective immediately,
    no restart), and the file keys there are optional fallbacks only.
