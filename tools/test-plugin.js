@@ -76,7 +76,9 @@ function mockRes(done) {
         type: function () { return this; },
         json: function (d) { done(d); },
         sendStatus: function (c) { done({ _status: c }); },
-        render: function (v, d) { done({ _view: v, _data: d }); }
+        render: function (v, d) { done({ _view: v, _data: d }); },
+        setHeader: function (k, v) { if (!this._headers) { this._headers = {}; } this._headers[k] = v; },
+        send: function (body) { done({ _body: body, _headers: this._headers }); }
     };
 }
 const user = { name: 'admin', _id: 'user//u1', siteadmin: 0xFFFFFFFF };
@@ -188,6 +190,24 @@ steps.push(function (next) {
     obj.handleAdminReq({ query: { action: 'show' } }, mockRes(function (d) { check('non-admin GET -> 401', d._status === 401, d); }), { name: 'x', siteadmin: 0 });
     obj.handleAdminPostReq({ body: { action: 'save_assessment', meshId: 'mesh//grp1', cveId: 'CVE-2024-0001', assessment: 'LOW', comment: 'ok' } },
         mockRes(function (d) { check('non-admin POST -> 401', d._status === 401, d); next(); }), { name: 'x', siteadmin: 0 });
+});
+
+// ---- direct CSV download (main-menu exports) ----
+steps.push(function (next) {
+    obj.handleAdminReq({ query: { action: 'export', type: 'vulns' } }, mockRes(function (d) {
+        check('export: CSV body with BOM + vulns columns', typeof d._body === 'string' && d._body.charCodeAt(0) === 0xFEFF && d._body.indexOf('Manual Rating') >= 0, typeof d._body);
+        check('export: attachment filename', /attachment; filename="Vulnerabilities_\d{8}-\d{6}\.csv"/.test((d._headers || {})['Content-Disposition'] || ''), d._headers);
+        obj.handleAdminReq({ query: { action: 'export', type: 'hardware' } }, mockRes(function (d2) {
+            check('export hardware: header line', typeof d2._body === 'string' && d2._body.indexOf('Hardware Category') >= 0);
+            obj.handleAdminReq({ query: { action: 'export', type: 'bogus' } }, mockRes(function (d3) {
+                check('export: invalid type -> 400', d3._status === 400, d3);
+                obj.handleAdminReq({ query: { action: 'export' } }, mockRes(function (d4) {
+                    check('export: default type = vulns', typeof d4._body === 'string' && d4._body.length > 50);
+                    next();
+                }), user);
+            }), user);
+        }), user);
+    }), user);
 });
 
 // ---- CPE table handlers ----
@@ -310,6 +330,90 @@ steps.push(function (next) {
     obj.lastScan = null;
     obj.loadScans();
     check('loadScans: restores lastScan from newest snapshot', obj.lastScan === '2026-09-15T00:00:00Z', obj.lastScan);
+    next();
+});
+
+
+// ---- plugin settings (Settings tab) ----
+steps.push(function (next) {
+    // overlay priority: plugin settings file > config.json > built-in defaults
+    meshServer.config.settings.vulnerabilityScanner = { scanIntervalHours: 24, notifyThreshold: 'MEDIUM' };
+    obj.pluginSettings = { vulnerabilityScanner: { scanIntervalHours: 1 } };
+    var sc = obj.scannerConfig();
+    check('overlay: file beats config.json, untouched keys come from config.json', sc.intervalHours === 1 && sc.notifyThreshold === 'MEDIUM', [sc.intervalHours, sc.notifyThreshold]);
+    obj.pluginSettings = {};
+    sc = obj.scannerConfig();
+    check('overlay: without file, config.json applies', sc.intervalHours === 24 && sc.notifyThreshold === 'MEDIUM', [sc.intervalHours, sc.notifyThreshold]);
+    next();
+});
+
+steps.push(function (next) {
+    obj.pluginSettingsPath = require('path').join(require('os').tmpdir(), 'invscanner-settest-' + Date.now(), 'scanner-settings.json');
+    obj.timerGen = 0;
+    obj.lastScan = new Date().toISOString();
+    var captured = [];
+    var realLong = obj.longTimeout, realRun = obj.runScheduledScans;
+    obj.longTimeout = function (cb, ms) { captured.push(ms); };
+    obj.handleAdminPostReq({ body: { action: 'save_settings', scanIntervalHours: '720', updateHours: '168', anyCveMaxAgeYears: '5',
+            collectIntervalMinutes: '1440', notifyThreshold: 'HIGH', notifyOnScan: 'true', notifyUnratedRepeat: 'true',
+            collectOnAgentConnect: 'true', scanMeshes: 'mesh//grp1', notifyMeshIds: 'mesh//grp2', notifySeverities: 'CRITICAL' } },
+        mockRes(function (d) {
+            check('save_settings: returns effective settings', d.settings && d.settings.scanIntervalHours === 720 && d.settings.notify['mesh//grp2'] === 'CRITICAL' && d.settings.notifyUnratedRepeat === true, d.settings);
+            check('save_settings: persisted to file', fs.existsSync(obj.pluginSettingsPath));
+            check('save_settings: bumped timer generation + rescheduled', obj.timerGen === 1 && captured.length >= 1, [obj.timerGen, captured.length]);
+            obj.handleAdminPostReq({ body: { action: 'get_settings' } }, mockRes(function (dg) {
+                check('get_settings: source marking file vs config.json', dg.sources.scanIntervalHours === 'file' && dg.sources.notifyThreshold === 'file' && dg.sources.scanMeshes === 'file', dg.sources);
+                obj.handleAdminPostReq({ body: { action: 'revert_setting', revertScanIntervalHours: 'true' } }, mockRes(function (d2) {
+                    check('revert_setting: falls back to config.json value', d2.settings.scanIntervalHours === 24 && d2.sources.scanIntervalHours === 'config.json', d2.settings && d2.settings.scanIntervalHours);
+                    obj.handleAdminPostReq({ body: { action: 'save_settings', scanIntervalHours: 'abc' } }, mockRes(function (d3) {
+                        check('save_settings: rejects non-numeric interval', !!d3.error, d3);
+                        obj.handleAdminPostReq({ body: { action: 'save_settings', scanIntervalHours: '24', updateHours: '168', anyCveMaxAgeYears: '5', collectIntervalMinutes: '60', notifyThreshold: 'NOPE' } },
+                            mockRes(function (d4) { check('save_settings: rejects invalid severity', !!d4.error, d4); next(); }), user);
+                    }), user);
+                }), user);
+            }), user);
+        }), user);
+
+    obj.longTimeout = realLong; obj.runScheduledScans = realRun;
+    // (all mock callbacks are synchronous, so the restores above run after the nested asserts)
+});
+
+steps.push(function (next) {
+    // stale timer chains must not act after a settings save bumped the generation
+    obj.pluginSettings = { vulnerabilityScanner: { scanIntervalHours: 2 } };
+    meshServer.config.settings.vulnerabilityScanner = { scanIntervalHours: 2 };
+    obj.lastScan = new Date().toISOString();
+    var scheduled = null, runs = 0;
+    var realLong = obj.longTimeout, realRun = obj.runScheduledScans;
+    obj.longTimeout = function (cb, ms) { scheduled = cb; };
+    obj.runScheduledScans = function () { runs++; };
+    obj.scheduleScans();
+    obj.timerGen++;                     // simulate a settings save between scheduling and firing
+    if (scheduled) scheduled();
+    check('timers: stale chain discarded after generation bump', runs === 0, runs);
+    scheduled = null;
+    obj.scheduleScans();
+    if (scheduled) scheduled();
+    check('timers: current chain runs', runs === 1, runs);
+    obj.longTimeout = realLong; obj.runScheduledScans = realRun;
+    next();
+});
+
+steps.push(function (next) {
+    // collector re-reads its interval every cycle (effective settings)
+    obj.pluginSettings = { inventoryScanner: { collectIntervalMinutes: 7, collectOnAgentConnect: true } };
+    var cycles = [];
+    var realLong = obj.longTimeout, realCollect = obj.collectAllOnline;
+    obj.collectAllOnline = function () { };
+    obj.longTimeout = function (cb, ms) { cycles.push(ms); };
+    obj.collectAndReschedule();
+    check('collector: per-cycle effective interval (7 min)', cycles.length === 1 && cycles[0] === 7 * 60 * 1000, cycles);
+    obj.pluginSettings = { inventoryScanner: { collectIntervalMinutes: 0 } };
+    cycles = [];
+    obj.collectAndReschedule();
+    check('collector: interval 0 stops the chain', cycles.length === 0, cycles);
+    obj.longTimeout = realLong; obj.collectAllOnline = realCollect;
+    obj.pluginSettings = {};
     next();
 });
 

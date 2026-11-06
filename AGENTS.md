@@ -26,12 +26,14 @@ package.json                   repo metadata; `npm test` runs tools/check.js + t
 
 Pure admin tool for MeshCentral (all endpoints gated on full site admin, `user.siteadmin === 0xFFFFFFFF`):
 
-1. **Device-list toolbar CSV exports** (hardware / software / vulns) via MeshCentral Custom UI
-   (`customui.devicesbarbuttons`) → `uiCustomEvent(command, myparent)` → CSV pushed over the websocket → browser
-   `saveAs()` via the exported `inventoryCsv` function.
+1. **Device-list toolbar CSV exports** (hardware / software) and a **panel-open button** (`assessment`) via MeshCentral
+   Custom UI (`customui.devicesbarbuttons`) → `uiCustomEvent(command, myparent)` → CSV pushed over the websocket →
+   browser `saveAs()` via the exported `inventoryCsv` function. Whole-inventory CSV downloads additionally exist as
+   plain URLs (`action=export&type=...`, usable from `customui.mainmenuicons` and linked in the panel top nav).
 2. **Offline CVE scan** against locally cached NVD 2.0 feeds (`<datapath>/nvd/`), conservative curated CPE matching.
 3. **Assessment panel** (`pluginadmin.ashx?pin=inventoryscanner&action=show`): multi-location CVE review, group-wide
-   ratings (mandatory comment), false-positive flags (optional comment), filter/sort, CPE Mapping management tab.
+   ratings (mandatory comment), false-positive flags (optional comment), filter/sort, CPE Mapping management tab, and a **Settings tab** for
+   all scanner/collection options (overrides config.json, applies without restart).
 4. **Printable reports** (`action=report`, `action=deviceReport`): overview page + one page per location, with a
    stated **CPE coverage percentage** so findings-only views can't be misread as "all clean".
 5. **Scheduled scans + notifications** (server-side Node timers, restart-proof, monthly-capable) with per-group
@@ -82,6 +84,7 @@ GET `pluginadmin.ashx?pin=inventoryscanner`:
 | `scan` | `assessmentScan` | JSON via `scanMultiMeshCves(meshIds)`; `?mesh=<id>,<id>,...` (comma-separated) |
 | `report` | `vulnerabilityReport` | renders `report` with `{shortName, report: buildOverallReport(), totalCves, lastUpdate}` |
 | `deviceReport` | `deviceReport` | renders `deviceReport`, same data |
+| `export` | `exportCsv` | streams a CSV **attachment** for ALL non-deleted nodes (`type=hardware|software|vulns`, default vulns; invalid → 400). UTF-8 BOM, `Content-Disposition: attachment; filename=<Base>_<timestamp>.csv`; built with the same `buildCsvForNodes` as the toolbar exports. Intended for `customui.mainmenuicons` links. |
 
 POST body `action=`:
 
@@ -93,12 +96,18 @@ POST body `action=`:
 | `get_cpe_table` | — | `{entries:[{match,vendor,product,source:'built-in'|'custom'}]}` |
 | `delete_cpe_table` | `match`,`vendor`,`product` | custom entries only (built-ins can be shadowed, not deleted) |
 | `add_cpe` | `match`,`vendor`,`product` | regex validated via `new RegExp`; custom wins over built-in |
-| `get_locations` | — | all non-deleted meshes `{locations:[{id,name}]}` (API only; panel renders `meshList` server-side) |
+| `get_locations` | — | all non-deleted meshes `{locations:[{id,name}]}` (also feeds the Settings tab group table) |
 | `remove_cpe` | `index` | legacy index-based removal |
+| `get_settings` | — | `{settings:{...effective...}, sources:{key:'file'|'config.json'|'default', notifyPerGroup:{meshId:src}, revertAllowed:{key:bool}}}` |
+| `save_settings` | full form field set (see `saveSettingsHandler`) | validates everything, writes `scanner-settings.json`, runs `rescheduleAll()`, answers with the `get_settings` payload; `reset=true` clears all overrides |
+| `revert_setting` | one key of `revertScanIntervalHours`/`revertScanMeshes`/`revertNotifyOnScan`/`revertNotifyThreshold`/`revertNotifyUnratedRepeat`/`revertNotify`/`revertUpdateHours`/`revertAnyCveMaxAgeYears`/`revertCollectIntervalMinutes`/`revertCollectOnAgentConnect` = 'true' | removes that single override so config.json/default applies again |
 
 Assessments persist in `<datapath>/nvd/assessments.json`, key `"<meshId>:<cveId>"` →
 `{meshId, cveId, assessment, comment, lastModified, assessedBy, assessedById, flagged?}`.
 Scheduled results in `<datapath>/nvd/scans.json` → `meshId -> {time, cves:[{cve, severity, ...}]}`.
+UI-managed scanner settings in `<datapath>/plugins/inventoryscanner/scanner-settings.json` →
+`{vulnerabilityScanner:{...}, inventoryScanner:{...}}`, merged over `config.settings` by
+`obj.effectiveSectionConfig(section)` (file wins per key). **The plugin never writes config.json.**
 
 **`scan` response shape** (drives the panel JS):
 `{ meshes:[{id,name}], cves:[{cve, severity, cvss, description, software, version,
@@ -133,6 +142,11 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
 - The inline JS must contain **no `{{`** (Handlebars would consume it) except the intended `'{{shortName}}'` token.
   `tools/check.js` enforces both this and `node --check` on the extracted script.
 
+- Settings tab: fetches `get_settings` + `get_locations` on load; each numeric field carries a source select
+  ("set in plugin settings" / "from config.json" / "built-in default") offering `revert_setting` when overridden;
+  Save posts the full field set, "Reset all" posts `reset=true`. The group table is filled client-side from
+  `get_locations`; all-checked or none-checked is sent as an empty list = "all groups".
+
 ## Design decisions (with reasons)
 
 1. **Conservative matching:** curated `SOFTWARE_CPE_TABLE` (+`custom-cpe.json`) only; no token guessing, no
@@ -157,17 +171,28 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
    everything still unrated as `(SEVERITY, open)` on every run — the monthly to-do list. Rated/flagged → never again.
 10. **Security:** CSV formula-injection neutralized in `formatCsvField`; strict id validation on writes
     (key-poisoning guard); rights come from MeshCentral's own checks; everything admin-gated.
+11. **Settings precedence & live application:** writing MeshCentral's config.json from a plugin is dangerous
+    (comments lost, server may not boot, core reads it only at startup). The Settings tab therefore persists to
+    `scanner-settings.json`; `scannerConfig()`/`collectorConfig()`/`scheduleUpdate()`/`anyCveMaxAgeYears()` read
+    through `effectiveSectionConfig()`. `obj.timerGen` + `rescheduleAll()` invalidate chained scan/collection
+    timers on save, and `collectAndReschedule()` (no arguments!) re-reads its interval every cycle.
 
-## Configuration keys (server config.json → settings)
+## Configuration keys & precedence
 
-The README contains a fully annotated `config.json` example — keep it in sync when adding/renaming keys.
+**Primary place to change them: the Settings tab of the panel** (`scanner-settings.json`, effective immediately,
+never touches config.json). The config.json keys below remain the fallback/seed:
 
-- `plugins.list: ["inventoryscanner"]` — enables the plugin (local-copy installs don't appear in the plugin store UI).
-- `domains.""-customui.devicesbarbuttons` — toolbar buttons, see README.
+- `plugins.list: ["inventoryscanner"]` - REQUIRED to load the plugin (the only mandatory manual config edit).
+- `domains.""-customui.devicesbarbuttons` / `.mainmenuicons` - MeshCentral-side buttons (optional;
+  devicesbarbuttons `logmsg` values: `hardware|software|assessment`; mainmenuicons are plain URLs).
 - `vulnerabilityScanner`: `scanIntervalHours` (720 = monthly OK), `scanMeshes`, `notifyOnScan`, `notifyThreshold`,
-  `notifyUnratedRepeat`, `notify` (per-group), `updateHours` (feed refresh), `anyCveMaxAgeYears` (default 5;
-  suppresses ancient `kind:'any'` version-less CVE matches).
-- `inventoryScanner`: `collectIntervalMinutes` (default 1440, 0=off), `collectOnAgentConnect` (default true).
+  `notifyUnratedRepeat`, `notify` (per-group), `updateHours`, `anyCveMaxAgeYears` (suppresses ancient version-less
+  `kind:"any"` CVE matches).
+- `inventoryScanner` (note: one letter less than the section above): `collectIntervalMinutes`, `collectOnAgentConnect`.
+
+**When adding a setting key, update all of:** `scannerConfig`/`collectorConfig`, `getSettingsHandler` (value +
+sources + revertAllowed), `saveSettingsHandler` (+ `SETTING_MAP` for revert), the Settings tab form, the README
+table, and a test assertion. Partial updates are a contract break the tests catch.
 
 ## Testing before committing changes
 
@@ -178,11 +203,12 @@ npm test           # = tools/check.js && tools/test-plugin.js && tools/test-view
 
 - `tools/check.js`: `node --check` on the plugin, inline-script syntax/`{{`-hazard check, JSON validity of
   config files, and view-name↔render-name consistency. Must run anywhere (no dependencies).
-- `tools/test-plugin.js`: ~55 behavioral assertions against the real module (mocked MeshCentral DB/webserver):
+- `tools/test-plugin.js`: 72 behavioral assertions against the real module (mocked MeshCentral DB/webserver):
   locations grouping & counting, manual-rating severity override, FP exclusion, host-name preference, coverage
   numbers, multi-mesh scan/`mixed` logic, all POST handlers incl. validation/rejections, routes, admin gating
   (401), CPE table add/delete, vulns CSV header/content, `longTimeout` chunking, restart-proof schedule delays,
-  scheduled-scan notification content in repeat and once mode, NVD-status derivation.
+  scheduled-scan notification content in repeat and once mode, NVD-status derivation, settings overlay priority,
+  save/revert/reset roundtrips incl. validation rejections, timer-generation invalidation, per-cycle collector config.
 - `tools/test-views.js`: compiles all three views and renders them with mock data **and empty data**.
 
 If you change data shapes, UPDATE these tests — they are the contract.
@@ -207,5 +233,6 @@ If you change data shapes, UPDATE these tests — they are the contract.
 All of the above implemented and green: `node --check` OK; panel inline JS parses; 3 views render with and without
 data; full logic suite passes (see `tools/test-plugin.js`), including the monthly-scheduling and notification-mode
 tests. UI flow: floating location picker → one aggregated sortable/filterable table → one-click multi-location
-rating/FP → CPE Mapping tab with built-in table visibility + overrides → two printable reports with navigation and
+rating/FP → CPE Mapping tab with built-in table visibility + overrides, Settings tab (scanner/collection options, per-key override of
+config.json) → two printable reports with navigation and
 per-location pages → scheduled monthly scans with toast/event-log notifications that re-list open findings.

@@ -18,6 +18,9 @@
  *
  * @author derStephan
  * @version 1.0.0
+ *
+ * Transparency: This plugin was created with the assistance of Qwen 3.6 27B and Qwen 3.8 Flash Next.
+ * Security audit (2026-11-06) performed by NVIDIA Nemotron 3 550B A55B via opencode.
  */
 
 "use strict";
@@ -58,8 +61,6 @@ module.exports.inventoryscanner = function (parent) {
 
     /** @type {string} Directory for NVD data under the meshcentral datapath (survives restarts). */
     obj.nvdDataPath = path.join(obj.meshServer.datapath, 'nvd');
-    /** @type {string} Path to the locally cached CPE token lookup cache (nvd/cpe-tokens.json). */
-    obj.cpeTokensPath = path.join(obj.nvdDataPath, 'cpe-tokens.json');
     /** @type {string} Path to the persisted group-wide assessment ratings file. */
     obj.assessmentsPath = path.join(obj.nvdDataPath, 'assessments.json');
     /** @type {string} Path to the persisted scheduled scan results file. */
@@ -78,6 +79,14 @@ module.exports.inventoryscanner = function (parent) {
     /** @type {string} Path to the user-customized CPE mapping entries (plugins/inventoryscanner/custom-cpe.json).
      * Entries added via the admin UI are persisted here and survive MeshCentral updates. */
     obj.customCpePath = path.join(obj.meshServer.datapath, 'plugins', 'inventoryscanner', 'custom-cpe.json');
+    /** @type {string} Path to the UI-managed scanner settings (plugins/inventoryscanner/scanner-settings.json).
+     * Keys saved from the panel's Settings tab are persisted here and OVERRIDE the same keys in the
+     * server's config.json; they take effect without a restart. config.json is never written by the plugin. */
+    obj.pluginSettingsPath = path.join(obj.meshServer.datapath, 'plugins', 'inventoryscanner', 'scanner-settings.json');
+    /** @type {object} In-memory plugin settings overlay: <code>{ vulnerabilityScanner: {...}, inventoryScanner: {...} }</code>. */
+    obj.pluginSettings = {};
+    /** @type {number} Timer generation; incremented on every settings save so old chained timers stop themselves. */
+    obj.timerGen = 0;
     /** @type {Array<object>} User-customized CPE entries: <code>{ match, vendor, product }</code>.
      * Consulted BEFORE the built-in SOFTWARE_CPE_TABLE so an admin can override or extend mappings. */
     obj.customCpeEntries = [];
@@ -107,19 +116,10 @@ module.exports.inventoryscanner = function (parent) {
      * <code>{ vendor, defs }</code> so CVEs can be searched by product name alone,
      * independent of the (often unreliable) vendor guess. */
     obj.productIndexByProduct = {};
-    /** @type {Object<string, number>} Set of all real CPE product tokens present in the
+/** @type {Object<string, number>} Set of all real CPE product tokens present in the
      * loaded NVD index (lower-cased). Used to check whether a candidate product token
      * derived from an installed-software name actually exists before searching. */
     obj.cpeProductTokens = {};
-    /** @type {Object<string, boolean>} Local cache of CPE product tokens confirmed via the
-     * NVD CPE API. Key = lower-cased product token, value = true if the token exists in the
-     * CPE dictionary. Persisted to <code>cpeTokensPath</code> and used to distinguish
-     * "no CVE for &lt;token&gt;" (token exists) from "unknown software" (token does not exist)
-     * without asking the API for every known product again. */
-obj.cpeTokenCache = {};
-    /** @type {Object<string, Array<function>>} Coalescing map for in-flight CPE token API
-     * lookups (token -> callbacks). Ensures each unique token is queried only once. */
-    obj.cpeTokenPending = {};
     /** @type {Array<object>} All CVE records loaded from the NVD feeds. */
     obj.allCves = [];
     /** @type {string|null} ISO timestamp of the last successful feed download. */
@@ -151,8 +151,8 @@ obj.cpeTokenCache = {};
         obj.loadAssessments();
         obj.loadScans();
         obj.loadCollectedInventory();
-        obj.loadCpeTokenCache();
         obj.loadCustomCpe();
+        obj.loadPluginSettings();
         obj.installRouteHook();
         obj.ensureNvdData();
         obj.scheduleUpdate();
@@ -247,6 +247,70 @@ obj.cpeTokenCache = {};
         return out;
     };
 
+    // ---- Plugin settings (UI-managed, overrides config.json — which is never written) ----
+
+    /**
+     * @brief Load the UI-managed scanner settings from disk into memory.
+     */
+    obj.loadPluginSettings = function () {
+        obj.pluginSettings = {};
+        try {
+            if (fs.existsSync(obj.pluginSettingsPath)) {
+                var data = JSON.parse(fs.readFileSync(obj.pluginSettingsPath, 'utf8'));
+                if (data && (typeof data === 'object')) { obj.pluginSettings = data; }
+            }
+        } catch (err) {
+            obj.debug('plugin:inventory_scanner', 'Error loading plugin settings:', err.message);
+            obj.pluginSettings = {};
+        }
+    };
+
+    /**
+     * @brief Persist the UI-managed scanner settings to disk.
+     * @param {function} [callback] - Called with <code>(err)</code>.
+     */
+    obj.savePluginSettings = function (callback) {
+        try {
+            var dir = path.dirname(obj.pluginSettingsPath);
+            if (!fs.existsSync(dir)) { fs.mkdirSync(dir, { recursive: true }); }
+            fs.writeFileSync(obj.pluginSettingsPath, JSON.stringify(obj.pluginSettings, null, 2));
+            if (callback) callback(null);
+        } catch (err) {
+            obj.debug('plugin:inventory_scanner', 'Error saving plugin settings:', err.message);
+            if (callback) callback(err);
+        }
+    };
+
+    /**
+     * @brief Merge a settings section from the server config.json with the plugin's
+     * own settings file. The plugin file wins per key; config.json stays the fallback.
+     * @param {string} section - <code>'vulnerabilityScanner'</code> or <code>'inventoryScanner'</code>.
+     * @returns {object|null} The effective section object (may be undefined-like when set nowhere).
+     */
+    obj.effectiveSectionConfig = function (section) {
+        var base = null;
+        try { base = obj.meshServer.config.settings[section]; } catch (e) { }
+        var over = obj.pluginSettings[section];
+        if ((over == null) || (typeof over !== 'object')) { return base; }
+        var merged = {};
+        if (base && (typeof base === 'object')) {
+            for (var k in base) { if (Object.prototype.hasOwnProperty.call(base, k)) { merged[k] = base[k]; } }
+        }
+        for (var k2 in over) { if (Object.prototype.hasOwnProperty.call(over, k2)) { merged[k2] = over[k2]; } }
+        return merged;
+    };
+
+    /**
+     * @brief Restart all chained timers so settings saved in the UI take effect
+     * immediately: bump the timer generation (old chained timers notice it and stop)
+     * and schedule the scan + collection loops freshly from the effective config.
+     */
+    obj.rescheduleAll = function () {
+        obj.timerGen++;
+        obj.scheduleScans();
+        obj.scheduleInventoryCollection();
+    };
+
     // ---- Assessment persistence ----
 
     /**
@@ -324,7 +388,7 @@ obj.cpeTokenCache = {};
     obj.scheduleUpdate = function () {
         var hours = 24 * 7; // weekly default
         try {
-            var cfg = obj.meshServer.config.settings.vulnerabilityScanner;
+            var cfg = obj.effectiveSectionConfig('vulnerabilityScanner');
             if (cfg && (typeof cfg.updateHours === 'number') && (cfg.updateHours >= 1)) { hours = cfg.updateHours; }
         } catch (e) { }
         obj.debug('plugin:inventory_scanner', 'Next NVD update scheduled in', hours, 'hours');
@@ -345,7 +409,7 @@ obj.cpeTokenCache = {};
      */
     obj.scannerConfig = function () {
         var cfg = null;
-        try { cfg = obj.meshServer.config.settings.vulnerabilityScanner; } catch (e) { }
+        try { cfg = obj.effectiveSectionConfig('vulnerabilityScanner'); } catch (e) { }
         var intervalHours = 24;
         var meshes = null;
         var notifyOnScan = true;
@@ -547,7 +611,9 @@ obj.cpeTokenCache = {};
             delay = (isNaN(elapsed) || (elapsed >= intervalMs)) ? 60000 : (intervalMs - elapsed);
         }
         obj.debug('plugin:inventory_scanner', 'Scheduled group scan every', intervalHours, 'hours; next run in', Math.round(delay / 60000), 'minutes');
+        var gen = obj.timerGen;
         obj.longTimeout(function () {
+            if (gen !== obj.timerGen) { return; } // superseded by a settings save
             obj.runScheduledScans();
             obj.scheduleScans();
         }, delay);
@@ -570,7 +636,7 @@ obj.cpeTokenCache = {};
      */
     obj.collectorConfig = function () {
         var cfg = null;
-        try { cfg = obj.meshServer.config.settings.inventoryScanner; } catch (e) { }
+        try { cfg = obj.effectiveSectionConfig('inventoryScanner'); } catch (e) { }
         var intervalMinutes = 24 * 60; // default: daily (24h)
         var collectOnAgentConnect = true;
         if (cfg && (typeof cfg === 'object')) {
@@ -841,19 +907,24 @@ obj.cpeTokenCache = {};
         var cfg = obj.collectorConfig();
         if (cfg.intervalMinutes <= 0) { obj.debug('plugin:inventory_scanner', 'Live inventory collection is disabled (collectIntervalMinutes=0)'); return; }
         obj.debug('plugin:inventory_scanner', 'Live inventory collection every', cfg.intervalMinutes, 'minutes');
-        var intervalMs = cfg.intervalMinutes * 60 * 1000;
+        var gen = obj.timerGen;
         // First pass shortly after startup (agents may need a moment to reconnect),
         // then keep collecting periodically.
-        setTimeout(function () { obj.collectAndReschedule(intervalMs); }, 20000);
+        setTimeout(function () { if (gen === obj.timerGen) { obj.collectAndReschedule(); } }, 20000);
     };
 
     /**
      * @brief Run one collection cycle and reschedule the next one after the interval.
      * @param {number} intervalMs - The delay in milliseconds before the next cycle.
      */
-    obj.collectAndReschedule = function (intervalMs) {
+    obj.collectAndReschedule = function () {
+        var gen = obj.timerGen;
         obj.collectAllOnline();
-        obj.longTimeout(function () { obj.collectAndReschedule(intervalMs); }, intervalMs);
+        // Re-read the config every cycle so settings saved in the UI take effect
+        // without a restart; stop the chain if collection was disabled meanwhile.
+        var intervalMs = obj.collectorConfig().intervalMinutes * 60 * 1000;
+        if (intervalMs <= 0) { return; }
+        obj.longTimeout(function () { if (gen === obj.timerGen) { obj.collectAndReschedule(); } }, intervalMs);
     };
 
     /**
@@ -1109,103 +1180,8 @@ obj.cpeTokenCache = {};
                 });
             };
             tryDownload();
-        };
+};
         next();
-    };
-
-    // ---- Official CPE token lookup (privacy-friendly, cached) ----
-
-    // The official NVD CPE dictionary is no longer distributed as a bulk file download
-    // (the old nvdcpe-2.0.json.gz feed returns 404). It is only available via the NVD
-    // CPE REST API (https://services.nvd.nist.gov/rest/json/cpes/2.0). To distinguish
-    // "no CVE for <token>" (the product exists in the CPE dictionary) from "unknown
-    // software" (it does not), we ask the API once per unique product token and cache
-    // the answer locally. Because only individual product tokens are queried (never a
-    // client's full inventory) and results are deduplicated + cached, this exposes no
-    // complete device inventory to the outside and keeps API traffic very low.
-
-    /**
-     * @brief Load the local CPE token cache from disk into memory.
-     */
-    obj.loadCpeTokenCache = function () {
-        try {
-            if (fs.existsSync(obj.cpeTokensPath)) {
-                var data = JSON.parse(fs.readFileSync(obj.cpeTokensPath, 'utf8'));
-                if (data && (typeof data === 'object')) { obj.cpeTokenCache = data; }
-            }
-        } catch (e) { obj.cpeTokenCache = {}; }
-    };
-
-    /**
-     * @brief Persist the local CPE token cache to disk.
-     */
-    obj.saveCpeTokenCache = function () {
-        try { fs.writeFileSync(obj.cpeTokensPath, JSON.stringify(obj.cpeTokenCache, null, 2)); }
-        catch (e) { }
-    };
-
-    /**
-     * @brief Query the NVD CPE API once to determine whether a product token exists in
-     * the CPE dictionary. Uses <code>cpeMatchString=cpe:2.3:a:&lt;token&gt;</code> and
-     * <code>resultsPerPage=1</code>; a <code>totalResults &gt; 0</code> means the token exists.
-     * @param {string} token - The lower-cased CPE product token.
-     * @param {function} callback - Called with <code>(err, exists)</code> where
-     * <code>exists</code> is true/false; on error, <code>exists</code> is null.
-     */
-    obj.queryCpeTokenExists = function (token, callback) {
-        // Use a wildcard vendor (cpe:2.3:a:*:<token>) because the display-name -> vendor
-        // mapping is deliberately not guessed. A product-only match string without the
-        // vendor yields 0 results from the NVD API, so the vendor position is wildcarded.
-        var url = 'https://services.nvd.nist.gov/rest/json/cpes/2.0?cpeMatchString=' +
-            encodeURIComponent('cpe:2.3:a:*:' + token) + '&resultsPerPage=1';
-        var req = https.get(url, { timeout: 60000, headers: { 'User-Agent': 'MeshCentral-InventoryScanner' } }, function (res) {
-            var body = '';
-            res.on('data', function (chunk) { body += chunk; });
-            res.on('end', function () {
-                try {
-                    if (res.statusCode !== 200) { callback(new Error('HTTP ' + res.statusCode + ' for ' + token)); return; }
-                    var j = JSON.parse(body);
-                    var exists = (j && (typeof j.totalResults === 'number')) ? (j.totalResults > 0) : null;
-                    callback(null, exists);
-                } catch (e) { callback(new Error('Parse error for ' + token)); }
-            });
-        });
-        req.on('error', function (err) { callback(err); });
-        req.on('timeout', function () { req.destroy(new Error('Timeout for ' + token)); });
-    };
-
-    /**
-     * @brief Resolve whether a product token exists in the CPE dictionary, using the
-     * local cache first and only asking the API for tokens not yet cached. The result
-     * is stored in <code>cpeTokenCache</code> and persisted. All lookups are coalesced
-     * so the same token is only queried once per process run.
-     * @param {string} token - The lower-cased CPE product token.
-     * @param {function} callback - Called with <code>(exists)</code> where <code>exists</code>
-     * is true/false, or null if the lookup failed (unknown).
-     */
-    obj.resolveCpeToken = function (token, callback) {
-        if (!token) { callback(null); return; }
-        var t = String(token).toLowerCase();
-        if (obj.cpeTokenCache[t] === true) { callback(true); return; }
-        if (obj.cpeTokenCache[t] === false) { callback(false); return; }
-
-        // Coalesce concurrent lookups for the same token.
-        if (obj.cpeTokenPending[t]) { obj.cpeTokenPending[t].push(callback); return; }
-        obj.cpeTokenPending[t] = [];
-        obj.cpeTokenPending[t].push(callback);
-
-        obj.queryCpeTokenExists(t, function (err, exists) {
-            var waiting = obj.cpeTokenPending[t] || [];
-            delete obj.cpeTokenPending[t];
-            if (err || (exists == null)) {
-                obj.nvdLog('CPE token lookup failed for "' + t + '": ' + (err ? err.message : 'no result'));
-                for (var i = 0; i < waiting.length; i++) { waiting[i](null); }
-                return;
-            }
-            obj.cpeTokenCache[t] = exists;
-            obj.saveCpeTokenCache();
-            for (var j = 0; j < waiting.length; j++) { waiting[j](exists); }
-        });
     };
 
     // ---- Indexing ----
@@ -1441,12 +1417,13 @@ obj.loadNvdFromAllFiles = function () {
      * "any"-version CVEs are skipped because they are almost always historical and not
      * relevant to current software versions (they would otherwise match every installed
      * version). Configurable via <code>settings.vulnerabilityScanner.anyCveMaxAgeYears</code>;
-     * a value of 0 disables the filter (keep all any-version CVEs).
+     * a value of 0 disables the filter (keep all any-version CVEs). Respects the UI
+     * settings overlay (scanner-settings.json overrides config.json).
      * @returns {number} The maximum age in years, or 0 to keep all.
      */
     obj.anyCveMaxAgeYears = function () {
         try {
-            var cfg = obj.meshServer.config.settings.vulnerabilityScanner;
+            var cfg = obj.effectiveSectionConfig('vulnerabilityScanner');
             if (cfg && (typeof cfg.anyCveMaxAgeYears === 'number') && (cfg.anyCveMaxAgeYears >= 0)) {
                 return cfg.anyCveMaxAgeYears;
             }
@@ -1546,56 +1523,7 @@ obj.loadNvdFromAllFiles = function () {
         return unique;
     };
 
-    /**
-     * @brief Check whether the index contains ANY CPE definition for a vendor.
-     * Used to flag a possibly mis-guessed vendor that has no database entry at all.
-     * @param {string} vendor - The vendor name.
-     * @param {string} [partFilter] - Optional CPE part restriction ('a' or 'o').
-     * @returns {boolean} True if the vendor has at least one matching definition.
-     */
-    obj.vendorHasAnyEntry = function (vendor, partFilter) {
-        if (!vendor) return false;
-        var prefix = String(vendor).toLowerCase() + '|';
-        for (var key in obj.productIndex) {
-            if (!Object.prototype.hasOwnProperty.call(obj.productIndex, key) || key.indexOf(prefix) !== 0) continue;
-            if (partFilter) {
-                var defs = obj.productIndex[key];
-                for (var i = 0; i < defs.length; i++) { if (defs[i].part === partFilter) return true; }
-            } else { return true; }
-        }
-        return false;
-    };
-
     // ---- Scanning ----
-
-    /**
-     * @brief Normalize a software name into vendor/product heuristics.
-     * Prefers an explicit publisher; otherwise splits the display name on the first space.
-     * @param {string} publisher - The software publisher (may be empty).
-     * @param {string} name - The software display name.
-     * @returns {object} <code>{ vendor, product }</code>.
-     */
-    /**
-     * @brief Curated mapping of common Windows publisher names to CPE vendors.
-     * @type {Object<string,string>}
-     */
-    obj.PUBLISHER_CPE_VENDOR = {
-        'microsoft': 'microsoft', 'microsoft corporation': 'microsoft',
-        'google': 'google', 'google llc': 'google', 'google inc': 'google',
-        'mozilla': 'mozilla', 'mozilla corporation': 'mozilla',
-        'adobe': 'adobe', 'adobe systems': 'adobe', 'adobe systems incorporated': 'adobe',
-        'oracle': 'oracle', 'oracle corporation': 'oracle',
-        'apple': 'apple', 'apple inc': 'apple', 'apple inc.': 'apple',
-        'cisco': 'cisco', 'cisco systems': 'cisco',
-        'ibm': 'ibm', 'vmware': 'vmware',
-        'notepad++': 'notepad_plus_plus',
-        '7-zip': '7zip', 'vlc': 'videolan', 'videolan': 'videolan',
-        'gimp': 'gimp', 'the gimp team': 'gimp',
-        'openjdk': 'oracle', 'eclipse': 'eclipse', 'eclipse foundation': 'eclipse',
-        'apache': 'apache', 'apache software foundation': 'apache',
-        'discord': 'discord', 'slack': 'slack', 'slack technologies': 'slack',
-        'spotify': 'spotify', 'valve': 'valve', 'steam': 'valve'
-    };
 
     /**
      * @brief Curated mapping of common Windows display names to CPE vendor/product.
@@ -1603,9 +1531,9 @@ obj.loadNvdFromAllFiles = function () {
      * @type {Array<object>}
      * Each entry: <code>{ match: RegExp, vendor, product }</code>.
      */
-    // Kuratierte Zuordnung Windows-DisplayName/Publisher -> realer CPE (vendor/product).
-    // Vendor- und Produktnamen sind gegen den NVD-CVE-Feed (2002-2026) verifiziert.
-    // Jeder Eintrag matcht per Regex auf den DisplayName. KEIN generisches Token-Matching.
+    // Curated mapping of Windows display name/publisher -> real CPE (vendor/product).
+    // Vendor and product names are verified against the NVD CVE feed (2002-2026).
+    // Each entry matches via regex on the display name. NO generic token matching.
     obj.SOFTWARE_CPE_TABLE = [
         // Browser / Messaging
         { match: /mozilla firefox/i, vendor: 'mozilla', product: 'firefox' },
@@ -1668,22 +1596,6 @@ obj.loadNvdFromAllFiles = function () {
     ];
 
     /**
-     * @brief Normalize a publisher name to a CPE vendor where known.
-     * @param {string} publisher - The software publisher.
-     * @returns {string|null} The CPE vendor, or null if unknown.
-     */
-    obj.normalizeVendor = function (publisher) {
-        if (!publisher) return null;
-        var p = String(publisher).trim().toLowerCase();
-        if (obj.PUBLISHER_CPE_VENDOR[p]) { return obj.PUBLISHER_CPE_VENDOR[p]; }
-        // Try without common legal suffixes (Inc, LLC, Corp, Ltd, GmbH, AG, B.V.).
-        var clean = p.replace(/\b(inc|llc|ltd|corp|corporation|gmbh|ag|b\.v\.|s\.a\.|sa|bv|co|company)\b\.?/g, '').replace(/\s+/g, ' ').trim();
-        if (obj.PUBLISHER_CPE_VENDOR[clean]) { return obj.PUBLISHER_CPE_VENDOR[clean]; }
-        // Fall back to the raw publisher lowercased (best effort).
-        return p;
-    };
-
-    /**
      * @brief Map a display name to a known CPE vendor/product via the curated table.
      * @param {string} name - The software display name.
      * @returns {object|null} <code>{ vendor, product }</code>, or null.
@@ -1704,94 +1616,17 @@ obj.loadNvdFromAllFiles = function () {
     };
 
     /**
-     * @brief Single-word CPE product tokens that are far too generic to be used as a
-     * product match on their own (e.g. "studio", "editor", "zip", "runtime"). Matching
-     * one of these alone across all vendors produces false positives (e.g. "SAS Studio"
-     * or "LM Studio" would otherwise match Talend/Valentina/NVIDIA "studio" products).
-     * Only single-word candidate tokens are checked against this set; multi-word tokens
-     * are always treated as specific enough.
-     * @type {Object<string, boolean>}
-     */
-    obj.GENERIC_CPE_TOKENS = {
-        'studio': 1, 'editor': 1, 'runtime': 1, 'application': 1, 'app': 1, 'bit': 1,
-        'zip': 1, 'extract': 1, 'maintenance': 1, 'vault': 1, 'supportassist': 1,
-        'service': 1, 'driver': 1, 'desktop': 1, 'platform': 1, 'software': 1,
-        'server': 1, 'client': 1, 'tool': 1, 'tools': 1, 'plugin': 1, 'launcher': 1,
-        'helper': 1, 'module': 1, 'package': 1, 'sdk': 1, 'core': 1, 'console': 1,
-        'shell': 1, 'component': 1, 'framework': 1, 'engine': 1, 'agent': 1,
-        'library': 1, 'lib': 1, 'api': 1, 'data': 1, 'installer': 1, 'update': 1,
-        'updater': 1, 'support': 1, 'assist': 1, 'diagnostics': 1, 'optimizer': 1,
-        'viewer': 1, 'player': 1, 'printer': 1, 'database': 1, 'host': 1, 'net': 1,
-        'middleware': 1, 'suite': 1, 'edition': 1, 'code': 1, 'windows': 1,
-        'microsoft': 1, 'visual': 1, 'monitor': 1, 'manager': 1, 'management': 1
-    };
-
-    /**
-     * @brief Find the most specific CPE product token of a given vendor that appears as
-     * a word-subsequence of a software display name. Used to match non-curated software
-     * precisely within a known vendor (derived from the publisher), avoiding the
-     * cross-vendor false positives of a product-only search.
-     * @param {string} vendor - The CPE vendor (lower-cased).
-     * @param {string} name - The software display name.
-     * @returns {string|null} The matching product token, or null.
-     */
-    obj.bestProductForVendor = function (vendor, name) {
-        var words = String(name).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(/\s+/);
-        var clean = [];
-        for (var w = 0; w < words.length; w++) { if (words[w]) { clean.push(words[w]); } }
-        if (clean.length === 0) return null;
-
-        var prefix = String(vendor).toLowerCase() + '|';
-        var vprod = {};
-        for (var key in obj.productIndex) {
-            if (!Object.prototype.hasOwnProperty.call(obj.productIndex, key) || key.indexOf(prefix) !== 0) continue;
-            vprod[key.substring(prefix.length)] = 1;
-        }
-
-        var best = null;
-        var vWord = String(vendor).toLowerCase();
-        for (var start = 0; start < clean.length; start++) {
-            var parts = [];
-            for (var end = start; end < clean.length; end++) {
-                parts.push(clean[end]);
-                var token = parts.join('_');
-                if (!vprod[token]) continue;
-                // The vendor word itself (e.g. "microsoft" in "Microsoft Edge") is not the product.
-                if ((parts.length === 1) && (parts[0] === vWord)) continue;
-                var wc = parts.length, cc = token.length;
-                if ((best == null) || (wc > best.wordCount) ||
-                    ((wc === best.wordCount) && (cc > best.charCount)) ||
-                    ((wc === best.wordCount) && (cc === best.charCount) && (start > best.startIndex))) {
-                    best = { token: token, wordCount: wc, charCount: cc, startIndex: start };
-                }
-            }
-        }
-        return best ? best.token : null;
-    };
-
-    /**
      * @brief Map a software display name to a CPE <code>{ vendor, product }</code> target.
-     * Does NOT guess tokens. Three strategies, in priority order:
-     *   1. The curated <code>SOFTWARE_CPE_TABLE</code> (explicit vendor+product, e.g.
-     *      "7-Zip" -> 7zip, "Notepad++" -> notepad_plus_plus). The most reliable and now
-     *      the first choice so well-known products are never overridden by a generic
-     *      token-subsequence match.
-     *   2. A vendor-aware match: when the publisher maps to a known CPE vendor, the best
-     *      product token of that vendor appearing in the name is used (precise search).
-     *   3. A conservative product-only token-subsequence match against the NVD index.
-     *      Only specific tokens are accepted: multi-word tokens, or a single word that is
-     *      the entire (cleaned) display name and is not a generic word such as "studio".
-     * @param {string} publisher - The software publisher (may be empty).
+     * Only the curated <code>SOFTWARE_CPE_TABLE</code> is used (explicit vendor+product,
+     * e.g. "7-Zip" -> 7zip, "Notepad++" -> notepad_plus_plus). This ensures the CVE search
+     * is exact (vendor+product) and cannot produce cross-vendor false positives.
+     * NO generic token matching, NO publisher-substring fallback, NO CPE API calls.
+     * @param {string} publisher - The software publisher (unused, kept for compatibility).
      * @param {string} name - The software display name.
-     * @returns {object|null} <code>{ vendor, product, viaCurated }</code> where
-     * <code>vendor</code> may be null (product-only match), or null if nothing matches.
+     * @returns {object|null} <code>{ vendor, product, viaCurated: true }</code>, or null if no mapping exists.
      */
     obj.deriveCpeProduct = function (publisher, name) {
         if (!name) return null;
-        // Einzige Quelle: die kuratierte SOFTWARE_CPE_TABLE. Diese traegt einen expliziten,
-        // gegen den NVD-Feed verifizierten vendor+product, so dass die anschliessende CVE-Suche
-        // exakt (vendor+product) ist und keine Cross-Vendor-False-Positives entstehen kann.
-        // KEIN generisches Token-Matching, kein Publisher-Substring-Fallback, keine CPE-API-Rate.
         var known = obj.matchKnownProduct(name);
         if (known) {
             return { vendor: known.vendor, product: known.product, viaCurated: true };
@@ -1799,31 +1634,11 @@ obj.loadNvdFromAllFiles = function () {
         return null;
     };
 
-    /**
-     * @brief Derive a candidate CPE product token from a display name by normalization,
-     * WITHOUT restricting to tokens that exist in the CVE feed. This is used only as a
-     * starting point for the CPE API validation path: the candidate is sent to the NVD
-     * CPE API, and only if the API confirms the token exists is it reported as real. This
-     * allows dictionary-only products (in the CPE dictionary but with no CVE) to be
-     * reported as "no CVE for &lt;token&gt;". Because every candidate is validated against
-     * the API, an invented/normalized token is never falsely reported as a real product.
-     * @param {string} name - The software display name.
-     * @returns {string|null} A lower-cased candidate CPE product token, or null.
-     */
-    obj.deriveCpeTokenCandidate = function (name) {
-        if (!name) return null;
-        // Strip common leading vendor words that are not part of the product name.
-        var t = String(name).replace(/^(microsoft|google|mozilla|adobe|oracle|apple|ibm|vmware|cisco|apache|the |the )/i, '').trim();
-        var norm = t.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
-        return norm || null;
-    };
-
-    /**
+/**
      * @brief Scan a software inventory list for CVE matches.
      * Searches by product name only (independent of vendor) against the NVD index.
-     * For products with no CVE match, the NVD CPE API is consulted (once per unique
-     * token, cached) to distinguish "no CVE for &lt;token&gt;" from "unknown software".
-     * Because it may perform network lookups, this function is asynchronous.
+     * Products with a curated CPE mapping but no CVE match are reported as "no CVE for <product>".
+     * Products without a curated mapping are reported as "not assessable".
      * @param {Array<object>} softwareList - The installed software list (from the plugin DB).
      * @param {function} callback - Called with <code>(deviceVulns)</code>.
      */
@@ -1871,11 +1686,11 @@ obj.loadNvdFromAllFiles = function () {
                 }
             }
 
-            // Kein CVE-Treffer in der kuratierten Liste. Wenn das Produkt ueber die kuratierte
-            // Tabelle bekannt ist, aber keine CVEs in der NVD-Liste hat -> "kein CVE".
-            // Wenn es NICHT in der kuratierten Tabelle ist -> "nicht bewertbar" (kein Raten,
-            // kein CPE-API-Kandidat). Unbekannte/OEM/Treiber-Software laeuft ueber Windows
-            // Update / herstellereigene Kanäle und wird hier transparent ausgewiesen.
+            // No CVE match in the curated list. If the product is known via the curated
+            // table but has no CVEs in the NVD list -> "no CVE".
+            // If it is NOT in the curated table -> "not assessable" (no guessing,
+            // no CPE API candidate). Unknown/OEM/driver software is handled via Windows
+            // Update / vendor channels and is transparently reported as such.
             if (searchResult) {
                 deviceVulns.push({
                     status: 'no CVE for ' + searchResult.product,
@@ -2253,6 +2068,7 @@ obj.loadNvdFromAllFiles = function () {
         if (req.query.action === 'show_cpe') { return obj.showCustomCpe(req, res, user); }
         if (req.query.action === 'report') { return obj.vulnerabilityReport(req, res, user); }
         if (req.query.action === 'deviceReport') { return obj.deviceReport(req, res, user); }
+        if (req.query.action === 'export') { return obj.exportCsv(req, res, user); }
         res.sendStatus(404);
     };
 
@@ -2274,6 +2090,9 @@ obj.loadNvdFromAllFiles = function () {
         if (req.body.action === 'get_locations') { return obj.getLocationsHandler(req, res, user); }
         if (req.body.action === 'get_cpe_table') { return obj.getCpeTableHandler(req, res, user); }
         if (req.body.action === 'delete_cpe_table') { return obj.deleteCpeTableHandler(req, res, user); }
+        if (req.body.action === 'get_settings') { return obj.getSettingsHandler(req, res, user); }
+        if (req.body.action === 'save_settings') { return obj.saveSettingsHandler(req, res, user); }
+        if (req.body.action === 'revert_setting') { return obj.revertSettingHandler(req, res, user); }
         res.sendStatus(404);
     };
 
@@ -2426,6 +2245,182 @@ obj.loadNvdFromAllFiles = function () {
         obj.saveCustomCpe(function (err) {
             if (err) { res.type('json'); res.json({ error: err.message }); return; }
             res.type('json'); res.json({ success: true });
+        });
+    };
+    // ---- Plugin settings (Settings tab) ----
+
+    /** @type {Array<string>} Valid severity values for notification thresholds. */
+    obj.SETTING_SEVERITIES = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'UNKNOWN'];
+
+    /**
+     * @brief Read a urlencoded boolean field.
+     * @param {*} v - The raw body value ('true'/'false'/undefined).
+     * @param {boolean} dflt - Value to use when the field is absent.
+     * @returns {boolean} The parsed boolean.
+     */
+    function boolSetting(v, dflt) {
+        if ((v === undefined) || (v === null) || (v === '')) { return dflt; }
+        return String(v).toLowerCase() === 'true';
+    }
+
+    /**
+     * @brief Return the effective scanner/collector settings plus the per-key source
+     * ('file' = saved via this UI, 'config.json' = server config, 'default').
+     * @param {object} res - The Express response.
+     * @param {object} user - The authenticated user.
+     */
+    obj.getSettingsHandler = function (req, res, user) {
+        var sc = obj.scannerConfig();
+        var cc = obj.collectorConfig();
+        var vsc = obj.effectiveSectionConfig('vulnerabilityScanner') || {};
+        var src = function (section, key) {
+            var over = obj.pluginSettings[section];
+            if (over && Object.prototype.hasOwnProperty.call(over, key)) { return 'file'; }
+            var b = null;
+            try { b = obj.meshServer.config.settings[section]; } catch (e) { }
+            if (b && Object.prototype.hasOwnProperty.call(b, key)) { return 'config.json'; }
+            return 'default';
+        };
+        var perGroupMap = function (section, key) {
+            var out = {};
+            var over = obj.pluginSettings[section];
+            var b = null;
+            try { b = obj.meshServer.config.settings[section]; } catch (e) { }
+            var merge = function (o) { if (o && (typeof o === 'object')) { for (var k in o) { if (Object.prototype.hasOwnProperty.call(o, k)) { out[k] = 'file'; } } } };
+            if (b && (typeof b[key] === 'object') && b[key]) { for (var k in b[key]) { if (out[k] == null) { out[k] = 'config.json'; } } }
+            merge(over && over[key]);
+            return out;
+        };
+        res.type('json');
+        res.json({
+            settings: {
+                scanIntervalHours: sc.intervalHours,
+                scanMeshes: sc.meshes || [],
+                notifyOnScan: sc.notifyOnScan,
+                notifyThreshold: sc.notifyThreshold,
+                notifyUnratedRepeat: sc.notifyUnratedRepeat,
+                notify: sc.notifyThresholds,
+                updateHours: (typeof vsc.updateHours === 'number') ? vsc.updateHours : 168,
+                anyCveMaxAgeYears: obj.anyCveMaxAgeYears(),
+                collectIntervalMinutes: cc.intervalMinutes,
+                collectOnAgentConnect: cc.collectOnAgentConnect
+            },
+            sources: {
+                scanIntervalHours: src('vulnerabilityScanner', 'scanIntervalHours'),
+                scanMeshes: src('vulnerabilityScanner', 'scanMeshes'),
+                notifyOnScan: src('vulnerabilityScanner', 'notifyOnScan'),
+                notifyThreshold: src('vulnerabilityScanner', 'notifyThreshold'),
+                notifyUnratedRepeat: src('vulnerabilityScanner', 'notifyUnratedRepeat'),
+                updateHours: src('vulnerabilityScanner', 'updateHours'),
+                anyCveMaxAgeYears: src('vulnerabilityScanner', 'anyCveMaxAgeYears'),
+                notifyPerGroup: perGroupMap('vulnerabilityScanner', 'notify'),
+                collectIntervalMinutes: src('inventoryScanner', 'collectIntervalMinutes'),
+                collectOnAgentConnect: src('inventoryScanner', 'collectOnAgentConnect'),
+                revertAllowed: {
+                    scanIntervalHours: (obj.pluginSettings.vulnerabilityScanner != null) && Object.prototype.hasOwnProperty.call(obj.pluginSettings.vulnerabilityScanner, 'scanIntervalHours'),
+                    updateHours: (obj.pluginSettings.vulnerabilityScanner != null) && Object.prototype.hasOwnProperty.call(obj.pluginSettings.vulnerabilityScanner, 'updateHours'),
+                    anyCveMaxAgeYears: (obj.pluginSettings.vulnerabilityScanner != null) && Object.prototype.hasOwnProperty.call(obj.pluginSettings.vulnerabilityScanner, 'anyCveMaxAgeYears'),
+                    collectIntervalMinutes: (obj.pluginSettings.inventoryScanner != null) && Object.prototype.hasOwnProperty.call(obj.pluginSettings.inventoryScanner, 'collectIntervalMinutes')
+                }
+            }
+        });
+    };
+
+    /**
+     * @brief Validate and persist the plugin settings from the Settings tab, then
+     * apply them immediately (timer generation bump + reschedule). Sent values fully
+     * replace the previous file content; 'reset=true' deletes all overrides instead.
+     * @param {object} req - The Express request (urlencoded fields of both sections).
+     * @param {object} res - The Express response.
+     * @param {object} user - The authenticated user.
+     */
+    obj.saveSettingsHandler = function (req, res, user) {
+        var send = function (o) { res.type('json'); res.json(o); };
+        if (String(req.body.reset || '') === 'true') {
+            obj.pluginSettings = {};
+            obj.savePluginSettings(function (err) {
+                if (err) { return send({ error: err.message }); }
+                obj.rescheduleAll();
+                send({ success: true, reset: true });
+            });
+            return;
+        }
+        var intSet = function (v, min, max, name) {
+            var x = parseInt(String(v), 10);
+            if (isNaN(x) || (x < min) || (x > max)) { return { error: 'Invalid ' + name + ' (expected ' + min + '..' + max + ').' }; }
+            return { value: x };
+        };
+        var iv = intSet(req.body.scanIntervalHours, 0, 87600, 'scan interval (hours)'); if (iv.error) { return send(iv); }
+        var uh = intSet(req.body.updateHours, 1, 87600, 'feed update interval (hours)'); if (uh.error) { return send(uh); }
+        var ag = intSet(req.body.anyCveMaxAgeYears, 0, 50, 'any-CVE max age (years)'); if (ag.error) { return send(ag); }
+        var ci = intSet(req.body.collectIntervalMinutes, 0, 525600, 'collection interval (minutes)'); if (ci.error) { return send(ci); }
+        var notifyThreshold = String(req.body.notifyThreshold || '').toUpperCase();
+        if (obj.SETTING_SEVERITIES.indexOf(notifyThreshold) < 0) { return send({ error: 'Invalid notification threshold.' }); }
+        var scanMeshes = parseMeshIds(req.body.scanMeshes);
+        var ids = String(req.body.notifyMeshIds || '').split(',');
+        var sevs = String(req.body.notifySeverities || '').split(',');
+        var notify = {};
+        for (var i = 0; i < ids.length; i++) {
+            var id = ids[i].trim();
+            if (!id) { continue; }
+            var sev = String(sevs[i] || '').toUpperCase();
+            if (!/^mesh\/[^:]+$/.test(id) || (obj.SETTING_SEVERITIES.indexOf(sev) < 0)) { return send({ error: 'Invalid per-group notification setting.' }); }
+            notify[id] = sev;
+        }
+        obj.pluginSettings = {
+            vulnerabilityScanner: {
+                scanIntervalHours: iv.value,
+                scanMeshes: scanMeshes,
+                notifyOnScan: boolSetting(req.body.notifyOnScan, true),
+                notifyThreshold: notifyThreshold,
+                notifyUnratedRepeat: boolSetting(req.body.notifyUnratedRepeat, false),
+                notify: notify,
+                updateHours: uh.value,
+                anyCveMaxAgeYears: ag.value
+            },
+            inventoryScanner: {
+                collectIntervalMinutes: ci.value,
+                collectOnAgentConnect: boolSetting(req.body.collectOnAgentConnect, true)
+            }
+        };
+        obj.savePluginSettings(function (err) {
+            if (err) { obj.pluginSettings = {}; return send({ error: err.message }); }
+            obj.rescheduleAll();
+            obj.getSettingsHandler({}, res, user);
+        });
+    };
+
+    /**
+     * @brief Revert a single setting override so the value from config.json (or the
+     * built-in default) applies again. Expects one body key named after the setting.
+     * @param {object} req - The Express request (urlencoded <code>revert&lt;Key&gt;=true</code>).
+     * @param {object} res - The Express response.
+     * @param {object} user - The authenticated user.
+     */
+    obj.revertSettingHandler = function (req, res, user) {
+        var SETTING_MAP = {
+            revertScanIntervalHours: ['vulnerabilityScanner', 'scanIntervalHours'],
+            revertScanMeshes: ['vulnerabilityScanner', 'scanMeshes'],
+            revertNotifyOnScan: ['vulnerabilityScanner', 'notifyOnScan'],
+            revertNotifyThreshold: ['vulnerabilityScanner', 'notifyThreshold'],
+            revertNotifyUnratedRepeat: ['vulnerabilityScanner', 'notifyUnratedRepeat'],
+            revertNotify: ['vulnerabilityScanner', 'notify'],
+            revertUpdateHours: ['vulnerabilityScanner', 'updateHours'],
+            revertAnyCveMaxAgeYears: ['vulnerabilityScanner', 'anyCveMaxAgeYears'],
+            revertCollectIntervalMinutes: ['inventoryScanner', 'collectIntervalMinutes'],
+            revertCollectOnAgentConnect: ['inventoryScanner', 'collectOnAgentConnect']
+        };
+        var hit = null;
+        for (var key in SETTING_MAP) {
+            if (Object.prototype.hasOwnProperty.call(SETTING_MAP, key) && Object.prototype.hasOwnProperty.call(req.body, key)) { hit = SETTING_MAP[key]; break; }
+        }
+        if (hit == null) { res.type('json'); res.json({ error: 'Nothing to revert.' }); return; }
+        var section = obj.pluginSettings[hit[0]];
+        if (section) { delete section[hit[1]]; }
+        obj.savePluginSettings(function (err) {
+            if (err) { res.type('json'); res.json({ error: err.message }); return; }
+            obj.rescheduleAll();
+            obj.getSettingsHandler({}, res, user);
         });
     };
 
@@ -2841,6 +2836,38 @@ obj.loadNvdFromAllFiles = function () {
                 report: report,
                 totalCves: obj.allCves.length,
                 lastUpdate: obj.lastUpdate || ''
+            });
+        });
+    };
+
+    /**
+     * @brief Stream a full-inventory CSV download for ALL non-deleted devices, intended for
+     * main-menu links (<code>customui.mainmenuicons</code>) where no device selection exists.
+     * Same generator as the device-list toolbar export, so column layout and status semantics
+     * are identical. Gated on full site admin by handleAdminReq.
+     * @param {object} req - The Express request (<code>type=hardware|software|vulns</code>).
+     * @param {object} res - The Express response (CSV attachment).
+     * @param {object} user - The authenticated user.
+     */
+    obj.exportCsv = function (req, res, user) {
+        var type = String(req.query.type || 'vulns');
+        if (['hardware', 'software', 'vulns'].indexOf(type) < 0) { res.sendStatus(400); return; }
+        var base = (type === 'vulns') ? 'Vulnerabilities' : ((type === 'hardware') ? 'HardwareInventory' : 'SoftwareInventory');
+        obj.meshServer.db.GetAllType('node', function (err, nodes) {
+            if (err) { res.sendStatus(500); return; }
+            var liveNodes = [];
+            if (nodes) {
+                for (var i = 0; i < nodes.length; i++) {
+                    var n = nodes[i];
+                    if (n && (n._id != null) && (n.deleted == null)) { liveNodes.push(n); }
+                }
+            }
+            obj.buildCsvForNodes(liveNodes, type, function (err2, csvContent) {
+                if (err2) { res.sendStatus(500); return; }
+                var filename = base + '_' + timestamp() + '.csv';
+                res.setHeader('Content-Disposition', 'attachment; filename="' + filename + '"');
+                res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+                res.send('\uFEFF' + ((csvContent != null) ? csvContent : ''));
             });
         });
     };

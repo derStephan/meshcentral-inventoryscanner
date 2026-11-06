@@ -1,5 +1,7 @@
 # MeshCentral Inventory & Vulnerability Scanner Plugin
 
+> **Transparency**: Created with **Qwen 3.6 27B** & **Qwen 3.8 Flash Next** • Audited by **NVIDIA Nemotron 3 550B A55B** (2026-11-06)
+
 A [MeshCentral](https://github.com/Ylianst/MeshCentral) plugin that turns your MeshCentral server into an offline
 software/vulnerability inventory: CSV exports for audits, an NVD-based CVE scanner that works without sending any
 inventory data to the internet, a group-wide vulnerability assessment panel, printable audit reports and automatic
@@ -13,14 +15,27 @@ commercial vulnerability scanner.
 
 ## Features
 
-### 1. Inventory CSV exports (device-list toolbar)
-Select devices in any group and export via new toolbar buttons:
+### 1. Inventory CSV exports
 
-| Export | Content |
-|---|---|
-| **Hardware** | CPU, GPU, memory (banks), disks, network, BIOS/UEFI, mainboard, chassis, TPM — from the stored sysinfo, so it works offline |
-| **Software** | One row per installed application: name, version, publisher, location, install date |
-| **Vulnerability Scan** | One row per software/OS finding, with a `Status` column: `CVE`, `no CVE for <product>`, `not assessable` or `false positive` |
+Two ways to export, depending on what you need:
+
+* **Device-list toolbar** — select devices in any group and export exactly those:
+
+  | Button (`logmsg`) | Result |
+  |---|---|
+  | **Hardware Inventory** (`hardware`) | CSV: CPU, GPU, memory (banks), disks, network, BIOS/UEFI, mainboard, chassis, TPM — from the stored sysinfo, so it works offline |
+  | **Software Inventory** (`software`) | CSV: one row per installed application: name, version, publisher, location, install date |
+  | **Vulnerability Assessment** (`assessment`) | Opens the assessment panel in a new tab (no CSV) |
+
+* **Main menu bar / panel navigation (all devices)** — plain links that download a CSV of the whole
+  inventory without selecting anything first:
+
+  ```
+  /pluginadmin.ashx?pin=inventoryscanner&action=export&type=hardware|software|vulns
+  ```
+
+  The `vulns` export has one row per software/OS finding with a `Status` column:
+  `CVE`, `no CVE for <product>`, `not assessable` or `false positive`.
 
 CSVs are Excel-safe (UTF-8 BOM) and neutralized against CSV formula injection (CWE-1236).
 
@@ -39,6 +54,7 @@ Open `https://<server>/pluginadmin.ashx?pin=inventoryscanner&action=show`:
 * **Mark as false positive** (no comment required) — the finding stops counting everywhere (panel, reports, scheduled notifications, CSV shows `false positive`). Undo restores normal counting.
 * **Affected locations and devices (host names)** are shown per finding; a *mixed* badge marks findings whose locations carry different ratings.
 * **CPE Mapping tab** — the complete built-in + custom software-to-CPE table is visible in the UI. Add new mappings, or override any built-in row (custom entries always win). Stored in `custom-cpe.json`, no source edits needed.
+* **Settings tab** - configure everything from the UI: scan interval, which groups are scanned, notification threshold (global + per group), notify mode, feed refresh and inventory collection. Saved to `scanner-settings.json`, effective **immediately without a restart**, and these values **override the same keys in config.json** — the plugin never writes config.json, it only reads it as fallback.
 
 ### 4. Printable audit reports (HTML, Print/Save-as-PDF)
 A top navigation connects all pages (Assessment Panel / Vulnerability Report / Device Report). Both reports start with an overview page, then **one page per location** (real page breaks for printing), and state their own blind spot (**CPE coverage**) so a low finding count can never be misread as "everything is clean".
@@ -50,7 +66,7 @@ A top navigation connects all pages (Assessment Panel / Vulnerability Report / D
 On a configurable interval (e.g. monthly) the server re-scans all groups, stores the result in `<datapath>/nvd/scans.json` and notifies all full site admins via a MeshCentral toast + the server event log listing findings **at or above a per-group severity threshold**:
 
 * Newly appeared findings are marked `(SEVERITY, new)`.
-* With `notifyUnratedRepeat: true` everything still **without a rating** is repeated every run as `(SEVERITY, open)` — the notification becomes a recurring to-do list that shrinks as you work it.
+* With "Repeat unrated findings every scan" enabled (`notifyUnratedRepeat`) everything still **without a rating** is repeated every run as `(SEVERITY, open)` — the notification becomes a recurring to-do list that shrinks as you work it.
 * Findings with a group rating (or false-positive flag) are never reported again.
 * Scheduling is restart-proof (computed from the persisted last-scan timestamp) and safe for intervals beyond 24.8 days.
 
@@ -87,7 +103,7 @@ On a configurable interval (e.g. monthly) the server re-scans all groups, stores
 
    The data volume survives MeshCentral updates/reinstalls.
 
-2. **Configure it** in `<datapath>/config.json`. The only mandatory part is enabling the plugin:
+2. **Enable the plugin** in `<datapath>/config.json` - this single edit is all the file configuration ever needed:
 
    ```json
    "settings": {
@@ -95,127 +111,76 @@ On a configurable interval (e.g. monthly) the server re-scans all groups, stores
    }
    ```
 
-   Everything else (toolbar buttons, scan scheduling, notifications, collection) is optional and
-   explained in the [complete annotated example below](#complete-example).
+   That is the **only mandatory manual config edit** in this entire documentation. Everything else is managed in
+   the panel: scanner and collection settings in the **Settings tab** (effective immediately, no restart),
+   exports and reports via the panel navigation. Optional conveniences - toolbar/menu buttons and file-based
+   defaults - are described in [Configuration](#configuration).
 
 3. **Restart** the server (`docker compose restart meshcentral`) and hard-reload the admin UI (Ctrl+F5).
 
 On first start the plugin downloads the NVD feeds (all years — this can take a while, watch `<datapath>/nvd/nvd-download.log`). Panel and reports work as soon as the feeds are indexed.
 
-## Configuration reference
+## Configuration
 
-All plugin settings live in the server's `config.json`. MeshCentral **allows `//` comments** in that file, so the
-annotated example below can be adopted as-is — merge it into your existing config, delete what you do not need and
-remove or keep the comments. Every key is optional unless stated otherwise; the shown values are the defaults.
+**Everything is configured in the panel Settings tab** - no file editing, and changes take effect immediately
+without a restart. Values are stored in `<datapath>/plugins/inventoryscanner/scanner-settings.json` and
+**override the same keys in `config.json`** (which the plugin never writes). Per-field "revert to config.json"
+and a global "Reset all" hand control back to the file.
 
-### Complete example
+The Settings tab covers: scan interval + which device groups are scanned, notification switch, threshold
+(global and per group) and repeat mode, NVD feed refresh, suppression of ancient "any version" CVEs, and the
+inventory collection interval / on-connect behavior.
 
-```jsonc
-{
-  "settings": {
-    // ... your existing MeshCentral settings (cert, port, TLS, ...) ...
+### config.json (optional)
 
-    // (1) Enable the plugin. Required.
-    "plugins": {
-      "enabled": true,
-      "list": ["inventoryscanner"]
-    },
+Only the `plugins` block is required (see [Installation](#installation)). The scanner keys are a fallback for
+file-based setups or unattended installs - MeshCentral supports `//` comments. Anything saved in the Settings
+tab wins over these values until you revert it.
 
-    // (2) Vulnerability scanner & scheduled scans (section name is "vulnerabilityScanner")
-    "vulnerabilityScanner": {
+| Key (under `settings.vulnerabilityScanner`) | Default | Equivalent in the Settings tab |
+|---|---|---|
+| `scanIntervalHours` | `24` | Scan interval in hours (`0` = off); timed from the end of the last scan, restart-proof |
+| `scanMeshes` | all | Group table "Scan" checkboxes (empty selection = all groups) |
+| `notifyOnScan` | `true` | "Notify admins after scans" |
+| `notifyThreshold` | `"HIGH"` | Global notify threshold (CRITICAL/HIGH/MEDIUM/LOW/UNKNOWN) |
+| `notify` (`meshId` -> severity) | - | Group table per-group threshold (empty = global) |
+| `notifyUnratedRepeat` | `false` | "Repeat unrated findings every scan" (`open` instead of only `new`) |
+| `updateHours` | `168` | NVD feed refresh in hours |
+| `anyCveMaxAgeYears` | `5` | "Suppress version-less CVEs older than N years" (`0` = never) |
+| `collectIntervalMinutes` (*`inventoryScanner`* section) | `1440` | Collect inventory every N minutes (`0` = off) |
+| `collectOnAgentConnect` (*`inventoryScanner`* section) | `true` | "Collect when an agent connects" |
 
-      // How often the automatic scans run, in HOURS measured from the END of the last
-      // successful scan (not a calendar day - it simply keeps the rhythm; restart-proof:
-      // after a server reboot the remaining time is recomputed from the stored timestamp).
-      // 24 = daily, 168 = weekly, 720 = monthly. 0 = disable scheduled scans entirely
-      // (panel/CSV/reports still work on demand).
-      "scanIntervalHours": 24,
+Group ids are MeshCentral mesh `_id`s formatted `mesh/<domain>/<name>` - in the default domain that means a
+double slash, e.g. `mesh//Server1`. Easiest lookup: the checkbox `value`s in the panel (view page source) or
+the `meshes` collection in the database.
 
-      // Which device groups to scan: list of MeshCentral mesh ids, e.g. ["mesh//Server1"].
-      // Empty list or omitted = ALL groups. See the note below on how to find a group's id.
-      "scanMeshes": [],
+### Optional: buttons in the MeshCentral interface
 
-      // Send a notification to all full site admins after each scheduled scan
-      // (MeshCentral toast + entry under My Server -> Events).
-      "notifyOnScan": true,
+Every function is reachable from the panel navigation. If you want shortcuts in the device-list toolbar or the
+main menu bar, they are MeshCentral `customui` features (per domain) and still configured in `config.json`:
 
-      // Minimum severity a finding must have to appear in a notification:
-      // "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "UNKNOWN". This is the global fallback.
-      "notifyThreshold": "HIGH",
-
-      // Notification mode:
-      // false = each CVE is reported once when it first appears ("(SEVERITY, new)"), then silence.
-      // true  = additionally every finding that STILL has no group rating is repeated on every
-      //         scan ("(SEVERITY, open)"). This turns the monthly notification into a to-do list
-      //         that shrinks as you rate/flag findings. Never for rated/flagged ones.
-      "notifyUnratedRepeat": false,
-
-      // Per-group threshold overrides (optional). Key = mesh id, value = severity string.
-      // Groups listed here use their own threshold, all others use "notifyThreshold".
-      "notify": {
-        "mesh//Server1": "MEDIUM",
-        "mesh//Lab": "CRITICAL"
-      },
-
-      // NVD feed refresh interval in hours (feeds are downloaded weekly by default;
-      // the initial download of all years happens automatically on first start).
-      "updateHours": 168,
-
-      // CVEs whose CPE entry applies to ALL versions ("*") and are older than N years are
-      // suppressed (they would match every installed version - ancient noise). 0 = disabled.
-      "anyCveMaxAgeYears": 5
-    },
-
-    // (3) Inventory collection (section name is "inventoryScanner" - one 'l' less than (2)!)
-    //     MeshCentral does not store installed software; this plugin asks the online agents
-    //     itself and caches the results per device (this is what the CVE scan reads).
-    "inventoryScanner": {
-      // Query all online agents every N minutes for installed software and the
-      // Windows-update status. 1440 = daily. 0 = no periodic collection (the panel would
-      // then only know agents that connected since the last server start).
-      "collectIntervalMinutes": 1440,
-      // Also collect shortly after each agent (re)connect - staggered randomly between
-      // 5 s and 5 min so a fleet reconnecting after a reboot does not cause a load spike.
-      "collectOnAgentConnect": true
-    }
-  },
-
-  "domains": {
-    // "" = the default domain. If your MeshCentral uses named domains, repeat the block
-    // per domain or set it only where the buttons should appear.
-    "": {
-      // Buttons in the device-list toolbar. Appears when devices are checked; each button
-      // downloads a CSV for the selected devices ("assessment" opens the panel instead).
-      // selection: "many" = works with 1+ devices, "one" = exactly one device.
-      "customui": {
-        "devicesbarbuttons": [
-          { "name": "Hardware Inventory",        "selection": "many", "action": "event", "logmsg": "hardware" },
-          { "name": "Software Inventory",        "selection": "many", "action": "event", "logmsg": "software" },
-          { "name": "Vulnerability Raw Data",    "selection": "many", "action": "event", "logmsg": "vulns" },
-          { "name": "Vulnerability Assessment",  "selection": "many", "action": "event", "logmsg": "assessment" }
-        ]
-      }
-    }
-  }
-}
+```json
+"domains": { "": { "customui": {
+  "devicesbarbuttons": [
+    { "name": "Hardware Inventory", "selection": "many", "action": "event", "logmsg": "hardware" },
+    { "name": "Software Inventory", "selection": "many", "action": "event", "logmsg": "software" },
+    { "name": "Vulnerability Assessment", "selection": "many", "action": "event", "logmsg": "assessment" }
+  ],
+  "mainmenuicons": [
+    { "name": "Vulnerability Assessment", "url": "/pluginadmin.ashx?pin=inventoryscanner&action=show", "popup": true },
+    { "name": "Vulns CSV (all devices)", "url": "/pluginadmin.ashx?pin=inventoryscanner&action=export&type=vulns" }
+  ]
+} } }
 ```
-
-### Finding a group id (mesh id)
-
-`scanMeshes` and the `notify` map use MeshCentral's mesh `_id`, formatted `mesh/<domain>/<groupname>` — in the
-default domain that is a **double slash**, e.g. `mesh//Server1`. Easiest ways to look it up:
-
-* Open the assessment panel, use the browser's "View Page Source" and search for `class="loc-cb"` — every
-  checkbox of the floating Locations panel carries the group id in its `value` attribute.
-* Or look at the `meshes` collection in MeshCentral's database (the `_id` field).
 
 ### Notes
 
-* `vulnerabilityScanner` and `inventoryScanner` are **siblings of `plugins`** directly under `settings` — not
-  inside the `plugins` block. The two section names differ by one letter; a typo here silently keeps defaults.
-* After every config change: restart the server; after `customui` changes also hard-reload the browser (Ctrl+F5).
-* Ratings/comments/mappings you enter in the UI are stored outside `config.json` under `<datapath>/nvd/` and
-  `<datapath>/plugins/inventoryscanner/` — see [Data written](#data-written-by-the-plugin).
+* `vulnerabilityScanner` and `inventoryScanner` are **siblings of `plugins`** directly under `settings`. The two
+  section names differ by one letter; a typo silently keeps defaults.
+* Settings-tab changes need **no restart**; `config.json` changes need a server restart, `customui` changes
+  additionally a browser hard-reload (Ctrl+F5).
+* Ratings, comments, CPE mappings and UI settings live under `<datapath>/nvd/` and
+  `<datapath>/plugins/inventoryscanner/` - see [Data written](#data-written-by-the-plugin).
 
 ## URLs
 
@@ -224,6 +189,7 @@ default domain that is a **double slash**, e.g. `mesh//Server1`. Easiest ways to
 | Assessment panel | `/pluginadmin.ashx?pin=inventoryscanner&action=show` |
 | Vulnerability report | `/pluginadmin.ashx?pin=inventoryscanner&action=report` |
 | Device report | `/pluginadmin.ashx?pin=inventoryscanner&action=deviceReport` |
+| CSV download (all devices) | `/pluginadmin.ashx?pin=inventoryscanner&action=export&type=hardware` (or `software`, `vulns`) |
 
 ## Data written by the plugin
 
@@ -234,6 +200,7 @@ default domain that is a **double slash**, e.g. `mesh//Server1`. Easiest ways to
 <datapath>/nvd/cpe-tokens.json             CPE dictionary lookup cache
 <datapath>/nvd/nvd-download.log            feed download log
 <datapath>/plugins/inventoryscanner/custom-cpe.json      your CPE mappings
+<datapath>/plugins/inventoryscanner/scanner-settings.json  values saved in the Settings tab
 <datapath>/plugins/inventoryscanner/data/<nodeid>/       collected software + Windows-update state per device
 ```
 
@@ -275,6 +242,14 @@ npm test             # node --check + logic tests + view render tests
 ```
 
 See [AGENTS.md](AGENTS.md) for the full technical description aimed at AI agents.
+
+## Security & Audit
+
+- **Security Policy**: See [SECURITY.md](SECURITY.md) for supported versions, reporting, and architecture.
+- **Audit Report**: Full formal & functional verification in [AUDIT.md](AUDIT.md) (2026-11-06).
+- **Changelog**: Version history in [CHANGELOG.md](CHANGELOG.md).
+
+Latest audit: **78/78 tests pass**, 1 critical bug fixed (`anyCveMaxAgeYears` settings overlay), ~466 lines dead code removed, all security controls verified.
 
 ## License
 

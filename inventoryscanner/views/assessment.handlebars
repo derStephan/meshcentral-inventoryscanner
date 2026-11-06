@@ -41,6 +41,12 @@
         .badge-builtin { background: #e0e7ef; color: #33455c; }
         .badge-custom { background: #d4edda; color: #155724; }
         .badge-mixed { background: #fff3cd; color: #856404; }
+        .setgrid { display: grid; grid-template-columns: 280px 1fr; gap: 12px 16px; align-items: start; margin: 14px 0 22px 0; }
+        .setgrid > label { font-weight: 600; font-size: 13px; padding-top: 6px; }
+        .setgrid .hint { color: #66737f; font-size: 12px; margin-top: 4px; }
+        .srcsel { padding: 4px; border: 1px solid #ddd; border-radius: 4px; font-size: 11px; color: #555; background: #fff; }
+        .srcsel:disabled { color: #98a3ad; }
+        .num { width: 90px; }
         .override select, .override input, select, input[type="text"] { padding: 6px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; }
         .override input { width: 220px; }
         .override-set { background: #e7f3ff; border-left: 3px solid #4a90d9; padding: 4px 8px; margin-top: 6px; font-size: 12px; }
@@ -52,6 +58,7 @@
         .topnav a { color: #d7e6f5; text-decoration: none; padding: 6px 12px; border-radius: 5px; font-size: 13px; font-weight: 600; }
         .topnav a:hover { background: #154d80; color: #fff; }
         .topnav a.active { background: #4a90d9; color: #fff; }
+        .topnav .exportlabel { margin-left: auto; color: #9fc3e0; font-size: 12px; align-self: center; }
         .nav-tabs { display: flex; gap: 8px; margin-bottom: 20px; border-bottom: 2px solid #e0e4ea; padding-bottom: 8px; }
         .nav-tab { padding: 10px 20px; background: #f0f4f9; border: 1px solid #d8e0ec; border-bottom: none; border-radius: 6px 6px 0 0; cursor: pointer; font-weight: 500; color: #4a90d9; text-decoration: none; }
         .nav-tab.active { background: #fff; border-color: #d8e0ec; border-bottom: 2px solid #4a90d9; color: #4a90d9; }
@@ -85,6 +92,10 @@
         <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=show" class="active">Assessment Panel</a>
         <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=report" target="_blank" rel="noopener">Vulnerability Report</a>
         <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=deviceReport" target="_blank" rel="noopener">Device Report</a>
+        <span class="exportlabel">CSV export (all devices):</span>
+        <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=export&amp;type=hardware">Hardware</a>
+        <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=export&amp;type=software">Software</a>
+        <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=export&amp;type=vulns">Vulnerabilities</a>
     </div>
 
     <div class="container">
@@ -103,6 +114,7 @@
 
         <div class="nav-tabs">
             <a href="#" class="nav-tab active" data-tab="assessment">Vulnerability Assessment</a>
+            <a href="#" class="nav-tab" data-tab="settings">Settings</a>
             <a href="#" class="nav-tab" data-tab="cpe">CPE Mapping</a>
         </div>
 
@@ -135,6 +147,73 @@
 
             <div id="msg"></div>
             <div class="table-container" id="results"></div>
+        </div>
+
+        <div class="tab-content" id="tab-settings">
+            <h2>Scheduled scanning &amp; collection</h2>
+            <div class="info">
+                Values saved here go into <code>scanner-settings.json</code> inside the plugin's data folder and
+                <strong>override the same keys in the server's config.json</strong> - immediately and without a
+                restart. config.json is never written by the plugin and remains the fallback
+                ("from config.json" / "built-in default"). Use a field's <em>revert</em> option or the
+                <em>Reset all</em> button to hand control back to config.json.
+            </div>
+            <div class="setgrid">
+                <label for="setInterval">Scan interval (hours)</label>
+                <div><input type="text" id="setInterval" class="num">
+                    <select id="setIntervalSrc" class="srcsel"></select>
+                    <div class="hint">Measured from the end of the last scan; restart-proof. 24 = daily, 168 = weekly, 720 = monthly, 0 = scheduled scans off.</div></div>
+
+                <label for="setUpdateHours">NVD feed refresh (hours)</label>
+                <div><input type="text" id="setUpdateHours" class="num">
+                    <select id="setUpdateHoursSrc" class="srcsel"></select></div>
+
+                <label for="setAnyAge">Suppress version-less CVEs older than (years)</label>
+                <div><input type="text" id="setAnyAge" class="num">
+                    <select id="setAnyAgeSrc" class="srcsel"></select>
+                    <div class="hint">"any version" CPE matches older than N years are hidden; 0 = never.</div></div>
+
+                <label for="setCollectInterval">Collect inventory every (minutes)</label>
+                <div><input type="text" id="setCollectInterval" class="num">
+                    <select id="setCollectIntervalSrc" class="srcsel"></select>
+                    <div class="hint">1440 = daily, 0 = periodic collection off (offline devices keep their last list).</div></div>
+
+                <label for="setCollectOnConnect">Collect when an agent connects</label>
+                <div><input type="checkbox" id="setCollectOnConnect">
+                    <div class="hint">Staggered randomly (5s to 5min) so reconnecting fleets do not cause a load spike.</div></div>
+
+                <label for="setNotifyOnScan">Notify admins after scans</label>
+                <div><input type="checkbox" id="setNotifyOnScan"></div>
+
+                <label for="setNotifyThreshold">Global notify threshold</label>
+                <div><select id="setNotifyThreshold">
+                        <option value="CRITICAL">Critical and above</option>
+                        <option value="HIGH">High and above</option>
+                        <option value="MEDIUM">Medium and above</option>
+                        <option value="LOW">Low and above</option>
+                        <option value="UNKNOWN">Everything</option>
+                    </select></div>
+
+                <label for="setNotifyRepeat">Repeat unrated findings every scan</label>
+                <div><input type="checkbox" id="setNotifyRepeat">
+                    <div class="hint">Notification becomes a to-do list: findings stay listed as "(severity, open)" until they are rated or flagged. New ones are always reported once as "(severity, new)".</div></div>
+            </div>
+
+            <h3>Device groups</h3>
+            <div class="hint" style="margin-bottom:6px;">"Scan" unchecked for <b>all</b> groups = scan <b>all</b> groups (an empty selection means all).
+                A per-group threshold overrides the global one for notifications from that group.</div>
+            <div class="table-container">
+                <table>
+                    <thead><tr><th>Group</th><th>Scan</th><th>Notify threshold</th><th>Source</th></tr></thead>
+                    <tbody id="groupTableBody"><tr><td colspan="4" style="color:#888">Loading...</td></tr></tbody>
+                </table>
+            </div>
+
+            <div class="controls" style="margin-top:16px;">
+                <button id="saveSettingsBtn">Save Settings</button>
+                <button id="resetSettingsBtn" class="red">Reset all to config.json</button>
+            </div>
+            <div id="settingsMsg"></div>
         </div>
 
         <div class="tab-content" id="tab-cpe">
@@ -715,12 +794,137 @@
             }).catch(function (err) { showMsg('cpeMsg', 'Save failed: ' + err.message, false); });
         });
 
+        // ---------- Settings tab ----------
+
+        var VALID_SEVERITIES = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'UNKNOWN'];
+
+        // Where does an effective value come from? 'file' wins over 'config.json' over 'default';
+        // an overridden numeric field gets a per-key revert option in its source select.
+        function applyConfigSourceUi(sel, source, revertAction) {
+            if (source === 'file') {
+                sel.innerHTML = '<option value="" selected>set in plugin settings</option><option value="revert">revert to config.json</option>';
+            } else if (source === 'config.json') {
+                sel.innerHTML = '<option value="" selected>from config.json</option>';
+            } else {
+                sel.innerHTML = '<option value="" selected>built-in default</option>';
+            }
+            sel.value = '';
+            sel.onchange = function () {
+                if (sel.value !== 'revert') { return; }
+                var b = {};
+                b[revertAction] = 'true';
+                post('revert_setting', b).then(function (d) {
+                    if (d.error) { showMsg('settingsMsg', d.error, false); return; }
+                    showMsg('settingsMsg', 'Setting reverted - the config.json value applies again.', true);
+                    loadSettings();
+                }).catch(function (e) { showMsg('settingsMsg', 'Revert failed: ' + e.message, false); });
+            };
+        }
+
+        function setBool(id, val) { var el = $(id); if (el) { el.checked = (val === true || val === 'true'); } }
+
+        function loadSettings() {
+            post('get_settings', {}).then(function (data) {
+                if (data.error) { showMsg('settingsMsg', data.error, false); return; }
+                var s = data.settings || {}, src = data.sources || {};
+                if (s.notifyThreshold) { $('setNotifyThreshold').value = s.notifyThreshold; }
+                setBool('setNotifyOnScan', s.notifyOnScan);
+                setBool('setNotifyRepeat', s.notifyUnratedRepeat);
+                setBool('setCollectOnConnect', s.collectOnAgentConnect);
+                if (s.scanIntervalHours !== undefined) $('setInterval').value = s.scanIntervalHours;
+                applyConfigSourceUi($('setIntervalSrc'), src.scanIntervalHours, 'revertScanIntervalHours');
+                if (s.updateHours !== undefined) $('setUpdateHours').value = s.updateHours;
+                applyConfigSourceUi($('setUpdateHoursSrc'), src.updateHours, 'revertUpdateHours');
+                if (s.anyCveMaxAgeYears !== undefined) $('setAnyAge').value = s.anyCveMaxAgeYears;
+                applyConfigSourceUi($('setAnyAgeSrc'), src.anyCveMaxAgeYears, 'revertAnyCveMaxAgeYears');
+                if (s.collectIntervalMinutes !== undefined) $('setCollectInterval').value = s.collectIntervalMinutes;
+                applyConfigSourceUi($('setCollectIntervalSrc'), src.collectIntervalMinutes, 'revertCollectIntervalMinutes');
+                loadGroupSelects(function () {
+                    var sc = s.scanMeshes || [];
+                    var cbs = document.querySelectorAll('.set-scan-cb');
+                    for (var i = 0; i < cbs.length; i++) { cbs[i].checked = (sc.length === 0) || (sc.indexOf(cbs[i].value) >= 0); }
+                    var trs = document.querySelectorAll('#groupTableBody tr');
+                    var perGroup = src.notifyPerGroup || {};
+                    for (var j = 0; j < trs.length; j++) {
+                        var mid = trs[j].getAttribute('data-mesh');
+                        var sel = trs[j].querySelector('.set-grp-thresh');
+                        var srcCell = trs[j].querySelector('.grp-src');
+                        if (sel && s.notify && s.notify[mid]) { sel.value = s.notify[mid]; }
+                        if (srcCell) { srcCell.textContent = (perGroup[mid] === 'file') ? 'set here' : ((perGroup[mid] === 'config.json') ? 'from config.json' : ''); }
+                    }
+                });
+            }).catch(function (e) { showMsg('settingsMsg', 'Failed to load settings: ' + e.message, false); });
+        }
+
+        function loadGroupSelects(done) {
+            post('get_locations', {}).then(function (d) {
+                var tb = $('groupTableBody');
+                if (!tb) { done(); return; }
+                var locs = (d.locations || []).slice().sort(function (a, b) { return String(a.name).localeCompare(String(b.name)); });
+                var rows = '';
+                for (var i = 0; i < locs.length; i++) {
+                    rows += '<tr data-mesh="' + esc(locs[i].id) + '">' +
+                        '<td>' + esc(locs[i].name) + '</td>' +
+                        '<td><input type="checkbox" class="set-scan-cb" value="' + esc(locs[i].id) + '" checked></td>' +
+                        '<td><select class="set-grp-thresh"><option value="">Global default</option>' +
+                        '<option value="CRITICAL">Critical</option><option value="HIGH">High</option><option value="MEDIUM">Medium</option>' +
+                        '<option value="LOW">Low</option><option value="UNKNOWN">Unknown</option></select></td>' +
+                        '<td class="grp-src"></td></tr>';
+                }
+                if (locs.length === 0) { rows = '<tr><td colspan="4" style="color:#888">No device groups found.</td></tr>'; }
+                tb.innerHTML = rows;
+                done();
+            }).catch(function () { done(); });
+        }
+
+        $('saveSettingsBtn').addEventListener('click', function () {
+            var scanIds = [], notifyIds = [], notifySevs = [];
+            var allScanCbs = document.querySelectorAll('.set-scan-cb');
+            var allChecked = (allScanCbs.length > 0), anyChecked = false;
+            for (var i = 0; i < allScanCbs.length; i++) {
+                if (allScanCbs[i].checked) { scanIds.push(allScanCbs[i].value); anyChecked = true; } else { allChecked = false; }
+            }
+            var trs = document.querySelectorAll('#groupTableBody tr');
+            for (var j = 0; j < trs.length; j++) {
+                var mid = trs[j].getAttribute('data-mesh');
+                var sevSel = trs[j].querySelector('.set-grp-thresh');
+                if (mid && sevSel && sevSel.value) { notifyIds.push(mid); notifySevs.push(sevSel.value); }
+            }
+            var body = {
+                scanIntervalHours: $('setInterval').value,
+                updateHours: $('setUpdateHours').value,
+                anyCveMaxAgeYears: $('setAnyAge').value,
+                collectIntervalMinutes: $('setCollectInterval').value,
+                notifyThreshold: $('setNotifyThreshold').value,
+                notifyOnScan: $('setNotifyOnScan').checked ? 'true' : 'false',
+                notifyUnratedRepeat: $('setNotifyRepeat').checked ? 'true' : 'false',
+                collectOnAgentConnect: $('setCollectOnConnect').checked ? 'true' : 'false',
+                scanMeshes: (allChecked || !anyChecked) ? '' : scanIds.join(','),
+                notifyMeshIds: notifyIds.join(','),
+                notifySeverities: notifySevs.join(',')
+            };
+            post('save_settings', body).then(function (d) {
+                if (d.error) { showMsg('settingsMsg', d.error, false); return; }
+                showMsg('settingsMsg', 'Settings saved to scanner-settings.json and applied immediately (they override config.json).', true);
+                loadSettings();
+            }).catch(function (e) { showMsg('settingsMsg', 'Save failed: ' + e.message, false); });
+        });
+
+        $('resetSettingsBtn').addEventListener('click', function () {
+            if (!window.confirm('Remove ALL values saved in this tab? The settings from config.json apply again.')) { return; }
+            post('save_settings', { reset: 'true' }).then(function (d) {
+                if (d.error) { showMsg('settingsMsg', d.error, false); return; }
+                showMsg('settingsMsg', 'Plugin settings cleared - config.json applies again.', true);
+                loadSettings();
+            }).catch(function (e) { showMsg('settingsMsg', 'Reset failed: ' + e.message, false); });
+        });
         // ---------- init ----------
 
         restoreLocationSelection();
         updateLocCount();
         scan();
         loadCpeTable();
+        loadSettings();
     })();
     </script>
 </body>

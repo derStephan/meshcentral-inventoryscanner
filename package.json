@@ -34,5 +34,11 @@
   "homepage": "https://github.com/derStephan/meshcentral-inventoryscanner#readme",
   "engines": {
     "node": ">=16"
+  },
+  "transparency": {
+    "createdWith": ["Qwen 3.6 27B", "Qwen 3.8 Flash Next"],
+    "auditModel": "NVIDIA Nemotron 3 550B A55B",
+    "auditDate": "2026-11-06",
+    "auditTool": "opencode"
   }
 }
