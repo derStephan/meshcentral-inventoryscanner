@@ -58,10 +58,10 @@
         .topnav a { color: #d7e6f5; text-decoration: none; padding: 6px 12px; border-radius: 5px; font-size: 13px; font-weight: 600; }
         .topnav a:hover { background: #154d80; color: #fff; }
         .topnav a.active { background: #4a90d9; color: #fff; }
+        .topnav a.navtab:hover { background: #154d80; color: #fff; }
+        .topnav a.navtab.active { background: #4a90d9; color: #fff; }
+        .topnav .navsep { width: 1px; align-self: stretch; background: #1e5c94; margin: 2px 6px; }
         .topnav .exportlabel { margin-left: auto; color: #9fc3e0; font-size: 12px; align-self: center; }
-        .nav-tabs { display: flex; gap: 8px; margin-bottom: 20px; border-bottom: 2px solid #e0e4ea; padding-bottom: 8px; }
-        .nav-tab { padding: 10px 20px; background: #f0f4f9; border: 1px solid #d8e0ec; border-bottom: none; border-radius: 6px 6px 0 0; cursor: pointer; font-weight: 500; color: #4a90d9; text-decoration: none; }
-        .nav-tab.active { background: #fff; border-color: #d8e0ec; border-bottom: 2px solid #4a90d9; color: #4a90d9; }
         .tab-content { display: none; }
         .tab-content.active { display: block; }
         .location-selector { position: fixed; top: 130px; right: 20px; z-index: 1000; background: #fff; border: 1px solid #d8e0ec; border-radius: 8px; padding: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); width: 320px; max-height: 60vh; overflow-y: auto; }
@@ -89,7 +89,10 @@
 </head>
 <body>
     <div class="topnav">
-        <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=show" class="active">Assessment Panel</a>
+        <a href="#" class="navtab active" data-tab="assessment">Assessment</a>
+        <a href="#" class="navtab" data-tab="settings">Settings</a>
+        <a href="#" class="navtab" data-tab="cpe">CPE Mapping</a>
+        <span class="navsep"></span>
         <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=report" target="_blank" rel="noopener">Vulnerability Report</a>
         <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=deviceReport" target="_blank" rel="noopener">Device Report</a>
         <span class="exportlabel">CSV export (all devices):</span>
@@ -110,12 +113,6 @@
             (no duplicate work per location). Ratings are stored per location and a non-empty comment is required for a rating.
             <strong>False positives</strong> are excluded from the vulnerability counts and need no comment.
             Only full site administrators can use this panel.
-        </div>
-
-        <div class="nav-tabs">
-            <a href="#" class="nav-tab active" data-tab="assessment">Vulnerability Assessment</a>
-            <a href="#" class="nav-tab" data-tab="settings">Settings</a>
-            <a href="#" class="nav-tab" data-tab="cpe">CPE Mapping</a>
         </div>
 
         <div class="tab-content active" id="tab-assessment">
@@ -342,12 +339,12 @@
 
         // ---------- tabs ----------
 
-        var tabs = document.querySelectorAll('.nav-tab');
+        var tabs = document.querySelectorAll('.navtab');
         for (var t = 0; t < tabs.length; t++) {
             tabs[t].addEventListener('click', function (e) {
                 e.preventDefault();
                 var name = this.getAttribute('data-tab');
-                var all = document.querySelectorAll('.nav-tab');
+                var all = document.querySelectorAll('.navtab');
                 for (var i = 0; i < all.length; i++) { all[i].classList.remove('active'); }
                 this.classList.add('active');
                 var contents = document.querySelectorAll('.tab-content');
