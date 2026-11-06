@@ -25,10 +25,10 @@ Two ways to export, depending on what you need:
   |---|---|
   | **Hardware Inventory** (`hardware`) | CSV: CPU, GPU, memory (banks), disks, network, BIOS/UEFI, mainboard, chassis, TPM — from the stored sysinfo, so it works offline |
   | **Software Inventory** (`software`) | CSV: one row per installed application: name, version, publisher, location, install date |
-  | **Vulnerability Assessment** (`assessment`) | Opens the assessment panel in a new tab (no CSV) |
+  | **Vulnerability Assessment** (`assessment`) | Opens the assessment panel in a new tab (no CSV) — works without device selection if the button omits `"selection"` |
 
-* **Main menu bar / panel navigation (all devices)** — plain links that download a CSV of the whole
-  inventory without selecting anything first:
+* **Direct links (all devices, no selection needed)** — in the panel navigation, as bookmarks, or as
+  an always-enabled toolbar button (see below):
 
   ```
   /pluginadmin.ashx?pin=inventoryscanner&action=export&type=hardware|software|vulns
@@ -103,7 +103,7 @@ On a configurable interval (e.g. monthly) the server re-scans all groups, stores
 
    The data volume survives MeshCentral updates/reinstalls.
 
-2. **Enable the plugin** in `<datapath>/config.json` - this single edit is all the file configuration ever needed:
+2. **Enable the plugin** (required) - add this under `"settings"` in `<datapath>/config.json`:
 
    ```json
    "settings": {
@@ -111,12 +111,31 @@ On a configurable interval (e.g. monthly) the server re-scans all groups, stores
    }
    ```
 
-   That is the **only mandatory manual config edit** in this entire documentation. Everything else is managed in
-   the panel: scanner and collection settings in the **Settings tab** (effective immediately, no restart),
-   exports and reports via the panel navigation. Optional conveniences - toolbar/menu buttons and file-based
-   defaults - are described in [Configuration](#configuration).
+3. **Add the device-list buttons** (recommended) - buttons above the device list are a MeshCentral
+   feature, not a plugin setting, so they live in the same file under your **domain** section
+   (`domains` -> `""` -> `customui`). Without this block there are **no buttons at all** in the device
+   list - the plugin still works via URLs and bookmarks, and the panel itself links every page
+   (reports, CSV exports) from its top navigation.
 
-3. **Restart** the server (`docker compose restart meshcentral`) and hard-reload the admin UI (Ctrl+F5).
+   ```json
+   "domains": { "": { "customui": {
+     "devicesbarbuttons": [
+       { "name": "Hardware Inventory", "selection": "many", "action": "event", "logmsg": "hardware" },
+       { "name": "Software Inventory", "selection": "many", "action": "event", "logmsg": "software" },
+       { "name": "Vulnerability Assessment", "action": "event", "logmsg": "assessment" }
+     ]
+   } } }
+   ```
+
+   Entries with `"selection": "many"` export the **checked** devices; an entry **without** a
+   `"selection"` field is always enabled - the "Vulnerability Assessment" button above opens the
+   panel in a new tab at any time.
+
+   That is it for `config.json` - no other manual edits are ever needed. Scanner and collection
+   settings are managed in the panel’s [Settings tab](#configuration) (effective immediately,
+   no restart), and the file keys there are optional fallbacks only.
+
+4. **Restart** the server (`docker compose restart meshcentral`) and hard-reload the admin UI (Ctrl+F5).
 
 On first start the plugin downloads the NVD feeds (all years — this can take a while, watch `<datapath>/nvd/nvd-download.log`). Panel and reports work as soon as the feeds are indexed.
 
@@ -154,24 +173,12 @@ Group ids are MeshCentral mesh `_id`s formatted `mesh/<domain>/<name>` - in the 
 double slash, e.g. `mesh//Server1`. Easiest lookup: the checkbox `value`s in the panel (view page source) or
 the `meshes` collection in the database.
 
-### Optional: buttons in the MeshCentral interface
+### Toolbar buttons (recap)
 
-Every function is reachable from the panel navigation. If you want shortcuts in the device-list toolbar or the
-main menu bar, they are MeshCentral `customui` features (per domain) and still configured in `config.json`:
-
-```json
-"domains": { "": { "customui": {
-  "devicesbarbuttons": [
-    { "name": "Hardware Inventory", "selection": "many", "action": "event", "logmsg": "hardware" },
-    { "name": "Software Inventory", "selection": "many", "action": "event", "logmsg": "software" },
-    { "name": "Vulnerability Assessment", "selection": "many", "action": "event", "logmsg": "assessment" }
-  ],
-  "mainmenuicons": [
-    { "name": "Vulnerability Assessment", "url": "/pluginadmin.ashx?pin=inventoryscanner&action=show", "popup": true },
-    { "name": "Vulns CSV (all devices)", "url": "/pluginadmin.ashx?pin=inventoryscanner&action=export&type=vulns" }
-  ]
-} } }
-```
+The snippet in [Installation step 3](#installation) is all there is. For completeness: MeshCentral only
+consumes the `customui` keys `devicesbarbuttons`, `desktopbuttons`, `terminalbuttons` and `filesbuttons`
+(verified against upstream `views/default.handlebars`) - there is **no** configurable main-menu icon/link,
+unknown keys are silently ignored, and a plugin cannot inject interface buttons any other way.
 
 ### Notes
 
@@ -228,7 +235,9 @@ main menu bar, they are MeshCentral `customui` features (per domain) and still c
   `<datapath>/nvd/nvd-download.log` (rate limits, proxy) and restart the server to retry.
 * **HTTP 401 on the admin panel** → `shortName`/folder must be alphanumeric (`inventoryscanner`), and you must be a
   full site admin.
-* **Toolbar buttons missing** → `customui.devicesbarbuttons` configured and UI hard-reloaded (Ctrl+F5).
+* **Toolbar buttons missing** → the `customui.devicesbarbuttons` block must be inside the domain section
+  of `config.json` and the server restarted; then hard-reload the browser (Ctrl+F5). Buttons without
+  a `"selection"` field are always visible and enabled.
 * **Empty software lists** → agents were never online since installation, or collection is disabled
   (`inventoryScanner.collectIntervalMinutes: 0` + connect-time collection).
 

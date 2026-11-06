@@ -29,7 +29,7 @@ Pure admin tool for MeshCentral (all endpoints gated on full site admin, `user.s
 1. **Device-list toolbar CSV exports** (hardware / software) and a **panel-open button** (`assessment`) via MeshCentral
    Custom UI (`customui.devicesbarbuttons`) → `uiCustomEvent(command, myparent)` → CSV pushed over the websocket →
    browser `saveAs()` via the exported `inventoryCsv` function. Whole-inventory CSV downloads additionally exist as
-   plain URLs (`action=export&type=...`, usable from `customui.mainmenuicons` and linked in the panel top nav).
+   plain URLs (`action=export&type=...`), linked in the panel top nav and suitable for bookmarks (MeshCentral has no config-driven main-menu links).
 2. **Offline CVE scan** against locally cached NVD 2.0 feeds (`<datapath>/nvd/`), conservative curated CPE matching.
 3. **Assessment panel** (`pluginadmin.ashx?pin=inventoryscanner&action=show`): multi-location CVE review, group-wide
    ratings (mandatory comment), false-positive flags (optional comment), filter/sort, CPE Mapping management tab, and a **Settings tab** for
@@ -51,9 +51,14 @@ Based on official MeshCentral source (`pluginHandler.js`, `webserver.js`, `db.js
   `handleAdminPostReq`. Session auth only — the plugin does its own siteadmin gate.
 - **Views:** `res.render('<name>', data)` ↔ `views/<name>.handlebars` — **case-sensitive** on Linux.
   Only core Handlebars helpers exist (`each if unless with @index @last @key`); no `Object.keys`, no custom helpers.
-- **Device-list actions:** the built-in action menu is NOT plugin-extensible; Custom UI
-  `devicesbarbuttons` (`action:'event'`, `logmsg`, `selection:'one'|'many'`) is the sanctioned way. Selected node
-  ids arrive on the **top level** as `command.selectedDevices` (NOT `command.src`); `uiCustomEvent` is called on
+- **Device-list actions:** the built-in action menu is NOT plugin-extensible; Custom UI is the sanctioned
+  way, and the keys MeshCentral actually consumes are `devicesbarbuttons`, `desktopbuttons`,
+  `terminalbuttons`, `filesbuttons` — there is NO `mainmenuicons`/main-menu key (verified against
+  upstream `views/default.handlebars`); unknown keys are silently ignored. `devicesbarbuttons` entries
+  with `selection:'one'|'many'` render disabled until devices are checked; **entries without a
+  `selection` field are always enabled** and still fire `uicustomevent` (with an empty
+  `selectedDevices` list) — used here for the panel-open button. Selected node ids arrive on the
+  **top level** as `command.selectedDevices` (NOT `command.src`); `uiCustomEvent` is called on
   every plugin for every Custom UI event.
 - **Browser functions:** listed in `obj.exports`, serialized into `/pluginHandler.js`; server pushes
   `{action:'plugin', plugin:'inventoryscanner', method:'inventoryCsv'|'openAssessment', ...}` and the front-end
@@ -84,7 +89,7 @@ GET `pluginadmin.ashx?pin=inventoryscanner`:
 | `scan` | `assessmentScan` | JSON via `scanMultiMeshCves(meshIds)`; `?mesh=<id>,<id>,...` (comma-separated) |
 | `report` | `vulnerabilityReport` | renders `report` with `{shortName, report: buildOverallReport(), totalCves, lastUpdate}` |
 | `deviceReport` | `deviceReport` | renders `deviceReport`, same data |
-| `export` | `exportCsv` | streams a CSV **attachment** for ALL non-deleted nodes (`type=hardware|software|vulns`, default vulns; invalid → 400). UTF-8 BOM, `Content-Disposition: attachment; filename=<Base>_<timestamp>.csv`; built with the same `buildCsvForNodes` as the toolbar exports. Intended for `customui.mainmenuicons` links. |
+| `export` | `exportCsv` | streams a CSV **attachment** for ALL non-deleted nodes (`type=hardware|software|vulns`, default vulns; invalid → 400). UTF-8 BOM, `Content-Disposition: attachment; filename=<Base>_<timestamp>.csv`; built with the same `buildCsvForNodes` as the toolbar exports. Intended for bookmarks and the panel top nav. |
 
 POST body `action=`:
 
@@ -183,8 +188,9 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
 never touches config.json). The config.json keys below remain the fallback/seed:
 
 - `plugins.list: ["inventoryscanner"]` - REQUIRED to load the plugin (the only mandatory manual config edit).
-- `domains.""-customui.devicesbarbuttons` / `.mainmenuicons` - MeshCentral-side buttons (optional;
-  devicesbarbuttons `logmsg` values: `hardware|software|assessment`; mainmenuicons are plain URLs).
+- `domains.""-customui.devicesbarbuttons` - MeshCentral-side buttons (`logmsg` values:
+  `hardware|software|assessment`). Omit `selection` on the assessment entry for an always-enabled
+  panel button. No main-menu link mechanism exists in MeshCentral.
 - `vulnerabilityScanner`: `scanIntervalHours` (720 = monthly OK), `scanMeshes`, `notifyOnScan`, `notifyThreshold`,
   `notifyUnratedRepeat`, `notify` (per-group), `updateHours`, `anyCveMaxAgeYears` (suppresses ancient version-less
   `kind:"any"` CVE matches).

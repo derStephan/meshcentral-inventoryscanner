@@ -417,6 +417,18 @@ steps.push(function (next) {
     next();
 });
 
+// ---- uiCustomEvent: panel button without device selection ----
+steps.push(function (next) {
+    var sent = [];
+    var fakeParent = { send: function (m) { sent.push(m); } };
+    obj.uiCustomEvent({ section: "devicesbarbuttons", element: "0", logmsg: "assessment", selectedDevices: [] }, fakeParent);
+    check("uievent: assessment button with NO selection opens the panel", sent.length === 1 && sent[0].method === "openAssessment", sent);
+    sent = [];
+    obj.uiCustomEvent({ section: "devicesbarbuttons", element: "0", logmsg: "vulns", selectedDevices: [] }, fakeParent);
+    check("uievent: CSV export still needs a selection", sent.length === 0, sent);
+    next();
+});
+
 (function run(i) {
     if (i >= steps.length) {
         console.log(failures === 0 ? '\ntest-plugin: ALL PASSED' : '\ntest-plugin: ' + failures + ' FAILURE(S)');

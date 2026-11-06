@@ -2842,7 +2842,7 @@ obj.loadNvdFromAllFiles = function () {
 
     /**
      * @brief Stream a full-inventory CSV download for ALL non-deleted devices, intended for
-     * main-menu links (<code>customui.mainmenuicons</code>) where no device selection exists.
+     * direct links (panel navigation, bookmarks) where no device selection exists.
      * Same generator as the device-list toolbar export, so column layout and status semantics
      * are identical. Gated on full site admin by handleAdminReq.
      * @param {object} req - The Express request (<code>type=hardware|software|vulns</code>).
@@ -3196,20 +3196,23 @@ obj.loadNvdFromAllFiles = function () {
         if (command.section !== 'devicesbarbuttons') return;
         // The front-end sends selectedDevices on the top level of the uicustomevent
         // command (default.handlebars customUIAction), never under command.src.
-        var nodeIds = Array.isArray(command.selectedDevices) ? command.selectedDevices : [];
-        if (nodeIds.length === 0) return;
-
         var type = (typeof command.logmsg === 'string') ? command.logmsg : 'hardware';
         if (['hardware', 'software', 'vulns', 'assessment'].indexOf(type) < 0) { type = 'hardware'; }
 
         // "Vulnerability Assessment" opens the admin panel in a new browser tab
-        // instead of producing a CSV download. No device records are needed.
+        // instead of producing a CSV download. No device records are needed - and
+        // with no "selection" field on the button, MeshCentral fires this even when
+        // nothing is checked, so the check below must come after it.
         if (type === 'assessment') {
-            try { myparent.send({ action: 'plugin', plugin: obj.shortName, method: 'openAssessment' }); } catch (e) { }
+            try { myparent.send({ action: 'plugin', plugin: obj.shortName, method: 'openAssessment' }); } catch (ex) { }
             return;
         }
 
+        var nodeIds = Array.isArray(command.selectedDevices) ? command.selectedDevices : [];
+        if (nodeIds.length === 0) return;
+
         // Load the node records for the selected ids.
+
         var nodes = [];
         var pending = nodeIds.length;
         nodeIds.forEach(function (nodeId) {
