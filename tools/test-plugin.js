@@ -431,9 +431,41 @@ steps.push(function (next) {
 
 // ---- exported browser functions are namespace-serialized: no server-scope refs ----
 steps.push(function (next) {
-    check('exports list matches function definitions', Array.isArray(obj.exports) && obj.exports.length === 2, obj.exports);
+    check('exports list matches function definitions', Array.isArray(obj.exports) && obj.exports.length === 3, obj.exports);
     var bad = obj.exports.filter(function (name) { return typeof obj[name] === 'function' && /\bobj\./.test(obj[name].toString()); });
     check('browser exports reference no server obj.*', bad.length === 0, bad);
+    next();
+});
+
+// ---- onWebUIStartupEnd injects the toolbar buttons into devsCustomUIBar (simulated browser DOM) ----
+steps.push(function (next) {
+    var sent = [], alerts = [], appended = [], boxes = null, bar = { innerHTML: '', appendChild: function (el) { appended.push(el); } };
+    boxes = [{ checked: true, defaultValue: 'devid_node-AAA' }, { checked: false, defaultValue: 'devid_node-BBB' }];
+    global.document = {
+        getElementById: function (id) { return (id === 'devsCustomUIBar') ? bar : null; },
+        getElementsByClassName: function (cls) { return (cls === 'DeviceCheckbox' && bar != null) ? boxes : []; },
+        createElement: function (tag) { return { type: '', value: '', title: '', style: {}, onclick: null }; }
+    };
+    global.meshserver = { send: function (m) { sent.push(m); } };
+    global.alert = function (m) { alerts.push(m); };
+    obj.onWebUIStartupEnd();
+    check('toolbar: three buttons injected into empty slot', appended.length === 3, appended.length);
+    check('toolbar: button labels', appended.map(function (x) { return x.value; }).join(',') === 'Hardware Inventory,Software Inventory,Vulnerability Assessment', appended.map(function (x) { return x.value; }));
+    appended[0].onclick();
+    check('toolbar: hardware click sends checked ids', sent.length === 1 && sent[0].action === 'uicustomevent' && sent[0].section === 'devicesbarbuttons' && sent[0].logmsg === 'hardware' && sent[0].selectedDevices.length === 1 && sent[0].selectedDevices[0] === 'node-AAA', sent[0]);
+    boxes[0].checked = false; sent.length = 0;
+    appended[1].onclick();
+    check('toolbar: csv click without selection warns, sends nothing', sent.length === 0 && alerts.length === 1, alerts);
+    sent.length = 0;
+    appended[2].onclick();
+    check('toolbar: assessment click sends empty selection', sent.length === 1 && sent[0].logmsg === 'assessment' && sent[0].selectedDevices.length === 0, sent[0]);
+    appended.length = 0; bar.innerHTML = '<input type=button>';
+    obj.onWebUIStartupEnd();
+    check('toolbar: no injection when slot filled', appended.length === 0, appended.length);
+    bar = null; var threw = false;
+    try { obj.onWebUIStartupEnd(); } catch (ex) { threw = true; }
+    check('toolbar: missing slot is silent no-op', threw === false);
+    delete global.document; delete global.meshserver; delete global.alert;
     next();
 });
 

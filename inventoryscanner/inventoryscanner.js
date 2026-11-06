@@ -57,7 +57,7 @@ module.exports.inventoryscanner = function (parent) {
      * @brief Functions exported to the web UI (serialized into /pluginHandler.js).
      * @type {Array<string>}
      */
-    obj.exports = ['inventoryCsv', 'openAssessment'];
+    obj.exports = ['inventoryCsv', 'openAssessment', 'onWebUIStartupEnd'];
 
     /** @type {string} Directory for NVD data under the meshcentral datapath (survives restarts). */
     obj.nvdDataPath = path.join(obj.meshServer.datapath, 'nvd');
@@ -3258,11 +3258,13 @@ obj.loadNvdFromAllFiles = function () {
 
     /**
      * @brief MeshCentral device-list toolbar hook.
-     * Called for every plugin when the user clicks a <code>customui.devicesbarbuttons</code>
-     * button. <code>command.src.selectedDevices</code> holds the selected node ids
-     * (already rights-validated by MeshCentral). The export type is taken from
-     * <code>command.logmsg</code> (set per-button in the customui config). The resulting
-     * CSV is pushed to the browser via <code>myparent.send()</code>.
+     * Called for every plugin when a device-list toolbar button fires: a
+     * customui.devicesbarbuttons button or one of the toolbar buttons this plugin
+     * injects itself (see the exported onWebUIStartupEnd browser hook).
+     * <code>command.selectedDevices</code> holds the selected node ids (already
+     * rights-validated by MeshCentral, may be empty). The export type is taken from
+     * <code>command.logmsg</code>. The resulting CSV is pushed to the browser via
+     * <code>myparent.send()</code>.
      * @param {object} command - The parsed websocket command.
      * @param {object} myparent - The MeshUser websocket session object (has <code>.send()</code>).
      */
@@ -3276,8 +3278,8 @@ obj.loadNvdFromAllFiles = function () {
 
         // "Vulnerability Assessment" opens the admin panel in a new browser tab
         // instead of producing a CSV download. No device records are needed - and
-        // with no "selection" field on the button, MeshCentral fires this even when
-        // nothing is checked, so the check below must come after it.
+        // toolbar buttons may fire with an empty selection (the injected buttons, and
+        // customui entries without "selection"), so the check below must come after it.
         if (type === 'assessment') {
             try { myparent.send({ action: 'plugin', plugin: obj.shortName, method: 'openAssessment' }); } catch (ex) { }
             return;
@@ -3338,6 +3340,45 @@ obj.loadNvdFromAllFiles = function () {
         } catch (e) { }
     };
 
+
+
+    /**
+     * @brief Browser hook dispatched by pluginHandler.callHook('onWebUIStartupEnd')
+     * once the MeshCentral web UI has finished loading. Injects this plugin's toolbar
+     * buttons into MeshCentral's own device-list button slot (the static
+     * <span id="devsCustomUIBar"> element in the main view), so the buttons need no
+     * server-side customui configuration. If the slot is already filled (an admin
+     * defined customui.devicesbarbuttons entries), injection is skipped - no duplicates.
+     * The click handlers replicate customUIAction semantics: node ids are collected
+     * from the checked .DeviceCheckbox elements and sent as a uicustomevent command.
+     * @param {object} server - The meshserver websocket object (unused, the global is used).
+     */
+    obj.onWebUIStartupEnd = function (server) {
+        try {
+            if (typeof document === 'undefined' || typeof meshserver === 'undefined') return;
+            var bar = document.getElementById('devsCustomUIBar');
+            if (bar == null || bar.innerHTML !== '') return;
+            var defs = [['Hardware Inventory', 'hardware'], ['Software Inventory', 'software'], ['Vulnerability Assessment', 'assessment']];
+            for (var i = 0; i < defs.length; i++) {
+                (function (def) {
+                    var b = document.createElement('input');
+                    b.type = 'button';
+                    b.value = def[0];
+                    b.style.margin = '0 4px';
+                    b.title = (def[1] === 'assessment') ? 'Open the vulnerability assessment panel in a new browser tab' : 'Export the checked devices as CSV';
+                    b.onclick = function () {
+                        try {
+                            var elements = document.getElementsByClassName('DeviceCheckbox'), selectedDevices = [];
+                            for (var k = 0; k < elements.length; k++) { if (elements[k].checked === true) { selectedDevices.push(elements[k].defaultValue.substring(6)); } }
+                            if (selectedDevices.length === 0 && def[1] !== 'assessment') { if (typeof alert === 'function') alert('Select at least one device first.'); return; }
+                            meshserver.send({ action: 'uicustomevent', section: 'devicesbarbuttons', element: '0', selectedDevices: selectedDevices, logmsg: def[1] });
+                        } catch (ex) { }
+                    };
+                    bar.appendChild(b);
+                })(defs[i]);
+            }
+        } catch (ex) { }
+    };
 
     return obj;
 };

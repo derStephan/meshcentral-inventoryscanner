@@ -19,16 +19,16 @@ commercial vulnerability scanner.
 
 Two ways to export, depending on what you need:
 
-* **Device-list toolbar** — select devices in any group and export exactly those:
+* **Device-list toolbar** — appears automatically, nothing to configure; select devices in any group and export exactly those:
 
   | Button (`logmsg`) | Result |
   |---|---|
   | **Hardware Inventory** (`hardware`) | CSV: CPU, GPU, memory (banks), disks, network, BIOS/UEFI, mainboard, chassis, TPM — from the stored sysinfo, so it works offline |
   | **Software Inventory** (`software`) | CSV: one row per installed application: name, version, publisher, location, install date |
-  | **Vulnerability Assessment** (`assessment`) | Opens the assessment panel in a new tab (no CSV) — works without device selection if the button omits `"selection"` |
+  | **Vulnerability Assessment** (`assessment`) | Opens the assessment panel in a new tab (no CSV) — works without any device selection |
 
-* **Direct links (all devices, no selection needed)** — in the panel navigation, as bookmarks, or as
-  an always-enabled toolbar button (see below):
+* **Direct links (all devices, no selection needed)** — in the panel navigation, as bookmarks, or via the
+  always-enabled **Vulnerability Assessment** toolbar button:
 
   ```
   /pluginadmin.ashx?pin=inventoryscanner&action=export&type=hardware|software|vulns
@@ -111,33 +111,15 @@ On a configurable interval (e.g. monthly) the server re-scans all groups, stores
    }
    ```
 
-3. **Add the device-list buttons** (recommended) - buttons above the device list are a MeshCentral
-   feature, not a plugin setting, so they live in the same file under your **domain** section
-   (`domains` -> `""` -> `customui`). Without this block there are **no buttons at all** in the device
-   list - the plugin still works via URLs and bookmarks, and the panel itself links every page
-   (reports, CSV exports) from its top navigation.
+3. **That is all `config.json` needs.** The three toolbar buttons above the device list (Hardware Inventory,
+   Software Inventory, Vulnerability Assessment) are injected by the plugin itself into MeshCentral's own
+   button slot when the page loads - no further server configuration.
 
-   ```json
-   "domains": { "": { "customui": {
-     "devicesbarbuttons": [
-       { "name": "Hardware Inventory", "selection": "many", "action": "event", "logmsg": "hardware" },
-       { "name": "Software Inventory", "selection": "many", "action": "event", "logmsg": "software" },
-       { "name": "Vulnerability Assessment", "action": "event", "logmsg": "assessment" }
-     ]
-   } } }
-   ```
+   The plugin works without them too: everything is reachable via URLs and bookmarks, and the panel links
+   every page (reports, CSV exports) from its top navigation.
 
-   Entries with `"selection": "many"` export the **checked** devices; an entry **without** a
-   `"selection"` field is always enabled - the "Vulnerability Assessment" button above opens the
-   panel in a new tab at any time.
-
-   > Brace watch: `customui` must be a property **inside** the `"": { ... }` domain object - at the
-   > same level as `title` or `certUrl`. If a `}` closes the domain before `customui`, it becomes a
-   > sibling of the domain, stays valid JSON, and MeshCentral silently ignores it (no buttons, no error).
-
-   That is it for `config.json` - no other manual edits are ever needed. Scanner and collection
-   settings are managed in the panel’s [Settings tab](#configuration) (effective immediately,
-   no restart), and the file keys there are optional fallbacks only.
+   Scanner and collection settings are managed in the panel's [Settings tab](#configuration) (effective
+   immediately, no restart); the file keys there are optional fallbacks only.
 
 4. **Restart** the server (`docker compose restart meshcentral`) and hard-reload the admin UI (Ctrl+F5).
 
@@ -179,18 +161,18 @@ the `meshes` collection in the database.
 
 ### Toolbar buttons (recap)
 
-The snippet in [Installation step 3](#installation) is all there is. For completeness: MeshCentral only
-consumes the `customui` keys `devicesbarbuttons`, `desktopbuttons`, `terminalbuttons` and `filesbuttons`
-(verified against upstream `views/default.handlebars`) - there is **no** configurable main-menu icon/link,
-unknown keys are silently ignored, and a plugin cannot inject interface buttons any other way.
+The plugin adds its three buttons to MeshCentral's own device-list button slot (`devsCustomUIBar`) when the
+page finishes loading - no configuration, and nothing to keep in sync. The click handlers mirror the built-in
+behavior: checked devices are collected from the list and handed to the plugin's server code; without a
+selection the CSV buttons ask for one and the assessment button opens the panel anyway. If a slot shows
+another plugin's buttons, ours are left out (no duplicates).
 
 ### Notes
 
 * `vulnerabilityScanner` and `inventoryScanner` are **siblings of `plugins`** directly under `settings`. The two
   section names differ by one letter; a typo silently keeps defaults.
-* Settings-tab changes need **no restart**; `config.json` changes need a server restart, `customui` changes
-  additionally a browser hard-reload (Ctrl+F5).
-* Ratings, comments, CPE mappings and UI settings live under `<datapath>/nvd/` and
+* Settings-tab changes need **no restart**; `config.json` changes need a server restart (and Ctrl+F5, the
+  browser caches the UI scripts).* Ratings, comments, CPE mappings and UI settings live under `<datapath>/nvd/` and
   `<datapath>/plugins/inventoryscanner/` - see [Data written](#data-written-by-the-plugin).
 
 ## URLs
@@ -239,9 +221,8 @@ unknown keys are silently ignored, and a plugin cannot inject interface buttons 
   `<datapath>/nvd/nvd-download.log` (rate limits, proxy) and restart the server to retry.
 * **HTTP 401 on the admin panel** → `shortName`/folder must be alphanumeric (`inventoryscanner`), and you must be a
   full site admin.
-* **Toolbar buttons missing** → the `customui.devicesbarbuttons` block must be inside the domain section
-  of `config.json` and the server restarted; then hard-reload the browser (Ctrl+F5). Buttons without
-  a `"selection"` field are always visible and enabled.
+* **Toolbar buttons missing** — plugins are not enabled (Installation step 2), the server was not
+  restarted, or the browser cached the UI scripts: hard-reload (Ctrl+F5).
 * **Empty software lists** → agents were never online since installation, or collection is disabled
   (`inventoryScanner.collectIntervalMinutes: 0` + connect-time collection).
 

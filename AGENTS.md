@@ -26,8 +26,9 @@ package.json                   repo metadata; `npm test` runs tools/check.js + t
 
 Pure admin tool for MeshCentral (all endpoints gated on full site admin, `user.siteadmin === 0xFFFFFFFF`):
 
-1. **Device-list toolbar CSV exports** (hardware / software) and a **panel-open button** (`assessment`) via MeshCentral
-   Custom UI (`customui.devicesbarbuttons`) → `uiCustomEvent(command, myparent)` → CSV pushed over the websocket →
+1. **Device-list toolbar CSV exports** (hardware / software) and a **panel-open button** (`assessment`),
+   all on the device-list toolbar auto-injected by the exported `onWebUIStartupEnd` browser hook (no server
+   config) → `uiCustomEvent(command, myparent)` → CSV pushed over the websocket →
    browser `saveAs()` via the exported `inventoryCsv` function. Whole-inventory CSV downloads additionally exist as
    plain URLs (`action=export&type=...`), linked in the panel top nav and suitable for bookmarks (MeshCentral has no config-driven main-menu links).
 2. **Offline CVE scan** against locally cached NVD 2.0 feeds (`<datapath>/nvd/`), conservative curated CPE matching.
@@ -51,15 +52,17 @@ Based on official MeshCentral source (`pluginHandler.js`, `webserver.js`, `db.js
   `handleAdminPostReq`. Session auth only — the plugin does its own siteadmin gate.
 - **Views:** `res.render('<name>', data)` ↔ `views/<name>.handlebars` — **case-sensitive** on Linux.
   Only core Handlebars helpers exist (`each if unless with @index @last @key`); no `Object.keys`, no custom helpers.
-- **Device-list actions:** the built-in action menu is NOT plugin-extensible; Custom UI is the sanctioned
-  way, and the keys MeshCentral actually consumes are `devicesbarbuttons`, `desktopbuttons`,
-  `terminalbuttons`, `filesbuttons` — there is NO `mainmenuicons`/main-menu key (verified against
-  upstream `views/default.handlebars`); unknown keys are silently ignored. `devicesbarbuttons` entries
-  with `selection:'one'|'many'` render disabled until devices are checked; **entries without a
-  `selection` field are always enabled** and still fire `uicustomevent` (with an empty
-  `selectedDevices` list) — used here for the panel-open button. Selected node ids arrive on the
-  **top level** as `command.selectedDevices` (NOT `command.src`); `uiCustomEvent` is called on
-  every plugin for every Custom UI event.
+- **Device-list buttons:** MeshCentral has no plugin API for buttons and no `mainmenuicons` key (verified
+  against upstream `views/default.handlebars`; the only consumed `customui` keys are devicesbarbuttons,
+  desktopbuttons, terminalbuttons, filesbuttons). This plugin therefore does NOT rely on customui config:
+  the exported browser hook `onWebUIStartupEnd` (client fires `pluginHandler.callHook('onWebUIStartupEnd')`
+  once after UI startup) appends its three buttons to the static `<span id="devsCustomUIBar">` slot IF that
+  slot is still empty (filled = admin-configured buttons; then no injection, no duplicates). The click
+  handler replicates `customUIAction`: `defaultValue.substring(6)` of each checked `.DeviceCheckbox`, sent as
+  `{action:'uicustomevent', section:'devicesbarbuttons', element:'0', selectedDevices:[...], logmsg:<type>}`
+  on the TOP level (NOT `command.src`). customui-fired buttons without a `selection` field fire with an empty
+  list, and `uiCustomEvent` is called on every plugin for every event. `tools/test-plugin.js` simulates the
+  whole injection.
 - **Browser functions:** listed in `obj.exports`; pluginHandler stringifies them via `Function.toString()` into
   a standalone browser namespace (`obj.<plugin>.<method>`) whose root has NO server properties - exported
   function bodies must therefore never reference `obj.*` (embed literals like the shortName in URLs!).
@@ -190,9 +193,6 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
 never touches config.json). The config.json keys below remain the fallback/seed:
 
 - `plugins.list: ["inventoryscanner"]` - REQUIRED to load the plugin (the only mandatory manual config edit).
-- `domains.""-customui.devicesbarbuttons` - MeshCentral-side buttons (`logmsg` values:
-  `hardware|software|assessment`). Omit `selection` on the assessment entry for an always-enabled
-  panel button. No main-menu link mechanism exists in MeshCentral.
 - `vulnerabilityScanner`: `scanIntervalHours` (720 = monthly OK), `scanMeshes`, `notifyOnScan`, `notifyThreshold`,
   `notifyUnratedRepeat`, `notify` (per-group), `updateHours`, `anyCveMaxAgeYears` (suppresses ancient version-less
   `kind:"any"` CVE matches).
@@ -211,10 +211,10 @@ npm test           # = tools/check.js && tools/test-plugin.js && tools/test-view
 
 - `tools/check.js`: `node --check` on the plugin, inline-script syntax/`{{`-hazard check, JSON validity of
   config files, and view-name↔render-name consistency. Must run anywhere (no dependencies).
-- `tools/test-plugin.js`: 72 behavioral assertions against the real module (mocked MeshCentral DB/webserver):
+- `tools/test-plugin.js`: 83 behavioral assertions against the real module (mocked MeshCentral DB/webserver):
   locations grouping & counting, manual-rating severity override, FP exclusion, host-name preference, coverage
   numbers, multi-mesh scan/`mixed` logic, all POST handlers incl. validation/rejections, routes, admin gating
-  (401), CPE table add/delete, vulns CSV header/content, `longTimeout` chunking, restart-proof schedule delays,
+  (401), CPE table add/delete, vulns CSV header/content, toolbar button injection (simulated browser DOM), `longTimeout` chunking, restart-proof schedule delays,
   scheduled-scan notification content in repeat and once mode, NVD-status derivation, settings overlay priority,
   save/revert/reset roundtrips incl. validation rejections, timer-generation invalidation, per-cycle collector config.
 - `tools/test-views.js`: compiles all three views and renders them with mock data **and empty data**.
