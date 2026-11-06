@@ -82,48 +82,37 @@ On a configurable interval (e.g. monthly) the server re-scans all groups, stores
 
 ## Installation
 
-1. **Copy the plugin folder `inventoryscanner`** into the MeshCentral data path (folder name = shortName, alphanumeric):
+The plugin installs from this repository directly in the MeshCentral web UI. The one and only manual file
+edit is enabling plugins itself - without it MeshCentral does not show a plugin page at all:
 
-   ```
-   <datapath>/plugins/inventoryscanner/
-     inventoryscanner.js
-     config.json
-     views/assessment.handlebars
-     views/report.handlebars
-     views/deviceReport.handlebars
-   ```
-
-   Docker example — get the source and copy the plugin folder into the running container:
-
-   ```bash
-   git clone https://github.com/derStephan/meshcentral-inventoryscanner.git
-   cd meshcentral-inventoryscanner
-   docker cp inventoryscanner meshcentral:/opt/meshcentral/meshcentral-data/plugins/
-   ```
-
-   The data volume survives MeshCentral updates/reinstalls.
-
-2. **Enable the plugin** (required) - add this under `"settings"` in `<datapath>/config.json`:
+1. **Enable plugins (one time)** - add under `"settings"` in `<datapath>/config.json`:
 
    ```json
-   "settings": {
-     "plugins": { "enabled": true, "list": ["inventoryscanner"] }
-   }
+   "settings": { "plugins": { "enabled": true } }
    ```
 
-3. **That is all `config.json` needs.** The three toolbar buttons above the device list (Hardware Inventory,
-   Software Inventory, Vulnerability Assessment) are injected by the plugin itself into MeshCentral's own
-   button slot when the page loads - no further server configuration.
+   Do **not** add a `"list"` here: that is MeshCentral's development mode and it ignores DB-installed
+   plugins. Restart the server once (`docker compose restart meshcentral`).
 
-   The plugin works without them too: everything is reachable via URLs and bookmarks, and the panel links
-   every page (reports, CSV exports) from its top navigation.
+2. **Add the plugin** - log in as full administrator, go to **My Server -> Plugins**, click **Download
+   plugin** and paste exactly this URL:
 
-   Scanner and collection settings are managed in the panel's [Settings tab](#configuration) (effective
-   immediately, no restart); the file keys there are optional fallbacks only.
+   ```
+   https://raw.githubusercontent.com/derStephan/meshcentral-inventoryscanner/main/config.json
+   ```
 
-4. **Restart** the server (`docker compose restart meshcentral`) and hard-reload the admin UI (Ctrl+F5).
+3. **Install it** - the plugin appears in the list below, still disabled. Enable it there; MeshCentral
+   downloads the files into `<datapath>/plugins/inventoryscanner/` (data volume - survives MeshCentral
+   updates) and registers them in its database. Obey the yellow restart notice and restart the server
+   once more - that is all.
 
-On first start the plugin downloads the NVD feeds (all years — this can take a while, watch `<datapath>/nvd/nvd-download.log`). Panel and reports work as soon as the feeds are indexed.
+4. **Hard-reload the browser** (Ctrl+F5). Done: the toolbar buttons above the device list appear
+   automatically (the plugin injects them itself), the assessment panel opens, and first run starts the
+   NVD feed download (all years, several GB - watch `<datapath>/nvd/nvd-download.log`). Scanning and
+   reports work as soon as the feeds are indexed.
+
+Updates appear on the same **Plugins** page once a newer version tag exists in this repository - install
+the update there and restart once.
 
 ## Configuration
 
@@ -221,7 +210,7 @@ another plugin's buttons, ours are left out (no duplicates).
   `<datapath>/nvd/nvd-download.log` (rate limits, proxy) and restart the server to retry.
 * **HTTP 401 on the admin panel** → `shortName`/folder must be alphanumeric (`inventoryscanner`), and you must be a
   full site admin.
-* **Toolbar buttons missing** — plugins are not enabled (Installation step 2), the server was not
+* **Toolbar buttons missing** — plugins are not enabled (Installation step 1), the server was not
   restarted, or the browser cached the UI scripts: hard-reload (Ctrl+F5).
 * **Empty software lists** → agents were never online since installation, or collection is disabled
   (`inventoryScanner.collectIntervalMinutes: 0` + connect-time collection).

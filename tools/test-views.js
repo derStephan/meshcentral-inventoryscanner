@@ -16,7 +16,7 @@ try {
     process.exit(0);
 }
 
-const viewsDir = path.join(__dirname, '..', 'inventoryscanner', 'views');
+const viewsDir = path.join(__dirname, '..', 'views');
 
 const loc = {
     id: 'mesh//grp1', name: 'HQ & Co <b>',

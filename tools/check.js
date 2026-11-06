@@ -1,6 +1,6 @@
 /**
  * Static consistency checks - no dependencies, run anywhere with Node >= 16.
- * 1. node --check on inventoryscanner/inventoryscanner.js
+ * 1. node --check on inventoryscanner.js
  * 2. assessment.handlebars inline <script>: extracts, node --check, and verifies it
  *    contains no accidental '{{' (Handlebars would eat it; only the '{{shortName}}'
  *    server token is allowed).
@@ -16,7 +16,7 @@ const os = require('os');
 const { execFileSync } = require('child_process');
 
 const root = path.join(__dirname, '..');
-const pluginDir = path.join(root, 'inventoryscanner');
+const pluginDir = root; // flat layout: plugin files live at repository root (web installer requirement)
 const viewsDir = path.join(pluginDir, 'views');
 let failed = 0;
 
@@ -65,6 +65,15 @@ for (const f of [path.join(pluginDir, 'config.json'), path.join(root, 'package.j
     try { JSON.parse(fs.readFileSync(f, 'utf8')); ok = true; } catch (e) { err = e.message; }
     report('valid JSON: ' + path.relative(root, f), ok, err);
 }
+
+// 3b. plugin manifest: fields MeshCentral's web installer validates (isValidConfig + downloadUrl)
+const man = JSON.parse(fs.readFileSync(path.join(root, 'config.json'), 'utf8'));
+report('config.json meets installer requirements (name/shortName/manifest fields)',
+    typeof man.name === 'string' && man.shortName === 'inventoryscanner' && typeof man.version === 'string' &&
+    typeof man.description === 'string' && typeof man.hasAdminPanel === 'boolean' && typeof man.homepage === 'string' &&
+    typeof man.changelogUrl === 'string' && typeof man.configUrl === 'string' && typeof man.downloadUrl === 'string' &&
+    man.repository && typeof man.repository.type === 'string' && typeof man.repository.url === 'string' &&
+    typeof man.meshCentralCompat === 'string');
 
 // 4. render names vs view file names
 const mainSrc = fs.existsSync(mainJs) ? fs.readFileSync(mainJs, 'utf8') : '';

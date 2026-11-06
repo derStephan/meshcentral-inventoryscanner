@@ -8,10 +8,14 @@ Repository: https://github.com/derStephan/meshcentral-inventoryscanner
 ## Repository layout
 
 ```
-inventoryscanner/              the deployable plugin (this exact folder is copied to <datapath>/plugins/)
+FLAT layout - required by the MeshCentral web installer: it unpacks the repository ZIP into
+<datapath>/plugins/inventoryscanner/ after removing exactly ONE top path element, so the plugin files
+MUST stay at repository root (never re-nest them in a folder - that silently breaks the installer).
+
   inventoryscanner.js          server code + browser-exported functions (module.exports.inventoryscanner(parent))
-  config.json                  MeshCentral plugin manifest (shortName, hasAdminPanel)
-  views/assessment.handlebars  admin panel (incl. its inline <script> — the panel logic lives HERE)
+  config.json                  plugin manifest: installer metadata (and MeshCentral-side config file)
+  CHANGELOG.md                 changelogUrl target shown in the installer UI
+  views/assessment.handlebars  admin panel (incl. its inline <script> - the panel logic lives HERE)
   views/report.handlebars      printable vulnerability report (overview + one page per location)
   views/deviceReport.handlebars printable device inventory report (host names, one page per location)
 tools/                         self-contained verification for agents (no MeshCentral server needed)
@@ -48,6 +52,14 @@ Based on official MeshCentral source (`pluginHandler.js`, `webserver.js`, `db.js
   object; `obj.db = obj.meshServer.db`.
 - **Folder/shortName must be alphanumeric only** (`/^[A-Za-z0-9]+$/`, no `_`/`-`), else `pluginadmin.ashx?pin=`
   returns 401. Here: `inventoryscanner`.
+- **Web installer (supported install path):** `settings.plugins.enabled=true` is the only required manual
+  config. pluginHandler loads plugins from the DB UNLESS `settings.plugins.list` is set - that dev branch
+  bypasses the DB loader and UI enable/disable, so the README explicitly forbids `list` for installs.
+  The installer validates the root config.json via `isValidConfig` (name, shortName, version, description,
+  hasAdminPanel:boolean, homepage, changelogUrl, configUrl, repository.type/.url, meshCentralCompat - all
+  required; plus downloadUrl for the ZIP), stores it in the DB (status 0 = disabled), then downloads
+  downloadUrl and unpacks into plugins/<shortName>/ with exactly one path element removed (=> flat layout).
+  Loading newly enabled plugins needs a server restart; update detection reads versionHistoryUrl (tags).
 - **`pluginadmin.ashx` GET** → `handleAdminReq(req,res,user)`, `POST` (urlencoded body → `req.body`) →
   `handleAdminPostReq`. Session auth only — the plugin does its own siteadmin gate.
 - **Views:** `res.render('<name>', data)` ↔ `views/<name>.handlebars` — **case-sensitive** on Linux.
@@ -192,7 +204,8 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
 **Primary place to change them: the Settings tab of the panel** (`scanner-settings.json`, effective immediately,
 never touches config.json). The config.json keys below remain the fallback/seed:
 
-- `plugins.list: ["inventoryscanner"]` - REQUIRED to load the plugin (the only mandatory manual config edit).
+- `plugins.enabled: true` - REQUIRED (the only mandatory manual config edit). Do NOT set `plugins.list`:
+  it switches pluginHandler to the development loader and ignores DB-installed plugins (web installer).
 - `vulnerabilityScanner`: `scanIntervalHours` (720 = monthly OK), `scanMeshes`, `notifyOnScan`, `notifyThreshold`,
   `notifyUnratedRepeat`, `notify` (per-group), `updateHours`, `anyCveMaxAgeYears` (suppresses ancient version-less
   `kind:"any"` CVE matches).

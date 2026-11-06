@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const factory = require(path.join(__dirname, '..', 'inventoryscanner', 'inventoryscanner.js')).inventoryscanner;
+const factory = require(path.join(__dirname, '..', 'inventoryscanner.js')).inventoryscanner;
 
 // ---------- fixtures ----------
 const nodes = [
