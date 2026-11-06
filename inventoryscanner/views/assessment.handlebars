@@ -1,0 +1,727 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vulnerability Assessment</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #f5f5f5; color: #333; margin: 0; padding: 20px; }
+        .container { max-width: 1500px; margin: 0 auto; background: #fff; padding: 24px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        h1 { font-size: 20px; margin: 0 0 8px 0; }
+        h2 { font-size: 16px; margin: 20px 0 8px 0; color: #0b3d6b; }
+        h3 { font-size: 14px; margin: 18px 0 8px 0; color: #0b3d6b; }
+        .status { font-size: 13px; color: #666; margin-bottom: 16px; }
+        .info { background-color: #e7f3ff; border-left: 4px solid #4a90d9; padding: 12px; margin-bottom: 16px; font-size: 13px; color: #555; }
+        .controls { display: flex; gap: 10px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+        label { font-weight: 600; font-size: 14px; }
+        button { background-color: #4a90d9; color: #fff; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 600; }
+        button:hover { background-color: #357abd; }
+        button:disabled { background-color: #ccc; cursor: not-allowed; }
+        button.green { background-color: #28a745; }
+        button.green:hover { background-color: #1e7e34; }
+        button.red { background-color: #dc3545; }
+        button.red:hover { background-color: #b02a37; }
+        button.purple { background-color: #6f42c1; }
+        button.purple:hover { background-color: #5a32a3; }
+        button.small { padding: 4px 10px; font-size: 12px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 13px; }
+        th, td { border: 1px solid #e0e0e0; padding: 8px; text-align: left; vertical-align: top; }
+        th { background: #f8f9fa; cursor: pointer; user-select: none; position: sticky; top: 0; z-index: 1; white-space: nowrap; }
+        th.nosort { cursor: default; }
+        th.sorted-asc::after { content: " \25B2"; }
+        th.sorted-desc::after { content: " \25BC"; }
+        .sev { display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 11px; font-weight: 700; text-transform: uppercase; color: #fff; }
+        .sev-CRITICAL { background: #dc3545; }
+        .sev-HIGH { background: #fd7e14; }
+        .sev-MEDIUM { background: #ffc107; color: #333; }
+        .sev-LOW { background: #28a745; }
+        .sev-UNKNOWN { background: #6c757d; }
+        .sev-false-positive { background: #6f42c1; }
+        .badge { display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; }
+        .badge-builtin { background: #e0e7ef; color: #33455c; }
+        .badge-custom { background: #d4edda; color: #155724; }
+        .badge-mixed { background: #fff3cd; color: #856404; }
+        .override select, .override input, select, input[type="text"] { padding: 6px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; }
+        .override input { width: 220px; }
+        .override-set { background: #e7f3ff; border-left: 3px solid #4a90d9; padding: 4px 8px; margin-top: 6px; font-size: 12px; }
+        .manual { color: #8a6d3b; }
+        #msg, #cpeMsg { margin-top: 12px; padding: 10px; border-radius: 4px; font-size: 13px; display: none; }
+        #msg.error, #cpeMsg.error { background: #f8d7da; color: #721c24; display: block; }
+        #msg.success, #cpeMsg.success { background: #d4edda; color: #155724; display: block; }
+        .topnav { display: flex; gap: 10px; margin-bottom: 20px; background: #0b3d6b; border-radius: 8px; padding: 10px 14px; flex-wrap: wrap; align-items: center; }
+        .topnav a { color: #d7e6f5; text-decoration: none; padding: 6px 12px; border-radius: 5px; font-size: 13px; font-weight: 600; }
+        .topnav a:hover { background: #154d80; color: #fff; }
+        .topnav a.active { background: #4a90d9; color: #fff; }
+        .nav-tabs { display: flex; gap: 8px; margin-bottom: 20px; border-bottom: 2px solid #e0e4ea; padding-bottom: 8px; }
+        .nav-tab { padding: 10px 20px; background: #f0f4f9; border: 1px solid #d8e0ec; border-bottom: none; border-radius: 6px 6px 0 0; cursor: pointer; font-weight: 500; color: #4a90d9; text-decoration: none; }
+        .nav-tab.active { background: #fff; border-color: #d8e0ec; border-bottom: 2px solid #4a90d9; color: #4a90d9; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        .location-selector { position: fixed; top: 130px; right: 20px; z-index: 1000; background: #fff; border: 1px solid #d8e0ec; border-radius: 8px; padding: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); width: 320px; max-height: 60vh; overflow-y: auto; }
+        .location-selector.hidden { display: none; }
+        .location-selector h4 { margin: 0 0 12px 0; font-size: 14px; color: #0b3d6b; }
+        .location-selector .loc-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; cursor: pointer; font-weight: 400; font-size: 13px; }
+        .location-selector .loc-item:hover { background: #f0f4f9; border-radius: 4px; }
+        .location-selector input[type="checkbox"] { width: 16px; height: 16px; accent-color: #4a90d9; }
+        .location-selector .loc-all { border-top: 1px solid #e0e4ea; padding-top: 8px; margin-top: 4px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+        .location-selector .loc-actions { margin-top: 12px; display: flex; gap: 8px; }
+        .location-toggle { position: fixed; top: 80px; right: 20px; z-index: 999; padding: 8px 16px; background: #0b3d6b; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 600; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+        .location-toggle:hover { background: #154d80; }
+        .table-container { overflow-x: auto; }
+        .filter-row { display: flex; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+        .filter-input { padding: 6px 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; flex: 1; min-width: 150px; }
+        .filter-select { padding: 6px 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; }
+        .comment-inp { width: 200px; padding: 6px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px; }
+        .rating-sel { padding: 6px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px; }
+        .desc { color: #666; font-size: 12px; max-width: 320px; }
+        .devlist { font-size: 12px; color: #444; }
+        .devlist b { color: #0b3d6b; }
+        #scanStatus { font-size: 13px; color: #666; }
+        code { background: #f4f4f4; padding: 1px 4px; border-radius: 3px; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <div class="topnav">
+        <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=show" class="active">Assessment Panel</a>
+        <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=report" target="_blank" rel="noopener">Vulnerability Report</a>
+        <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=deviceReport" target="_blank" rel="noopener">Device Report</a>
+    </div>
+
+    <div class="container">
+        <h1>Vulnerability Assessment</h1>
+        <div class="status">
+            NVD database: {{#if totalCves}}{{#if lastUpdate}}last updated {{lastUpdate}}{{else}}loaded{{/if}}{{else}}not downloaded yet{{/if}} &middot; Indexed CVEs: {{totalCves}} &middot;
+            Scheduled scans: {{#if scanIntervalHours}}every {{scanIntervalHours}}h{{else}}disabled{{/if}}{{#if lastScan}} (last run {{lastScan}}){{/if}}
+        </div>
+        <div class="info">
+            Select the <strong>locations</strong> to assess via the floating panel on the right. The table shows all findings of the
+            selected locations; a rating you save applies to <strong>every selected location</strong> in which the finding occurs
+            (no duplicate work per location). Ratings are stored per location and a non-empty comment is required for a rating.
+            <strong>False positives</strong> are excluded from the vulnerability counts and need no comment.
+            Only full site administrators can use this panel.
+        </div>
+
+        <div class="nav-tabs">
+            <a href="#" class="nav-tab active" data-tab="assessment">Vulnerability Assessment</a>
+            <a href="#" class="nav-tab" data-tab="cpe">CPE Mapping</a>
+        </div>
+
+        <div class="tab-content active" id="tab-assessment">
+            <div class="controls">
+                <button id="scanBtn">Scan &amp; Review</button>
+                <button id="locationToggle" class="location-toggle">Locations (<span id="locCountTxt">all</span>)</button>
+                <span id="scanStatus"></span>
+            </div>
+
+            <div class="filter-row">
+                <input type="text" id="filterText" class="filter-input" placeholder="Filter by CVE, software, device, location...">
+                <select id="filterSeverity" class="filter-select">
+                    <option value="">All Severities</option>
+                    <option value="CRITICAL">Critical</option>
+                    <option value="HIGH">High</option>
+                    <option value="MEDIUM">Medium</option>
+                    <option value="LOW">Low</option>
+                    <option value="UNKNOWN">Unknown</option>
+                    <option value="false positive">False Positive</option>
+                </select>
+                <select id="filterStatus" class="filter-select">
+                    <option value="">All Statuses</option>
+                    <option value="CVE">CVE</option>
+                    <option value="false positive">False Positive</option>
+                    <option value="rated">Rated</option>
+                    <option value="unrated">Unrated</option>
+                </select>
+            </div>
+
+            <div id="msg"></div>
+            <div class="table-container" id="results"></div>
+        </div>
+
+        <div class="tab-content" id="tab-cpe">
+            <h2>Software &rarr; CPE Mapping</h2>
+            <div class="info">
+                This is the complete mapping used by the scanner: the built-in table (verified CPE codes) plus your
+                custom entries. Custom entries are checked first, so they extend or override the built-in mapping.
+                To <strong>change</strong> a built-in row, click <em>Override</em>, adjust the values and press <em>Add</em>.
+                <code>Regex</code> is matched case-insensitively against the software display name;
+                <code>vendor</code>/<code>product</code> must be real, NVD-verified CPE codes (e.g. <code>mozilla</code>/<code>firefox</code>).
+                Products without a mapping are reported as <em>not assessable</em>.
+            </div>
+
+            <div class="filter-row">
+                <input type="text" id="cpeFilter" class="filter-input" placeholder="Filter mappings by regex, vendor or product...">
+            </div>
+
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th style="cursor:default">Regex (display name)</th>
+                            <th style="cursor:default">Vendor</th>
+                            <th style="cursor:default">Product</th>
+                            <th style="cursor:default">Source</th>
+                            <th style="cursor:default"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="cpeTableBody"></tbody>
+                </table>
+            </div>
+
+            <h3>Add / Override Mapping</h3>
+            <div class="controls">
+                <input id="cpeRegex" type="text" placeholder="Regex, e.g. ^SAS Studio" style="min-width:220px;">
+                <input id="cpeVendor" type="text" placeholder="CPE vendor, e.g. mozilla" style="min-width:160px;">
+                <input id="cpeProduct" type="text" placeholder="CPE product, e.g. firefox" style="min-width:160px;">
+                <button id="addCpeBtn">Add</button>
+            </div>
+            <div id="cpeMsg"></div>
+        </div>
+    </div>
+
+    <div class="location-selector" id="locationPanel">
+        <h4>Locations to assess</h4>
+        <div id="locList">
+            {{#each meshList}}
+            <label class="loc-item"><input type="checkbox" class="loc-cb" value="{{this.id}}" checked> {{this.name}}</label>
+            {{/each}}
+        </div>
+        <label class="loc-all"><input type="checkbox" id="locAll" checked> All locations</label>
+        <div class="loc-actions">
+            <button id="locApply" class="green">Apply &amp; Rescan</button>
+            <button id="locClose" class="red">Close</button>
+        </div>
+    </div>
+
+    <script>
+    (function () {
+        'use strict';
+
+        var shortName = '{{shortName}}';
+        var base = '/pluginadmin.ashx?pin=' + encodeURIComponent(shortName);
+
+        // ---------- tiny helpers ----------
+
+        function esc(v) {
+            return String((v === null || v === undefined) ? '' : v)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+
+        function $(id) { return document.getElementById(id); }
+
+        function post(action, data) {
+            var body = 'action=' + encodeURIComponent(action);
+            for (var k in data) {
+                if (Object.prototype.hasOwnProperty.call(data, k)) {
+                    body += '&' + encodeURIComponent(k) + '=' + encodeURIComponent(data[k]);
+                }
+            }
+            return fetch(base, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: body,
+                credentials: 'same-origin'
+            }).then(function (r) { return r.json(); });
+        }
+
+        function get(action, params) {
+            var url = base + '&action=' + encodeURIComponent(action);
+            for (var k in params) {
+                if (Object.prototype.hasOwnProperty.call(params, k)) {
+                    url += '&' + encodeURIComponent(k) + '=' + encodeURIComponent(params[k]);
+                }
+            }
+            return fetch(url, { credentials: 'same-origin' }).then(function (r) { return r.json(); });
+        }
+
+        function showMsg(id, text, ok) {
+            var el = $(id);
+            el.textContent = text;
+            el.className = ok ? 'success' : 'error';
+            el.style.display = 'block';
+        }
+
+        function hideMsg(id) {
+            var el = $(id);
+            el.textContent = '';
+            el.className = '';
+            el.style.display = 'none';
+        }
+
+        // ---------- state ----------
+
+        var state = {
+            rows: [],
+            cpeEntries: [],
+            sortKey: 'cvss',
+            sortDir: 'desc',
+            filterText: '',
+            filterSeverity: '',
+            filterStatus: '',
+            cpeFilter: ''
+        };
+
+        // ---------- tabs ----------
+
+        var tabs = document.querySelectorAll('.nav-tab');
+        for (var t = 0; t < tabs.length; t++) {
+            tabs[t].addEventListener('click', function (e) {
+                e.preventDefault();
+                var name = this.getAttribute('data-tab');
+                var all = document.querySelectorAll('.nav-tab');
+                for (var i = 0; i < all.length; i++) { all[i].classList.remove('active'); }
+                this.classList.add('active');
+                var contents = document.querySelectorAll('.tab-content');
+                for (var j = 0; j < contents.length; j++) { contents[j].classList.remove('active'); }
+                var target = document.getElementById('tab-' + name);
+                if (target) { target.classList.add('active'); }
+            });
+        }
+
+        // ---------- floating location selector ----------
+
+        function locCheckboxes() {
+            return document.querySelectorAll('.loc-cb');
+        }
+
+        function selectedLocationIds() {
+            var out = [];
+            var cbs = locCheckboxes();
+            for (var i = 0; i < cbs.length; i++) {
+                if (cbs[i].checked) { out.push(cbs[i].value); }
+            }
+            return out;
+        }
+
+        function updateLocCount() {
+            var cbs = locCheckboxes();
+            var n = 0;
+            for (var i = 0; i < cbs.length; i++) { if (cbs[i].checked) { n++; } }
+            $('locCountTxt').textContent = (n === cbs.length) ? 'all' : String(n);
+            $('locAll').checked = (n === cbs.length) && (cbs.length > 0);
+            try { localStorage.setItem('invscanner_locations', JSON.stringify(selectedLocationIds())); } catch (e) { }
+        }
+
+        function restoreLocationSelection() {
+            try {
+                var raw = localStorage.getItem('invscanner_locations');
+                if (!raw) { return; }
+                var saved = JSON.parse(raw);
+                if (!Array.isArray(saved)) { return; }
+                var cbs = locCheckboxes();
+                for (var i = 0; i < cbs.length; i++) {
+                    cbs[i].checked = (saved.indexOf(cbs[i].value) >= 0);
+                }
+            } catch (e) { }
+        }
+
+        $('locationToggle').addEventListener('click', function () {
+            $('locationPanel').classList.toggle('hidden');
+        });
+        $('locClose').addEventListener('click', function () {
+            $('locationPanel').classList.add('hidden');
+        });
+        $('locAll').addEventListener('change', function () {
+            var cbs = locCheckboxes();
+            for (var i = 0; i < cbs.length; i++) { cbs[i].checked = this.checked; }
+            updateLocCount();
+        });
+        (function () {
+            var cbs = locCheckboxes();
+            for (var i = 0; i < cbs.length; i++) {
+                cbs[i].addEventListener('change', updateLocCount);
+            }
+        })();
+        $('locApply').addEventListener('click', function () {
+            updateLocCount();
+            $('locationPanel').classList.add('hidden');
+            scan();
+        });
+
+        // ---------- scan ----------
+
+        function effSeverity(row) {
+            if (row.assessment && row.assessment.flagged) { return 'false positive'; }
+            if (row.mixed) { return String(row.severity || 'UNKNOWN').toUpperCase(); }
+            if (row.assessment && row.assessment.assessment) { return String(row.assessment.assessment).toUpperCase(); }
+            return String(row.severity || 'UNKNOWN').toUpperCase();
+        }
+
+        function rowRating(row) {
+            if (row.mixed) { return 'MIXED'; }
+            if (row.assessment && row.assessment.flagged) { return 'UNKNOWN'; }
+            if (row.assessment && row.assessment.assessment) { return row.assessment.assessment; }
+            return '';
+        }
+
+        function rowComment(row) {
+            if (row.mixed) { return ''; }
+            if (row.assessment && row.assessment.comment) { return row.assessment.comment; }
+            return '';
+        }
+
+        function scan() {
+            var ids = selectedLocationIds();
+            if (ids.length === 0) {
+                showMsg('msg', 'Select at least one location in the floating location panel.', false);
+                return;
+            }
+            hideMsg('msg');
+            $('scanBtn').disabled = true;
+            $('scanStatus').textContent = 'Scanning ' + ids.length + ' location(s)...';
+            get('scan', { mesh: ids.join(',') }).then(function (data) {
+                $('scanBtn').disabled = false;
+                $('scanStatus').textContent = '';
+                if (data.error) { showMsg('msg', data.error, false); return; }
+                state.rows = data.cves || [];
+                renderTable();
+                var n = state.rows.length;
+                showMsg('msg', n + ' unique finding(s) across ' + (data.meshes ? data.meshes.length : ids.length) +
+                    ' location(s). ' + (data.flaggedCount || 0) + ' flagged as false positive.', true);
+            }).catch(function (e) {
+                $('scanBtn').disabled = false;
+                $('scanStatus').textContent = '';
+                showMsg('msg', 'Scan failed: ' + e.message, false);
+            });
+        }
+
+        $('scanBtn').addEventListener('click', scan);
+
+        // ---------- findings table (sortable + filterable) ----------
+
+        var COLUMNS = [
+            { key: 'cve', label: 'CVE ID' },
+            { key: 'severity', label: 'Severity' },
+            { key: 'cvss', label: 'CVSS' },
+            { key: 'software', label: 'Software' },
+            { key: 'version', label: 'Version' },
+            { key: 'status', label: 'Status' },
+            { key: 'locations', label: 'Affected Locations / Devices' },
+            { key: 'rating', label: 'Manual Rating' },
+            { key: 'comment', label: 'Comment' },
+            { key: 'actions', label: 'Actions', nosort: true }
+        ];
+
+        var SEV_RANK = { 'CRITICAL': 5, 'HIGH': 4, 'MEDIUM': 3, 'LOW': 2, 'UNKNOWN': 1, 'false positive': 0 };
+
+        function sortValue(row, key) {
+            switch (key) {
+                case 'severity': return SEV_RANK[effSeverity(row)] || 0;
+                case 'cvss': return Number(row.cvss) || 0;
+                case 'status': return (row.assessment && row.assessment.flagged && !row.mixed) ? 'false positive' : 'CVE';
+                case 'rating': return rowRating(row);
+                case 'comment': return rowComment(row);
+                case 'locations': {
+                    var names = [];
+                    for (var i = 0; i < row.locations.length; i++) { names.push(row.locations[i].name); }
+                    return names.join(' ');
+                }
+                default: return String(row[key] || '');
+            }
+        }
+
+        function visibleRows() {
+            var txt = state.filterText.toLowerCase().trim();
+            var out = [];
+            for (var i = 0; i < state.rows.length; i++) {
+                var r = state.rows[i];
+                if (txt) {
+                    var hay = [r.cve, r.software, r.version, r.description].join(' ');
+                    for (var j = 0; j < r.locations.length; j++) {
+                        hay += ' ' + r.locations[j].name + ' ' + (r.locations[j].devices || []).join(' ');
+                    }
+                    if (hay.toLowerCase().indexOf(txt) < 0) { continue; }
+                }
+                if (state.filterSeverity && effSeverity(r) !== state.filterSeverity) { continue; }
+                if (state.filterStatus) {
+                    var isFlagged = !!(r.assessment && r.assessment.flagged && !r.mixed);
+                    var isRated = !!(r.assessment && r.assessment.assessment && !r.mixed);
+                    if ((state.filterStatus === 'false positive') && !isFlagged) { continue; }
+                    if ((state.filterStatus === 'CVE') && isFlagged) { continue; }
+                    if ((state.filterStatus === 'rated') && !isRated) { continue; }
+                    if ((state.filterStatus === 'unrated') && isRated) { continue; }
+                }
+                out.push(r);
+            }
+            var key = state.sortKey, dir = (state.sortDir === 'asc') ? 1 : -1;
+            out.sort(function (a, b) {
+                var va = sortValue(a, key), vb = sortValue(b, key);
+                if (typeof va === 'number' && typeof vb === 'number') { return (va - vb) * dir; }
+                return String(va).localeCompare(String(vb)) * dir;
+            });
+            return out;
+        }
+
+        function renderTable() {
+            var rows = visibleRows();
+            var html = '<table><thead><tr>';
+            for (var c = 0; c < COLUMNS.length; c++) {
+                var col = COLUMNS[c];
+                var cls = col.nosort ? 'nosort' : (col.key === state.sortKey ? (state.sortDir === 'asc' ? 'sorted-asc' : 'sorted-desc') : '');
+                html += '<th class="' + cls + '" data-key="' + esc(col.key) + '">' + esc(col.label) + '</th>';
+            }
+            html += '</tr></thead><tbody>';
+
+            for (var i = 0; i < rows.length; i++) {
+                var r = rows[i];
+                var sev = effSeverity(r);
+                var flagged = !!(r.assessment && r.assessment.flagged && !r.mixed);
+                var status = flagged ? 'false positive' : 'CVE';
+                var rating = rowRating(r);
+                var comment = rowComment(r);
+
+                html += '<tr data-cve="' + esc(r.cve) + '">';
+                if (/^CVE-\d{4}-\d{4,}$/.test(r.cve)) {
+                    html += '<td><a href="https://nvd.nist.gov/vuln/detail/' + esc(r.cve) + '" target="_blank" rel="noopener">' + esc(r.cve) + '</a></td>';
+                } else {
+                    html += '<td><b>' + esc(r.cve) + '</b></td>';
+                }
+                html += '<td><span class="sev sev-' + esc(sev.replace(/ /g, '-')) + '">' + esc(sev) + '</span></td>';
+                html += '<td>' + esc(r.cvss) + '</td>';
+                html += '<td>' + esc(r.software) + '</td>';
+                html += '<td>' + esc(r.version) + '</td>';
+                html += '<td>' + esc(status) + (r.mixed ? ' <span class="badge badge-mixed">mixed</span>' : '') + '</td>';
+                html += '<td class="devlist">';
+                for (var j = 0; j < r.locations.length; j++) {
+                    var loc = r.locations[j];
+                    html += '<div><b>' + esc(loc.name) + '</b>: ' + esc((loc.devices || []).join(', ')) + '</div>';
+                }
+                html += '</td>';
+                html += '<td><select class="rating-sel">' +
+                    '<option value=""' + (rating === '' ? ' selected' : '') + '>Unrated</option>' +
+                    '<option value="CRITICAL"' + (rating === 'CRITICAL' ? ' selected' : '') + '>Critical</option>' +
+                    '<option value="HIGH"' + (rating === 'HIGH' ? ' selected' : '') + '>High</option>' +
+                    '<option value="MEDIUM"' + (rating === 'MEDIUM' ? ' selected' : '') + '>Medium</option>' +
+                    '<option value="LOW"' + (rating === 'LOW' ? ' selected' : '') + '>Low</option>' +
+                    '<option value="UNKNOWN"' + (rating === 'UNKNOWN' ? ' selected' : '') + '>Unknown</option>' +
+                    (r.mixed ? '<option value="MIXED" selected>Mixed</option>' : '') +
+                    '</select></td>';
+                html += '<td><input type="text" class="comment-inp" value="' + esc(comment) + '" placeholder="' + (r.mixed ? 'varies per location' : 'comment (required for rating)') + '"></td>';
+                html += '<td><button class="small save-btn">Save Rating</button> ';
+                if (flagged || r.anyFlagged) {
+                    html += '<button class="small purple unfp-btn">Undo false positive</button>';
+                } else {
+                    html += '<button class="small red fp-btn">Mark as False Positive</button>';
+                }
+                html += '</td>';
+                html += '</tr>';
+            }
+            if (rows.length === 0) {
+                html += '<tr><td colspan="' + COLUMNS.length + '" style="color:#888">No findings match the current filter.</td></tr>';
+            }
+            html += '</tbody></table>';
+            $('results').innerHTML = html;
+        }
+
+        $('results').addEventListener('click', function (e) {
+            var el = e.target;
+            if (!el || !el.tagName || (el.tagName !== 'BUTTON')) { return; }
+            var tr = el.parentNode;
+            while (tr && (tr.tagName !== 'TR')) { tr = tr.parentNode; }
+            if (!tr) { return; }
+            var cve = tr.getAttribute('data-cve');
+            if (!cve) { return; }
+            var row = null;
+            for (var i = 0; i < state.rows.length; i++) {
+                if (state.rows[i].cve === cve) { row = state.rows[i]; break; }
+            }
+            if (!row) { return; }
+
+            if (el.classList.contains('save-btn')) { saveRating(row, tr); }
+            else if (el.classList.contains('fp-btn')) { flagFalsePositive(row, tr); }
+            else if (el.classList.contains('unfp-btn')) { unflagFalsePositive(row, tr); }
+        });
+
+        $('results').addEventListener('click', function (e) {
+            var el = e.target;
+            if (el && el.tagName === 'TH' && el.getAttribute('data-key') && !el.classList.contains('nosort')) {
+                var key = el.getAttribute('data-key');
+                if (state.sortKey === key) { state.sortDir = (state.sortDir === 'asc') ? 'desc' : 'asc'; }
+                else { state.sortKey = key; state.sortDir = (key === 'cvss' || key === 'severity') ? 'desc' : 'asc'; }
+                renderTable();
+            }
+        });
+
+        function rowMeshIds(row) {
+            var ids = [];
+            for (var i = 0; i < row.locations.length; i++) { ids.push(row.locations[i].meshId); }
+            return ids.join(',');
+        }
+
+        function applyRowState(row, kind, rating, comment) {
+            var perMesh = {};
+            for (var i = 0; i < row.locations.length; i++) { perMesh[row.locations[i].meshId] = true; }
+            if (kind === 'unflag') {
+                row.assessment = null;
+                row.mixed = false;
+                row.anyFlagged = false;
+                row.assessments = {};
+            } else {
+                row.mixed = false;
+                row.anyFlagged = (kind === 'flag');
+                row.assessment = {
+                    assessment: (kind === 'flag') ? 'UNKNOWN' : rating,
+                    comment: comment || '',
+                    flagged: (kind === 'flag')
+                };
+                row.assessments = {};
+                for (var meshId in perMesh) {
+                    if (Object.prototype.hasOwnProperty.call(perMesh, meshId)) { row.assessments[meshId] = row.assessment; }
+                }
+            }
+            renderTable();
+        }
+
+        function saveRating(row, tr) {
+            var rating = tr.querySelector('.rating-sel').value;
+            var comment = tr.querySelector('.comment-inp').value;
+            if (!rating || (rating === 'MIXED')) {
+                showMsg('msg', 'Please select a rating for ' + row.cve + ' first.', false);
+                return;
+            }
+            if (!comment.trim()) {
+                showMsg('msg', 'A comment is required to rate a vulnerability.', false);
+                return;
+            }
+            post('save_assessment', { meshIds: rowMeshIds(row), cveId: row.cve, assessment: rating, comment: comment }).then(function (data) {
+                if (data.error) { showMsg('msg', data.error, false); return; }
+                applyRowState(row, 'save', rating, comment.trim());
+                showMsg('msg', 'Rating for ' + row.cve + ' saved for ' + row.locations.length + ' location(s).', true);
+            }).catch(function (e) { showMsg('msg', 'Save failed: ' + e.message, false); });
+        }
+
+        function flagFalsePositive(row, tr) {
+            var comment = tr.querySelector('.comment-inp').value;
+            post('flag_false_positive', { meshIds: rowMeshIds(row), cveId: row.cve, comment: comment || '' }).then(function (data) {
+                if (data.error) { showMsg('msg', data.error, false); return; }
+                applyRowState(row, 'flag', 'UNKNOWN', (comment || '').trim());
+                showMsg('msg', row.cve + ' marked as false positive for ' + row.locations.length + ' location(s).', true);
+            }).catch(function (e) { showMsg('msg', 'Action failed: ' + e.message, false); });
+        }
+
+        function unflagFalsePositive(row, tr) {
+            post('unflag_false_positive', { meshIds: rowMeshIds(row), cveId: row.cve }).then(function (data) {
+                if (data.error) { showMsg('msg', data.error, false); return; }
+                applyRowState(row, 'unflag');
+                showMsg('msg', 'False-positive flag removed for ' + row.cve + '.', true);
+            }).catch(function (e) { showMsg('msg', 'Action failed: ' + e.message, false); });
+        }
+
+        // ---------- filters ----------
+
+        $('filterText').addEventListener('input', function () {
+            state.filterText = this.value;
+            renderTable();
+        });
+        $('filterSeverity').addEventListener('change', function () {
+            state.filterSeverity = this.value;
+            renderTable();
+        });
+        $('filterStatus').addEventListener('change', function () {
+            state.filterStatus = this.value;
+            renderTable();
+        });
+
+        // ---------- CPE mapping table ----------
+
+        function renderCpeTable() {
+            var txt = state.cpeFilter.toLowerCase().trim();
+            var html = '';
+            var shown = 0;
+            for (var i = 0; i < state.cpeEntries.length; i++) {
+                var e = state.cpeEntries[i];
+                if (txt) {
+                    var hay = (e.match + ' ' + e.vendor + ' ' + e.product).toLowerCase();
+                    if (hay.indexOf(txt) < 0) { continue; }
+                }
+                shown++;
+                html += '<tr data-match="' + esc(e.match) + '" data-vendor="' + esc(e.vendor) + '" data-product="' + esc(e.product) + '">';
+                html += '<td><code>' + esc(e.match) + '</code></td>';
+                html += '<td>' + esc(e.vendor) + '</td>';
+                html += '<td>' + esc(e.product) + '</td>';
+                if (e.source === 'custom') {
+                    html += '<td><span class="badge badge-custom">Custom</span></td>';
+                    html += '<td><button class="small red del-cpe-btn">Delete</button></td>';
+                } else {
+                    html += '<td><span class="badge badge-builtin">Built-in</span></td>';
+                    html += '<td><button class="small override-cpe-btn">Override</button></td>';
+                }
+                html += '</tr>';
+            }
+            if (shown === 0) {
+                html = '<tr><td colspan="5" style="color:#888">No mappings match the filter.</td></tr>';
+            }
+            $('cpeTableBody').innerHTML = html;
+        }
+
+        function loadCpeTable() {
+            post('get_cpe_table', {}).then(function (data) {
+                if (data.error) { showMsg('cpeMsg', data.error, false); return; }
+                state.cpeEntries = data.entries || [];
+                renderCpeTable();
+            }).catch(function (e) { showMsg('cpeMsg', 'Failed to load the CPE table: ' + e.message, false); });
+        }
+
+        $('cpeFilter').addEventListener('input', function () {
+            state.cpeFilter = this.value;
+            renderCpeTable();
+        });
+
+        $('cpeTableBody').addEventListener('click', function (e) {
+            var el = e.target;
+            if (!el || !el.tagName || (el.tagName !== 'BUTTON')) { return; }
+            var tr = el.parentNode;
+            while (tr && (tr.tagName !== 'TR')) { tr = tr.parentNode; }
+            if (!tr) { return; }
+            var match = tr.getAttribute('data-match');
+            var vendor = tr.getAttribute('data-vendor');
+            var product = tr.getAttribute('data-product');
+
+            if (el.classList.contains('del-cpe-btn')) {
+                if (!window.confirm('Delete the custom mapping "' + match + '" -> ' + vendor + '/' + product + '?')) { return; }
+                post('delete_cpe_table', { match: match, vendor: vendor, product: product }).then(function (data) {
+                    if (data.error) { showMsg('cpeMsg', data.error, false); return; }
+                    showMsg('cpeMsg', 'Custom mapping deleted.', true);
+                    loadCpeTable();
+                }).catch(function (err) { showMsg('cpeMsg', 'Delete failed: ' + err.message, false); });
+            } else if (el.classList.contains('override-cpe-btn')) {
+                $('cpeRegex').value = match;
+                $('cpeVendor').value = vendor;
+                $('cpeProduct').value = product;
+                $('cpeProduct').focus();
+                showMsg('cpeMsg', 'Values copied to the form below. Adjust them and press Add - your custom entry takes precedence over the built-in mapping.', true);
+            }
+        });
+
+        $('addCpeBtn').addEventListener('click', function () {
+            var match = $('cpeRegex').value.trim();
+            var vendor = $('cpeVendor').value.trim().toLowerCase();
+            var product = $('cpeProduct').value.trim().toLowerCase();
+            if (!match || !vendor || !product) {
+                showMsg('cpeMsg', 'Regex, vendor and product are required.', false);
+                return;
+            }
+            try { new RegExp(match, 'i'); } catch (err) {
+                showMsg('cpeMsg', 'Invalid regex: ' + err.message, false);
+                return;
+            }
+            post('add_cpe', { match: match, vendor: vendor, product: product }).then(function (data) {
+                if (data.error) { showMsg('cpeMsg', data.error, false); return; }
+                $('cpeRegex').value = '';
+                $('cpeVendor').value = '';
+                $('cpeProduct').value = '';
+                showMsg('cpeMsg', 'Mapping saved to custom-cpe.json (takes precedence over the built-in table).', true);
+                loadCpeTable();
+            }).catch(function (err) { showMsg('cpeMsg', 'Save failed: ' + err.message, false); });
+        });
+
+        // ---------- init ----------
+
+        restoreLocationSelection();
+        updateLocCount();
+        scan();
+        loadCpeTable();
+    })();
+    </script>
+</body>
+</html>

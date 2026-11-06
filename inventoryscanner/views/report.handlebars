@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vulnerability Report</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #eef1f5; color: #1a1a1a; margin: 0; padding: 24px; }
+        .topnav { max-width: 1100px; margin: 0 auto 16px auto; background: #0b3d6b; border-radius: 8px; padding: 10px 16px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+        .topnav a { color: #d7e6f5; text-decoration: none; padding: 6px 12px; border-radius: 5px; font-size: 13px; font-weight: 600; }
+        .topnav a:hover { background: #154d80; color: #fff; }
+        .topnav a.active { background: #4a90d9; color: #fff; }
+        .topnav .spacer { flex: 1; }
+        .page { max-width: 1100px; margin: 0 auto 24px auto; background: #ffffff; padding: 36px 44px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.12); }
+        .report-title { font-size: 26px; font-weight: 700; margin: 0 0 4px 0; color: #0b3d6b; }
+        .report-sub { font-size: 14px; color: #555; margin: 0 0 20px 0; }
+        .meta-row { display: flex; gap: 40px; flex-wrap: wrap; font-size: 13px; color: #444; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 2px solid #e0e4ea; }
+        .meta-row b { font-weight: 600; color: #0b3d6b; }
+        .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px; margin-bottom: 28px; }
+        .kpi { background: #f4f7fb; border: 1px solid #d8e0ec; border-left: 4px solid #4a90d9; border-radius: 6px; padding: 14px 16px; }
+        .kpi .value { font-size: 26px; font-weight: 700; color: #0b3d6b; line-height: 1.1; }
+        .kpi .label { font-size: 12px; color: #555; margin-top: 4px; text-transform: uppercase; letter-spacing: 0.4px; }
+        .kpi.crit { border-left-color: #dc3545; } .kpi.crit .value { color: #dc3545; }
+        .kpi.high { border-left-color: #fd7e14; } .kpi.high .value { color: #d9700b; }
+        .kpi.med { border-left-color: #ffc107; } .kpi.med .value { color: #9a7b00; }
+        .kpi.low { border-left-color: #28a745; } .kpi.low .value { color: #1e7e34; }
+        .kpi.unk { border-left-color: #6c757d; } .kpi.unk .value { color: #555; }
+        .kpi.fp { border-left-color: #6f42c1; } .kpi.fp .value { color: #6f42c1; }
+        h2 { font-size: 17px; color: #0b3d6b; margin: 26px 0 10px 0; border-bottom: 1px solid #e0e4ea; padding-bottom: 6px; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 18px; font-size: 13px; }
+        th, td { border: 1px solid #d8dee8; padding: 8px 10px; text-align: left; vertical-align: top; }
+        th { background: #f0f4f9; font-weight: 600; color: #0b3d6b; }
+        tr:nth-child(even) td { background: #fafbfd; }
+        .num { text-align: right; }
+        .sev { display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 11px; font-weight: 700; color: #fff; }
+        .sev-CRITICAL { background: #dc3545; }
+        .sev-HIGH { background: #fd7e14; }
+        .sev-MEDIUM { background: #ffc107; color: #333; }
+        .sev-LOW { background: #28a745; }
+        .sev-UNKNOWN { background: #6c757d; }
+        .sev-false-positive { background: #6f42c1; }
+        .locnav { margin: 0 0 22px 0; padding: 10px 14px; background: #f4f7fb; border: 1px solid #d8e0ec; border-radius: 6px; font-size: 13px; }
+        .locnav b { color: #0b3d6b; margin-right: 6px; }
+        .locnav a { color: #2d6cb5; text-decoration: none; margin-right: 12px; white-space: nowrap; }
+        .locnav a:hover { text-decoration: underline; }
+        .footer { margin-top: 30px; padding-top: 14px; border-top: 2px solid #e0e4ea; font-size: 12px; color: #888; text-align: center; }
+        .print-btn { padding: 8px 16px; background: #4a90d9; color: #fff; border: none; border-radius: 5px; font-size: 13px; font-weight: 600; cursor: pointer; }
+        .print-btn:hover { background: #357abd; }
+        .section-page { break-before: page; page-break-before: always; }
+        @media print {
+            body { background: #fff; padding: 0; }
+            .topnav { display: none; }
+            .page { box-shadow: none; border-radius: 0; padding: 0; max-width: 100%; margin: 0; }
+            .kpi { break-inside: avoid; }
+            table { break-inside: auto; }
+            tr { break-inside: avoid; }
+            .section-page { break-before: page; page-break-before: always; }
+        }
+    </style>
+</head>
+<body>
+    <div class="topnav">
+        <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=show">Assessment Panel</a>
+        <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=report" class="active">Vulnerability Report</a>
+        <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=deviceReport">Device Report</a>
+        <span class="spacer"></span>
+        <button class="print-btn" onclick="window.print()">Print / Save as PDF</button>
+    </div>
+
+    <div class="page" id="loc-top">
+        <div class="report-title">Vulnerability Report &mdash; Overview</div>
+        <div class="report-sub">Automated vulnerability assessment of managed devices &mdash; followed by one section per location</div>
+
+        <div class="meta-row">
+            <div><b>Generated:</b> {{report.generated}}</div>
+            <div><b>NVD database:</b> {{#if totalCves}}{{#if lastUpdate}}{{lastUpdate}}{{else}}loaded{{/if}}{{else}}not downloaded{{/if}}</div>
+            <div><b>Indexed CVEs:</b> {{totalCves}}</div>
+        </div>
+
+        <div class="locnav">
+            <b>Locations:</b>
+            {{#each report.locations}}<a href="#loc-{{@index}}">{{this.name}}</a>{{/each}}
+        </div>
+
+        <h2>Executive Summary</h2>
+        <div class="kpi-grid">
+            <div class="kpi"><div class="value">{{report.totalSystems}}</div><div class="label">Scanned Systems</div></div>
+            <div class="kpi"><div class="value">{{report.totalPrograms}}</div><div class="label">Installed Programs</div></div>
+            <div class="kpi"><div class="value">{{report.totalCves}}</div><div class="label">Total Findings</div></div>
+            <div class="kpi"><div class="value">{{report.uniqueCves}}</div><div class="label">Unique CVEs</div></div>
+            <div class="kpi crit"><div class="value">{{report.severityCounts.CRITICAL}}</div><div class="label">Critical</div></div>
+            <div class="kpi high"><div class="value">{{report.severityCounts.HIGH}}</div><div class="label">High</div></div>
+            <div class="kpi med"><div class="value">{{report.severityCounts.MEDIUM}}</div><div class="label">Medium</div></div>
+            <div class="kpi low"><div class="value">{{report.severityCounts.LOW}}</div><div class="label">Low</div></div>
+            <div class="kpi unk"><div class="value">{{report.severityCounts.UNKNOWN}}</div><div class="label">Unknown</div></div>
+            <div class="kpi fp"><div class="value">{{report.falsePositiveCves}}</div><div class="label">False Positives</div></div>
+            <div class="kpi"><div class="value">{{report.coveragePercent}}%</div><div class="label">CPE Coverage</div></div>
+        </div>
+
+        <h2>Severity Distribution</h2>
+        <table>
+            <tr><th>Severity</th><th class="num">Count</th></tr>
+            <tr><td><span class="sev sev-CRITICAL">CRITICAL</span></td><td class="num">{{report.severityCounts.CRITICAL}}</td></tr>
+            <tr><td><span class="sev sev-HIGH">HIGH</span></td><td class="num">{{report.severityCounts.HIGH}}</td></tr>
+            <tr><td><span class="sev sev-MEDIUM">MEDIUM</span></td><td class="num">{{report.severityCounts.MEDIUM}}</td></tr>
+            <tr><td><span class="sev sev-LOW">LOW</span></td><td class="num">{{report.severityCounts.LOW}}</td></tr>
+            <tr><td><span class="sev sev-UNKNOWN">UNKNOWN</span></td><td class="num">{{report.severityCounts.UNKNOWN}}</td></tr>
+        </table>
+
+        <h2>Locations</h2>
+        <table>
+            <tr>
+                <th>Location</th>
+                <th class="num">Systems</th><th class="num">Programs</th>
+                <th class="num">Findings</th><th class="num">Unique CVEs</th><th class="num">False Positives</th><th class="num">CPE Coverage</th>
+                <th class="num">Critical</th><th class="num">High</th><th class="num">Medium</th><th class="num">Low</th><th class="num">Unknown</th>
+            </tr>
+            {{#each report.locations}}
+            <tr>
+                <td><a href="#loc-{{@index}}">{{this.name}}</a></td>
+                <td class="num">{{this.totalSystems}}</td>
+                <td class="num">{{this.totalPrograms}}</td>
+                <td class="num"><b>{{this.totalCves}}</b></td>
+                <td class="num">{{this.uniqueCves}}</td>
+                <td class="num">{{this.falsePositiveCves}}</td>
+                <td class="num">{{this.coveragePercent}}%</td>
+                <td class="num">{{this.severityCounts.CRITICAL}}</td>
+                <td class="num">{{this.severityCounts.HIGH}}</td>
+                <td class="num">{{this.severityCounts.MEDIUM}}</td>
+                <td class="num">{{this.severityCounts.LOW}}</td>
+                <td class="num">{{this.severityCounts.UNKNOWN}}</td>
+            </tr>
+            {{else}}
+            <tr><td colspan="12" style="color:#888">No locations found.</td></tr>
+            {{/each}}
+        </table>
+
+        <div class="footer">
+            Generated by MeshCentral Inventory &amp; Vulnerability Scanner &middot; Severity ratings use the manual group assessment where available.<br>
+            Coverage: {{report.assessablePrograms}} of {{report.totalPrograms}} installed programs ({{report.coveragePercent}}%) have a verified CPE mapping and were checked against the NVD.
+            Programs without a mapping (e.g. OEM drivers and utilities) are listed as <em>not assessable</em> in the CSV exports and are <strong>not covered by this scan</strong>.
+        </div>
+    </div>
+
+    {{#each report.locations}}
+    <div class="page section-page" id="loc-{{@index}}">
+        <div class="report-title">Vulnerability Report &mdash; Location: {{this.name}}</div>
+        <div class="report-sub">Findings of location &ldquo;{{this.name}}&rdquo; &mdash; <a href="#loc-top">back to overview</a></div>
+
+        <div class="meta-row">
+            <div><b>Location:</b> {{this.name}}</div>
+            <div><b>Systems:</b> {{this.totalSystems}}</div>
+            <div><b>Programs:</b> {{this.totalPrograms}}</div>
+            <div><b>Findings:</b> {{this.totalCves}}</div>
+            <div><b>Unique CVEs:</b> {{this.uniqueCves}}</div>
+            <div><b>False Positives:</b> {{this.falsePositiveCves}}</div>
+            <div><b>CPE coverage:</b> {{this.assessablePrograms}}/{{this.totalPrograms}} programs ({{this.coveragePercent}}%)</div>
+        </div>
+
+        <h2>Severity Distribution</h2>
+        <table>
+            <tr><th>Severity</th><th class="num">Count</th></tr>
+            <tr><td><span class="sev sev-CRITICAL">CRITICAL</span></td><td class="num">{{this.severityCounts.CRITICAL}}</td></tr>
+            <tr><td><span class="sev sev-HIGH">HIGH</span></td><td class="num">{{this.severityCounts.HIGH}}</td></tr>
+            <tr><td><span class="sev sev-MEDIUM">MEDIUM</span></td><td class="num">{{this.severityCounts.MEDIUM}}</td></tr>
+            <tr><td><span class="sev sev-LOW">LOW</span></td><td class="num">{{this.severityCounts.LOW}}</td></tr>
+            <tr><td><span class="sev sev-UNKNOWN">UNKNOWN</span></td><td class="num">{{this.severityCounts.UNKNOWN}}</td></tr>
+        </table>
+
+        <h2>Findings</h2>
+        <table>
+            <tr>
+                <th>CVE ID</th><th>Severity</th><th class="num">CVSS</th>
+                <th>Software</th><th>Version</th><th>Status</th>
+                <th>Manual Rating</th><th>Comment</th><th>Affected Devices</th>
+            </tr>
+            {{#each this.findings}}
+            <tr>
+                <td>{{this.cve}}</td>
+                <td>{{#if this.flagged}}<span class="sev sev-false-positive">false positive</span>{{else}}<span class="sev sev-{{this.effectiveSeverity}}">{{this.effectiveSeverity}}</span>{{/if}}</td>
+                <td class="num">{{this.cvss}}</td>
+                <td>{{this.software}}</td>
+                <td>{{this.version}}</td>
+                <td>{{#if this.flagged}}false positive{{else}}CVE{{/if}}</td>
+                <td>{{#if this.assessment}}{{this.assessment}}{{else}}&mdash;{{/if}}</td>
+                <td>{{this.comment}}</td>
+                <td>{{#each this.devices}}{{this}}{{#unless @last}}, {{/unless}}{{/each}}</td>
+            </tr>
+            {{else}}
+            <tr><td colspan="9" style="color:#888">No findings for this location.</td></tr>
+            {{/each}}
+        </table>
+
+        <div class="footer">
+            Generated by MeshCentral Inventory &amp; Vulnerability Scanner &middot; Severity ratings use the manual group assessment where available.<br>
+            Coverage of this location: {{this.assessablePrograms}} of {{this.totalPrograms}} programs ({{this.coveragePercent}}%) assessed against the NVD; the rest is <em>not assessable</em> and not covered by this scan.
+        </div>
+    </div>
+    {{/each}}
+</body>
+</html>

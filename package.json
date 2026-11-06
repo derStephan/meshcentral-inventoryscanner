@@ -1,0 +1,38 @@
+{
+  "name": "meshcentral-inventoryscanner",
+  "version": "1.0.0",
+  "description": "MeshCentral plugin: inventory CSV exports, offline NVD CVE scanning, group-wide vulnerability assessment, printable audit reports and scheduled scans with notifications.",
+  "main": "inventoryscanner/inventoryscanner.js",
+  "scripts": {
+    "check": "node tools/check.js",
+    "test:plugin": "node tools/test-plugin.js",
+    "test:views": "node tools/test-views.js",
+    "test": "node tools/check.js && node tools/test-plugin.js && node tools/test-views.js"
+  },
+  "devDependencies": {
+    "handlebars": "^4.7.8"
+  },
+  "keywords": [
+    "meshcentral",
+    "meshcentral-plugin",
+    "vulnerability",
+    "vulnerability-scanner",
+    "nvd",
+    "cve",
+    "inventory",
+    "audit"
+  ],
+  "author": "derStephan",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/derStephan/meshcentral-inventoryscanner.git"
+  },
+  "bugs": {
+    "url": "https://github.com/derStephan/meshcentral-inventoryscanner/issues"
+  },
+  "homepage": "https://github.com/derStephan/meshcentral-inventoryscanner#readme",
+  "engines": {
+    "node": ">=16"
+  }
+}
