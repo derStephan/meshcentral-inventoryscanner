@@ -260,6 +260,9 @@ If you change data shapes, UPDATE these tests — they are the contract.
 - Handlebars views are plain HTML+core helpers; no layout engine, no `{{{ }}}`, no helpers; anchors via `{{@index}}`.
 - `res.render('deviceReport')` ↔ file `deviceReport.handlebars`: the capital **R** must match exactly (Linux FS).
 - After editing the inline panel script, re-run `npm test` (the extraction check is strict on purpose).
+- **Version bumps must hit all three places**: `version` in config.json (what the installer/DB shows), the
+  `@version` line in the inventoryscanner.js file header, and a CHANGELOG.md entry. The changelogUrl points
+  at CHANGELOG.md - that file MUST exist in the repo (a silent missing write here broke the installer UI once).
 - The panel auto-scans ALL locations on load — cheap locally (no network) but DB-heavy on huge fleets; if that ever
   matters, make the initial scan opt-in rather than removing the floating selector.
 - NVD feed download: sequential per year with retries and pauses (rate limits). A stale-looking `.meta` mismatch is

@@ -122,6 +122,28 @@ edit is enabling plugins itself - without it MeshCentral does not show a plugin 
 Updates appear on the same **Plugins** page once a newer version tag exists in this repository - install
 the update there and restart once.
 
+### Install & startup timings (what to expect)
+
+Installation and the first start are **asynchronous** - a freshly installed plugin can look "incomplete"
+for a while, and that is normal:
+
+1. **ZIP extraction** (seconds to a few minutes - slower on small VMs or with aggressive antivirus
+   scanning): files land in alphabetical order, so the root files appear first and `tools/` + `views/`
+   **last**. While extraction is still running, `inventoryscanner.js` may briefly exist as a 0-byte file
+   and the Plugins page still shows **Disabled** - the status flips to Enabled only once the archive is
+   completely unpacked. Do not inspect, restart or re-install during this phase.
+2. **Server restart** (the yellow notice): the plugin code is loaded with the server, not before.
+3. **NVD feed download on first start**: all years, several GB - typically 10-60 minutes depending on
+   the connection (watch `<datapath>/nvd/nvd-download.log`). Until the feeds are indexed, the panel
+   shows "NVD database: not downloaded yet" and scans cannot report CVEs. The first full scan of all
+   locations runs automatically right after (baseline).
+4. **Inventory collection**: software lists and the Windows-update state arrive per device when the
+   agent connects (default) and on the collection interval. A device that never reported shows an
+   empty software list - that means "not collected yet", **not** "clean". Offline devices keep their
+   last cached inventory.
+
+Reports, CSVs and coverage numbers are only meaningful after steps 3 and 4 have completed at least once.
+
 ## Configuration
 
 **Everything is configured in the panel Settings tab** - no file editing, and changes take effect immediately

@@ -1,7 +1,7 @@
 {
   "name": "Inventory & Vulnerability Scanner",
   "shortName": "inventoryscanner",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "derStephan",
   "description": "Export hardware and software inventory to CSV and scan devices against the local NVD CVE database (Windows-update status is reported as a critical finding)",
   "hasAdminPanel": true,

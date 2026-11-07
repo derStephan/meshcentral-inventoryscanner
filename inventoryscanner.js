@@ -17,7 +17,7 @@
  * NVD feed is downloaded.
  *
  * @author derStephan
- * @version 1.0.0
+ * @version 1.1.0
  *
  * Transparency: This plugin was created with the assistance of Qwen 3.6 27B and Qwen 3.8 Flash Next.
  * Security audit (2026-11-06) performed by NVIDIA Nemotron 3 550B A55B via opencode.
