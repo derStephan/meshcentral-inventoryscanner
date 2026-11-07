@@ -1,18 +1,18 @@
 {
   "name": "Inventory & Vulnerability Scanner",
   "shortName": "inventoryscanner",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "author": "derStephan",
   "description": "Export hardware and software inventory to CSV and scan devices against the local NVD CVE database (Windows-update status is reported as a critical finding)",
   "hasAdminPanel": true,
   "homepage": "https://github.com/derStephan/meshcentral-inventoryscanner",
-  "changelogUrl": "https://raw.githubusercontent.com/derStephan/meshcentral-inventoryscanner/main/CHANGELOG.md",
+  "changelogUrl": "https://github.com/derStephan/meshcentral-inventoryscanner/commits/main",
   "configUrl": "https://raw.githubusercontent.com/derStephan/meshcentral-inventoryscanner/main/config.json",
   "downloadUrl": "https://github.com/derStephan/meshcentral-inventoryscanner/archive/refs/heads/main.zip",
   "repository": {
     "type": "git",
     "url": "https://github.com/derStephan/meshcentral-inventoryscanner.git"
   },
-  "versionHistoryUrl": "https://api.github.com/repos/derStephan/meshcentral-inventoryscanner/tags",
+
   "meshCentralCompat": ">=1.0.0"
 }

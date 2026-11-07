@@ -119,8 +119,10 @@ edit is enabling plugins itself - without it MeshCentral does not show a plugin 
    NVD feed download (all years, several GB - watch `<datapath>/nvd/nvd-download.log`). Scanning and
    reports work as soon as the feeds are indexed.
 
-Updates appear on the same **Plugins** page once a newer version tag exists in this repository - install
-the update there and restart once.
+Updates appear on the same **Plugins** page without any release ceremony: bump the version in
+this repository's config.json and push - every server checks that file and offers an update
+(the install always pulls the current downloadUrl ZIP). Git tags are not used; a "downgrade to a
+specific version" picker is deliberately not offered.
 
 ### Install & startup timings (what to expect)
 
@@ -280,7 +282,7 @@ See [AGENTS.md](AGENTS.md) for the full technical description aimed at AI agents
 
 - **Security Policy**: See [SECURITY.md](SECURITY.md) for supported versions, reporting, and architecture.
 - **Audit Report**: Full formal & functional verification in [AUDIT.md](AUDIT.md) (2026-11-06).
-- **Changelog**: Version history in [CHANGELOG.md](CHANGELOG.md).
+- **Changelog**: the [commit history](https://github.com/derStephan/meshcentral-inventoryscanner/commits/main) - every change is described there.
 
 Latest audit: **78/78 tests pass**, 1 critical bug fixed (`anyCveMaxAgeYears` settings overlay), ~466 lines dead code removed, all security controls verified.
 

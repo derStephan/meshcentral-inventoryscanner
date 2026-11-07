@@ -14,7 +14,6 @@ MUST stay at repository root (never re-nest them in a folder - that silently bre
 
   inventoryscanner.js          server code + browser-exported functions (module.exports.inventoryscanner(parent))
   config.json                  plugin manifest: installer metadata (and MeshCentral-side config file)
-  CHANGELOG.md                 changelogUrl target shown in the installer UI
   cpe-table.json               THE maintained mapping table: downloaded by running servers, edit = no release needed
   views/assessment.handlebars  admin panel (incl. its inline <script> - the panel logic lives HERE)
   views/report.handlebars      printable vulnerability report (overview + one page per location)
@@ -62,7 +61,8 @@ Based on official MeshCentral source (`pluginHandler.js`, `webserver.js`, `db.js
   hasAdminPanel:boolean, homepage, changelogUrl, configUrl, repository.type/.url, meshCentralCompat - all
   required; plus downloadUrl for the ZIP), stores it in the DB (status 0 = disabled), then downloads
   downloadUrl and unpacks into plugins/<shortName>/ with exactly one path element removed (=> flat layout).
-  Loading newly enabled plugins needs a server restart; update detection reads versionHistoryUrl (tags).
+  Loading newly enabled plugins needs a server restart. Update detection = refetch configUrl and compare
+  the version field (NO tags needed). versionHistoryUrl is intentionally absent: no downgrade picker.
 - **`pluginadmin.ashx` GET** → `handleAdminReq(req,res,user)`, `POST` (urlencoded body → `req.body`) →
   `handleAdminPostReq`. Session auth only — the plugin does its own siteadmin gate.
 - **Views:** `res.render('<name>', data)` ↔ `views/<name>.handlebars` — **case-sensitive** on Linux.
@@ -260,9 +260,10 @@ If you change data shapes, UPDATE these tests — they are the contract.
 - Handlebars views are plain HTML+core helpers; no layout engine, no `{{{ }}}`, no helpers; anchors via `{{@index}}`.
 - `res.render('deviceReport')` ↔ file `deviceReport.handlebars`: the capital **R** must match exactly (Linux FS).
 - After editing the inline panel script, re-run `npm test` (the extraction check is strict on purpose).
-- **Version bumps must hit all three places**: `version` in config.json (what the installer/DB shows), the
-  `@version` line in the inventoryscanner.js file header, and a CHANGELOG.md entry. The changelogUrl points
-  at CHANGELOG.md - that file MUST exist in the repo (a silent missing write here broke the installer UI once).
+- **Version bumps must hit both places**: `version` in config.json (what the installer/DB and the update check
+  compare) and the `@version` line in the inventoryscanner.js file header. No CHANGELOG.md file - changelogUrl
+  points at the GitHub commits page on purpose (commit messages ARE the changelog); the field itself is
+  REQUIRED by isValidConfig even when it links to commits. versionHistoryUrl/downgrades are not offered.
 - The panel auto-scans ALL locations on load — cheap locally (no network) but DB-heavy on huge fleets; if that ever
   matters, make the initial scan opt-in rather than removing the floating selector.
 - NVD feed download: sequential per year with retries and pauses (rate limits). A stale-looking `.meta` mismatch is
