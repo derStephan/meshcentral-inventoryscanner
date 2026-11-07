@@ -121,6 +121,7 @@ POST body `action=`:
 | `get_cpe_table` | — | `{entries:[{match,vendor,product,source:'built-in'|'remote'|'custom'}], cpeTable:{source,updated,url,enabled,entries}}` |
 | `delete_cpe_table` | `match`,`vendor`,`product` | custom entries only (built-ins can be shadowed, not deleted) |
 | `add_cpe` | `match`,`vendor`,`product` | regex validated via `new RegExp`; custom wins over built-in |
+| `update_nvd` | — | starts `runNvdUpdate(true)` (background) and answers {started:true} / {alreadyRunning:true}; concurrent runs skip via the `nvdUpdateRunning` flag |
 | `get_nvdlog` | — | `{lines:[...last 200 of nvd-download.log], size, file}`; `note` if file missing |
 | `get_locations` | — | all non-deleted meshes `{locations:[{id,name}]}` (also feeds the Settings tab group table) |
 | `remove_cpe` | `index` | legacy index-based removal |
@@ -242,10 +243,10 @@ npm test           # = tools/check.js && tools/test-plugin.js && tools/test-view
 
 - `tools/check.js`: `node --check` on the plugin, inline-script syntax/`{{`-hazard check, JSON validity of
   config files, and view-name↔render-name consistency. Must run anywhere (no dependencies).
-- `tools/test-plugin.js`: 106 behavioral assertions against the real module (mocked MeshCentral DB/webserver):
+- `tools/test-plugin.js`: 111 behavioral assertions against the real module (mocked MeshCentral DB/webserver):
   locations grouping & counting, manual-rating severity override, FP exclusion, host-name preference, coverage
   numbers, multi-mesh scan/`mixed` logic, all POST handlers incl. validation/rejections, routes, admin gating
-  (401), CPE table add/delete, vulns CSV header/content, toolbar button injection (simulated browser DOM), remote CPE table apply/cache/fetch/settings, NVD download-log tailing, `longTimeout` chunking, restart-proof schedule delays,
+  (401), CPE table add/delete, vulns CSV header/content, toolbar button injection (simulated browser DOM), remote CPE table apply/cache/fetch/settings, NVD download-log tailing, manual NVD update trigger + concurrency guard, `longTimeout` chunking, restart-proof schedule delays,
   scheduled-scan notification content in repeat and once mode, NVD-status derivation, settings overlay priority,
   save/revert/reset roundtrips incl. validation rejections, timer-generation invalidation, per-cycle collector config.
 - `tools/test-views.js`: compiles all three views and renders them with mock data **and empty data**.
@@ -267,7 +268,7 @@ If you change data shapes, UPDATE these tests — they are the contract.
   REQUIRED by isValidConfig even when it links to commits. versionHistoryUrl/downgrades are not offered.
 - The panel auto-scans ALL locations on load — cheap locally (no network) but DB-heavy on huge fleets; if that ever
   matters, make the initial scan opt-in rather than removing the floating selector.
-- NVD feed download: sequential per year with retries and pauses (rate limits). A stale-looking `.meta` mismatch is
+- NVD feed download: go through `obj.runNvdUpdate(force, cb)` (the only sanctioned entry - it holds the nvdUpdateRunning guard); A stale-looking `.meta` mismatch is
   a warning, not an error (verified NVD behavior). Never treat `.json.gz` presence alone as "feed exists" — the
   decompressed `.json` is what `loadNvdFromAllFiles` reads.
 

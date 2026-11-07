@@ -156,7 +156,8 @@ without a restart. Values are stored in `<datapath>/plugins/inventoryscanner/sca
 and a global "Reset all" hand control back to the file.
 
 The Settings tab covers: scan interval + which device groups are scanned, notification switch, threshold
-(global and per group) and repeat mode, NVD feed refresh, suppression of ancient "any version" CVEs, and the
+(global and per group) and repeat mode, NVD feed refresh (+ "Update NVD database now" button; progress in the download
+log below), suppression of ancient "any version" CVEs, and the
 inventory collection interval / on-connect behavior, the automatic CPE-matching switch and the repository
 
 ### config.json (optional)

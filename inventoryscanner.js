@@ -17,7 +17,7 @@
  * NVD feed is downloaded.
  *
  * @author derStephan
- * @version 1.2.0
+ * @version 1.3.0
  *
  * Transparency: This plugin was created with the assistance of Qwen 3.6 27B and Qwen 3.8 Flash Next.
  * Security audit (2026-11-06) performed by NVIDIA Nemotron 3 550B A55B via opencode.
@@ -445,6 +445,42 @@ module.exports.inventoryscanner = function (parent) {
      * @brief Ensure the NVD database is available at startup.
      * Loads existing feeds, or downloads all missing year feeds if none are present.
      */
+    /** @type {boolean} True while an NVD download run (scheduled or manual) is in flight. */
+    obj.nvdUpdateRunning = false;
+
+    /**
+     * @brief Single entry point for NVD downloads with a concurrency guard.
+     * Concurrent callers get callback(null, "skipped") - the already running
+     * download covers them (it refreshes the current year when asked to).
+     * @param {boolean} force - Re-download the current year even if cached.
+     * @param {function} [callback] - Called with (err, result).
+     */
+    obj.runNvdUpdate = function (force, callback) {
+        if (obj.nvdUpdateRunning) { if (callback) callback(null, 'skipped'); return; }
+        obj.nvdUpdateRunning = true;
+        obj.downloadNvdDatabase(force, function (err) {
+            obj.nvdUpdateRunning = false;
+            if (callback) callback(err, err ? null : 'done');
+        });
+    };
+
+    /**
+     * @brief Manual "update now" trigger from the Settings tab.
+     * Answers immediately (the download continues in the background); reports
+     * alreadyRunning when a scheduled or manual run is in flight.
+     * @param {object} req - The Express request (unused body).
+     * @param {object} res - The Express response.
+     * @param {object} user - The authenticated user.
+     */
+    obj.updateNvdHandler = function (req, res, user) {
+        var send = function (o) { res.type('json'); res.json(o); };
+        if (obj.nvdUpdateRunning) { return send({ started: false, alreadyRunning: true }); }
+        obj.runNvdUpdate(true, function (err) {
+            obj.debug('plugin:inventory_scanner', err ? ('NVD update run failed: ' + err.message) : 'NVD update run finished');
+        });
+        send({ started: true });
+    };
+
     obj.ensureNvdData = function () {
         var latestYearFile = path.join(obj.nvdDataPath, 'nvdcve-2.0-' + obj.currentYear() + '.json');
         if (fs.existsSync(latestYearFile)) {
@@ -452,7 +488,7 @@ module.exports.inventoryscanner = function (parent) {
             obj.loadNvdFromAllFiles();
         } else {
             obj.debug('plugin:inventory_scanner', 'Downloading NVD database');
-            obj.downloadNvdDatabase(false);
+            obj.runNvdUpdate(false, null);
         }
     };
 
@@ -471,7 +507,7 @@ module.exports.inventoryscanner = function (parent) {
         var gen = obj.timerGen;
         obj.longTimeout(function () {
             if (gen !== obj.timerGen) { return; }
-            obj.downloadNvdDatabase(true, function (err) {
+            obj.runNvdUpdate(true, function (err) {
                 if (gen !== obj.timerGen) { return; }
                 if (!err) {
                     obj.updateTimerArmed = true;
@@ -2442,6 +2478,7 @@ obj.loadNvdFromAllFiles = function () {
         if (req.body.action === 'get_locations') { return obj.getLocationsHandler(req, res, user); }
         if (req.body.action === 'get_cpe_table') { return obj.getCpeTableHandler(req, res, user); }
         if (req.body.action === 'get_nvdlog') { return obj.getNvdLogHandler(req, res, user); }
+        if (req.body.action === 'update_nvd') { return obj.updateNvdHandler(req, res, user); }
         if (req.body.action === 'delete_cpe_table') { return obj.deleteCpeTableHandler(req, res, user); }
         if (req.body.action === 'get_settings') { return obj.getSettingsHandler(req, res, user); }
         if (req.body.action === 'save_settings') { return obj.saveSettingsHandler(req, res, user); }

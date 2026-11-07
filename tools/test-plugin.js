@@ -561,6 +561,31 @@ steps.push(function (next) {
     next();
 });
 
+// ---- manual NVD update trigger (concurrency-guarded) ----
+steps.push(function (next) {
+    var savedDl = obj.downloadNvdDatabase, savedRun = obj.nvdUpdateRunning;
+    var dlCalls = 0, pendingCb = null;
+    obj.downloadNvdDatabase = function (force, cb) { dlCalls++; pendingCb = cb; };
+    obj.nvdUpdateRunning = false;
+    obj.handleAdminPostReq({ body: { action: 'update_nvd' } }, mockRes(function (d) {
+        check('update_nvd: starts a run', d.started === true && dlCalls === 1 && obj.nvdUpdateRunning === true, d);
+        obj.handleAdminPostReq({ body: { action: 'update_nvd' } }, mockRes(function (d2) {
+            check('update_nvd: second click reports alreadyRunning', d2.started === false && d2.alreadyRunning === true && dlCalls === 1, d2);
+            var skipResult = null;
+            obj.runNvdUpdate(true, function (err, r) { skipResult = r; });
+            check('runNvdUpdate: concurrent call is skipped', skipResult === 'skipped', skipResult);
+            pendingCb(null);
+            check('runNvdUpdate: flag clears after finish', obj.nvdUpdateRunning === false);
+            obj.handleAdminPostReq({ body: { action: 'update_nvd' } }, mockRes(function (d3) {
+                check('update_nvd: works again after completion', d3.started === true && dlCalls === 2, d3);
+                pendingCb(null);
+            }), user);
+        }), user);
+    }), user);
+    obj.downloadNvdDatabase = savedDl; obj.nvdUpdateRunning = savedRun;
+    next();
+});
+
 (function run(i) {
     if (i >= steps.length) {
         console.log(failures === 0 ? '\ntest-plugin: ALL PASSED' : '\ntest-plugin: ' + failures + ' FAILURE(S)');

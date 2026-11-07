@@ -165,6 +165,12 @@
                 <div><input type="text" id="setUpdateHours" class="num">
                     <select id="setUpdateHoursSrc" class="srcsel"></select></div>
 
+                <label>&nbsp;</label>
+                <div><button id="updateNvdNowBtn" class="green">Update NVD database now</button>
+                    <span id="updateNvdInfo" class="hint"></span>
+                    <div class="hint">Fetches missing years and refreshes the current year immediately (rate-limited, can
+                    take a while - progress appears in the download log below). The scheduled cycle continues unchanged.</div></div>
+
                 <label for="setAnyAge">Suppress version-less CVEs older than (years)</label>
                 <div><input type="text" id="setAnyAge" class="num">
                     <select id="setAnyAgeSrc" class="srcsel"></select>
@@ -952,6 +958,14 @@
         }
         $('refreshNvdLogBtn').addEventListener('click', loadNvdLog);
         loadNvdLog();
+
+        $('updateNvdNowBtn').addEventListener('click', function () {
+            if (!window.confirm('Start an NVD database update now? Missing years are downloaded and the current year refreshed.')) { return; }
+            post('update_nvd', {}).then(function (d) {
+                $('updateNvdInfo').textContent = d.alreadyRunning ? 'An update is already running - progress in the log below.' : 'Update started - progress in the log below.';
+                loadNvdLog();
+            }).catch(function (e) { showMsg('settingsMsg', 'Update request failed: ' + e.message, false); });
+        });
 
         $('resetSettingsBtn').addEventListener('click', function () {
             if (!window.confirm('Remove ALL values saved in this tab? The settings from config.json apply again.')) { return; }
