@@ -17,7 +17,7 @@
  * NVD feed is downloaded.
  *
  * @author derStephan
- * @version 1.1.1
+ * @version 1.2.0
  *
  * Transparency: This plugin was created with the assistance of Qwen 3.6 27B and Qwen 3.8 Flash Next.
  * Security audit (2026-11-06) performed by NVIDIA Nemotron 3 550B A55B via opencode.
@@ -2441,6 +2441,7 @@ obj.loadNvdFromAllFiles = function () {
         if (req.body.action === 'remove_cpe') { return obj.removeCpeHandler(req, res, user); }
         if (req.body.action === 'get_locations') { return obj.getLocationsHandler(req, res, user); }
         if (req.body.action === 'get_cpe_table') { return obj.getCpeTableHandler(req, res, user); }
+        if (req.body.action === 'get_nvdlog') { return obj.getNvdLogHandler(req, res, user); }
         if (req.body.action === 'delete_cpe_table') { return obj.deleteCpeTableHandler(req, res, user); }
         if (req.body.action === 'get_settings') { return obj.getSettingsHandler(req, res, user); }
         if (req.body.action === 'save_settings') { return obj.saveSettingsHandler(req, res, user); }
@@ -2623,6 +2624,34 @@ obj.loadNvdFromAllFiles = function () {
      * @param {object} res - The Express response.
      * @param {object} user - The authenticated user.
      */
+    /**
+     * @brief Return the tail of the NVD download log for the Settings tab viewer.
+     * Fixed path inside the plugin NVD directory, capped at the last 200 lines of a
+     * 256 KB window; never a caller-supplied path.
+     * @param {object} req - The Express request (unused body).
+     * @param {object} res - The Express response.
+     * @param {object} user - The authenticated user.
+     */
+    obj.getNvdLogHandler = function (req, res, user) {
+        var send = function (o) { res.type('json'); res.json(o); };
+        try {
+            var file = path.join(obj.nvdDataPath, 'nvd-download.log');
+            if (!fs.existsSync(file)) { return send({ lines: [], note: 'No download log yet - the first feed download creates it.' }); }
+            var st = fs.statSync(file);
+            var fd = fs.openSync(file, 'r');
+            var len = Math.min(st.size, 256 * 1024);
+            var buf = Buffer.alloc(len);
+            fs.readSync(fd, buf, 0, len, Math.max(0, st.size - len));
+            fs.closeSync(fd);
+            var lines = buf.toString('utf8').split(String.fromCharCode(10));
+            if (lines.length > 0 && lines[lines.length - 1] === '') { lines.pop(); }
+            if (len < st.size) { lines.shift(); }  // first line may be cut mid-way
+            send({ lines: lines.slice(-200), size: st.size, file: 'nvd/nvd-download.log' });
+        } catch (ex) {
+            send({ lines: [], note: 'Could not read the log: ' + ex.message });
+        }
+    };
+
     obj.getSettingsHandler = function (req, res, user) {
         var sc = obj.scannerConfig();
         var cc = obj.collectorConfig();

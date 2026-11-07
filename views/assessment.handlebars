@@ -212,6 +212,11 @@
                     <div class="hint">Notification becomes a to-do list: findings stay listed as "(severity, open)" until they are rated or flagged. New ones are always reported once as "(severity, new)".</div></div>
             </div>
 
+            <h3>NVD feed download log</h3>
+            <div><button id="refreshNvdLogBtn" class="small">Refresh log</button>
+                <span id="nvdLogInfo" class="hint"></span></div>
+            <pre id="nvdLog" style="max-height:260px;overflow:auto;background:#0f1720;color:#cfe3f5;padding:8px;border-radius:6px;font-size:11px;margin-top:6px;white-space:pre-wrap;">(not loaded yet)</pre>
+
             <h3>Device groups</h3>
             <div class="hint" style="margin-bottom:6px;">"Scan" unchecked for <b>all</b> groups = scan <b>all</b> groups (an empty selection means all).
                 A per-group threshold overrides the global one for notifications from that group.</div>
@@ -937,6 +942,16 @@
                 loadSettings();
             }).catch(function (e) { showMsg('settingsMsg', 'Save failed: ' + e.message, false); });
         });
+
+        function loadNvdLog() {
+            post('get_nvdlog', {}).then(function (data) {
+                if (data.error) { $('nvdLog').textContent = data.error; return; }
+                $('nvdLog').textContent = (data.lines && data.lines.length) ? data.lines.join(String.fromCharCode(10)) : (data.note || '(empty)');
+                $('nvdLogInfo').textContent = (data.note) ? data.note : (data.lines.length + ' of ' + data.size + ' bytes shown (last 200 lines) · ' + data.file);
+            }).catch(function (e) { $('nvdLog').textContent = 'Failed to load the log: ' + e.message; });
+        }
+        $('refreshNvdLogBtn').addEventListener('click', loadNvdLog);
+        loadNvdLog();
 
         $('resetSettingsBtn').addEventListener('click', function () {
             if (!window.confirm('Remove ALL values saved in this tab? The settings from config.json apply again.')) { return; }

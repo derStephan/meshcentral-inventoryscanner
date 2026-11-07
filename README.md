@@ -116,7 +116,7 @@ edit is enabling plugins itself - without it MeshCentral does not show a plugin 
 
 4. **Hard-reload the browser** (Ctrl+F5). Done: the toolbar buttons above the device list appear
    automatically (the plugin injects them itself), the assessment panel opens, and first run starts the
-   NVD feed download (all years, several GB - watch `<datapath>/nvd/nvd-download.log`). Scanning and
+   NVD feed download (all years, several GB - the panel Settings tab tails `nvd-download.log` live, no shell needed). Scanning and
    reports work as soon as the feeds are indexed.
 
 Updates appear on the same **Plugins** page without any release ceremony: bump the version in
@@ -136,7 +136,9 @@ for a while, and that is normal:
    completely unpacked. Do not inspect, restart or re-install during this phase.
 2. **Server restart** (the yellow notice): the plugin code is loaded with the server, not before.
 3. **NVD feed download on first start**: all years, several GB - typically 10-60 minutes depending on
-   the connection (watch `<datapath>/nvd/nvd-download.log`). Until the feeds are indexed, the panel
+   the connection. The Settings tab shows the tail of `<datapath>/nvd/nvd-download.log` (last 200
+
+   lines, refresh button), so no server shell is needed. Until the feeds are indexed, the panel
    shows "NVD database: not downloaded yet" and scans cannot report CVEs. The first full scan of all
    locations runs automatically right after (baseline).
 4. **Inventory collection**: software lists and the Windows-update state arrive per device when the

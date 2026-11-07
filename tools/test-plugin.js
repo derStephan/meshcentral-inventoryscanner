@@ -543,6 +543,24 @@ steps.push(function (next) {
     next();
 });
 
+// ---- NVD download log tailer ----
+steps.push(function (next) {
+    var savedNvd = obj.nvdDataPath;
+    obj.nvdDataPath = require('path').join(require('os').tmpdir(), 'invscanner-nvdlog-' + Date.now());
+    obj.handleAdminPostReq({ body: { action: 'get_nvdlog' } }, mockRes(function (d) {
+        check('nvdlog: missing file -> note, no lines', Array.isArray(d.lines) && d.lines.length === 0 && !!d.note, d);
+        require('fs').mkdirSync(obj.nvdDataPath, { recursive: true });
+        var text = '';
+        for (var i = 0; i < 500; i++) { text += 'line ' + i + String.fromCharCode(10); }
+        require('fs').writeFileSync(require('path').join(obj.nvdDataPath, 'nvd-download.log'), text);
+        obj.handleAdminPostReq({ body: { action: 'get_nvdlog' } }, mockRes(function (d2) {
+            check('nvdlog: tails last 200 lines', d2.lines.length === 200 && d2.lines[199] === 'line 499', d2.lines && [d2.lines.length, d2.lines[199]]);
+        }), user);
+    }), user);
+    obj.nvdDataPath = savedNvd;
+    next();
+});
+
 (function run(i) {
     if (i >= steps.length) {
         console.log(failures === 0 ? '\ntest-plugin: ALL PASSED' : '\ntest-plugin: ' + failures + ' FAILURE(S)');
