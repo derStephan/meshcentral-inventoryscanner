@@ -42,7 +42,13 @@ CSVs are Excel-safe (UTF-8 BOM) and neutralized against CSV formula injection (C
 ### 2. Offline CVE scanner (NVD 2.0)
 * The plugin downloads the public NVD JSON feeds (all years, ~2002 to current) **once** into `<datapath>/nvd/`, verifies SHA-256 against the official `.meta` files and refreshes the current year weekly.
 * CVE matching is **fully local** — no inventory data ever leaves your server. Only the public feed is fetched.
-* Matching is deliberately **conservative**: software is only checked if a curated, NVD-feed-verified CPE mapping exists (built-in table for ~50 common products + your own additions). Everything else is honestly reported as `not assessable` instead of being guessed — so you get almost no false positives, and the blind spot is quantified in every report (CPE coverage %).
+* Matching works on two levels, both fully offline: a curated CPE table (built-in entries for common products,
+  your own additions) maps tricky display names exactly; everything else is mapped by an **automatic evidence
+  matcher** - display names are normalized and only accepted when the resulting CPE product token provably
+  exists in the downloaded NVD data, the publisher resolves the vendor, and every version is re-checked
+  against the CVE range. This mirrors how OWASP Dependency-Check matches evidence to CPEs, just without any
+  API call or configuration. Names that prove nothing stay `not assessable` - no guessing, so false
+  positives stay rare while coverage rises; the blind spot is quantified in every report (CPE coverage %). software is only checked if a curated, NVD-feed-verified CPE mapping exists (built-in table for ~50 common products + your own additions). Everything else is honestly reported as `not assessable` instead of being guessed — so you get almost no false positives, and the blind spot is quantified in every report (CPE coverage %).
 * Windows clients (10/11) have no OS CVEs in the NVD; for Windows devices the plugin instead collects the **number of missing Critical/Important updates** from each agent and reports a pending-update state as a `WINDOWS-UPDATES` critical finding.
 
 ### 3. Vulnerability assessment panel
@@ -53,7 +59,9 @@ Open `https://<server>/pluginadmin.ashx?pin=inventoryscanner&action=show`:
 * Rate a CVE (Critical/High/Medium/Low/Unknown) **once** — the rating is saved for *every selected location where the finding occurs* (stored per location, because mitigations are a group decision). A comment is mandatory for ratings.
 * **Mark as false positive** (no comment required) — the finding stops counting everywhere (panel, reports, scheduled notifications, CSV shows `false positive`). Undo restores normal counting.
 * **Affected locations and devices (host names)** are shown per finding; a *mixed* badge marks findings whose locations carry different ratings.
-* **CPE Mapping tab** — the complete built-in + custom software-to-CPE table is visible in the UI. Add new mappings, or override any built-in row (custom entries always win). Stored in `custom-cpe.json`, no source edits needed.
+* **CPE Mapping tab** - the table actually in use is visible in the UI: the mapping table maintained in this
+  repository (`cpe-table.json`, auto-refreshed) or its built-in fallback, plus your custom entries (always
+  checked first). Improving a mapping is a one-line repository change - no plugin release, no server edit.
 * **Settings tab** - configure everything from the UI: scan interval, which groups are scanned, notification threshold (global + per group), notify mode, feed refresh and inventory collection. Saved to `scanner-settings.json`, effective **immediately without a restart**, and these values **override the same keys in config.json** — the plugin never writes config.json, it only reads it as fallback.
 
 ### 4. Printable audit reports (HTML, Print/Save-as-PDF)
@@ -123,7 +131,7 @@ and a global "Reset all" hand control back to the file.
 
 The Settings tab covers: scan interval + which device groups are scanned, notification switch, threshold
 (global and per group) and repeat mode, NVD feed refresh, suppression of ancient "any version" CVEs, and the
-inventory collection interval / on-connect behavior.
+inventory collection interval / on-connect behavior, the automatic CPE-matching switch and the repository
 
 ### config.json (optional)
 
@@ -140,6 +148,9 @@ tab wins over these values until you revert it.
 | `notify` (`meshId` -> severity) | - | Group table per-group threshold (empty = global) |
 | `notifyUnratedRepeat` | `false` | "Repeat unrated findings every scan" (`open` instead of only `new`) |
 | `updateHours` | `168` | NVD feed refresh in hours |
+| `autoProductMatch` | `true` | Automatic evidence matching for names without a table entry (Settings: "Auto-map") |
+| `cpeTableEnabled` | `true` | Re-download the curated table from the repository with every NVD refresh |
+| `cpeTableUrl` | (this repo's `cpe-table.json`) | https URL of the maintained table (own fork/copy allowed) |
 | `anyCveMaxAgeYears` | `5` | "Suppress version-less CVEs older than N years" (`0` = never) |
 | `collectIntervalMinutes` (*`inventoryScanner`* section) | `1440` | Collect inventory every N minutes (`0` = off) |
 | `collectOnAgentConnect` (*`inventoryScanner`* section) | `true` | "Collect when an agent connects" |
@@ -147,6 +158,22 @@ tab wins over these values until you revert it.
 Group ids are MeshCentral mesh `_id`s formatted `mesh/<domain>/<name>` - in the default domain that means a
 double slash, e.g. `mesh//Server1`. Easiest lookup: the checkbox `value`s in the panel (view page source) or
 the `meshes` collection in the database.
+
+### Maintaining the CPE mapping table
+
+The curated display-name-to-CPE table is maintained in **this repository** as [cpe-table.json](cpe-table.json).
+Every server running the plugin re-downloads it with each NVD feed refresh (and at startup when stale) and caches
+it locally - so a new or corrected mapping shows up everywhere without shipping a new plugin version.
+
+```json
+{ "entries": [ { "match": "^Example App", "vendor": "example", "product": "example_app" } ] }
+```
+
+* `match` is a JavaScript regex matched case-insensitively against the display name; `vendor`/`product` must be
+  real CPE codes from the NVD. Invalid entries or a broken file are rejected - the previous table stays active.
+* Air-gapped servers keep working on the built-in fallback table; the CPE Mapping tab always states which table
+  is in force and when it was last fetched.
+* Want your own table? Set the URL in the Settings tab (https only) or turn the auto-update off there.
 
 ### Toolbar buttons (recap)
 
@@ -179,17 +206,17 @@ another plugin's buttons, ours are left out (no duplicates).
 <datapath>/nvd/nvdcve-2.0-<year>.json      NVD feed cache (offline matching)
 <datapath>/nvd/assessments.json            group ratings + false-positive flags
 <datapath>/nvd/scans.json                  scheduled scan snapshots
-<datapath>/nvd/cpe-tokens.json             CPE dictionary lookup cache
 <datapath>/nvd/nvd-download.log            feed download log
 <datapath>/plugins/inventoryscanner/custom-cpe.json      your CPE mappings
+<datapath>/plugins/inventoryscanner/cpe-table.json       cached copy of the repository CPE table
 <datapath>/plugins/inventoryscanner/scanner-settings.json  values saved in the Settings tab
 <datapath>/plugins/inventoryscanner/data/<nodeid>/       collected software + Windows-update state per device
 ```
 
 ## Privacy & security
 
-* No inventory data is ever transmitted anywhere — the only outbound request is the public NVD feed (and the
-  public NVD **CPE dictionary API**, once per unknown product token, cached).
+* No inventory data is ever transmitted anywhere — the only outbound request is the public NVD feed.
+  The automatic CPE matching runs entirely against the already-downloaded feed data; no dictionary API exists.
 * Full-site-admin only; all endpoints re-check `user.siteadmin` on the server.
 * Device selection for exports uses MeshCentral's own rights-validated node ids.
 * Output hardening: HTML escaping at render time, CSV formula-injection neutralization, strict id validation on
@@ -198,8 +225,9 @@ another plugin's buttons, ours are left out (no duplicates).
 ## Known limitations (by design)
 
 * **Windows clients 10/11:** the NVD carries no OS CVEs for them — the missing-updates count is the indicator instead.
-* **Coverage:** only software with a curated/own CPE mapping is CVE-checked; OEM drivers/utilities are `not assessable`
-  (they are patched via vendor channels, not NVD/MSRC). Every report states its CPE coverage percentage.
+* **Coverage:** software is CVE-checked when a curated/custom mapping matches or the automatic evidence matcher
+  proves a real NVD product; OEM drivers/utilities usually stay `not assessable` (they are patched via vendor
+  channels, not NVD/MSRC). Every report states its CPE coverage percentage.
 * **Offline devices** show their last collected state; check the inventory age before trusting a device row.
 * The toast notification is ephemeral — if no admin is logged in at scan time, read it in **My Server → Events**
   (event retention applies, default ~30 days).

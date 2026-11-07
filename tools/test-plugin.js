@@ -469,6 +469,80 @@ steps.push(function (next) {
     next();
 });
 
+// ---- automatic product-token matching (offline evidence matcher) ----
+steps.push(function (next) {
+    var savedTokens = obj.cpeProductTokens, savedIndex = obj.productIndexByProduct, savedSettings = obj.pluginSettings;
+    obj.cpeProductTokens = { chrome: 1, firefox: 1, vlc_media_player: 1, temurin: 1, client: 1 };
+    obj.productIndexByProduct = {
+        chrome: [{ vendor: 'google', defs: [] }],
+        firefox: [{ vendor: 'mozilla', defs: [] }],
+        vlc_media_player: [{ vendor: 'videolan', defs: [] }],
+        temurin: [{ vendor: 'eclipse', defs: [] }],
+        client: [{ vendor: 'vendor_a', defs: [] }, { vendor: 'vendor_b', defs: [] }]
+    };
+    var r3 = obj.deriveCpeProduct('Eclipse Adoptium', 'Eclipse Temurin 21 LTS (x64)');
+    check('auto: vendor evidence + noise+version strip', r3 && r3.product === 'temurin' && r3.vendor === 'eclipse' && r3.viaAuto === true, r3);
+    var r5 = obj.deriveCpeProduct('Mozilla Corporation', 'Firefox 121.0 (x86 de-DE)');
+    check('auto: version-stripped token + vendor', r5 && r5.product === 'firefox' && r5.vendor === 'mozilla' && r5.viaAuto === true, r5);
+    var r2 = obj.deriveCpeProduct('VideoLAN', 'VLC media player 3.0.20');
+    check('auto: curated table wins before matching', r2 && r2.product === 'vlc_media_player' && r2.viaCurated === true, r2);
+    var r4 = obj.deriveCpeProduct('Some OEM Inc', 'Client');
+    check('auto: generic token rejected', r4 === null, r4);
+    obj.pluginSettings = { vulnerabilityScanner: { autoProductMatch: false } };
+    var r6 = obj.deriveCpeProduct('Eclipse Adoptium', 'Eclipse Temurin 21 LTS (x64)');
+    check('auto: setting off disables matching', r6 === null, r6);
+    obj.pluginSettings = { vulnerabilityScanner: {} };
+    var r6b = obj.deriveCpeProduct('Eclipse Adoptium', 'Eclipse Temurin 21 LTS (x64)');
+    check('auto: default when setting absent is on', r6b && r6b.viaAuto === true, r6b);
+    var r8 = obj.cpeTokenize('Notepad++ (x64) 8.6.2');
+    check('auto: tokenize keeps + and collapses noise', r8 === 'notepad++_8.6.2', r8);
+    var r9 = obj.deriveVendorFromPublisher('Adobe Inc.');
+    check('auto: publisher keyword map', r9 === 'adobe', r9);
+    var r10 = obj.deriveVendorFromPublisher('Adobery Labs');
+    check('auto: publisher word-boundary only', r10 === '', r10);
+    obj.cpeProductTokens = savedTokens; obj.productIndexByProduct = savedIndex; obj.pluginSettings = savedSettings;
+    next();
+});
+// ---- remotely maintained CPE table (apply/cache/fetch/settings) ----
+steps.push(function (next) {
+    var savedRemote = obj.remoteCpeEntries, savedLoadedAt = obj.cpeTableLoadedAt, savedSettings = obj.pluginSettings, savedPath = obj.cpeTablePath;
+    var res1 = obj.applyCpeTableText(JSON.stringify({ entries: [
+        { match: '^ZebraTool', vendor: 'Zebra', product: 'ZTool' },
+        { match: '(((bad', vendor: 'x', product: 'y' },
+        { match: '^ok2', vendor: 'v2', product: 'p2' } ] }));
+    check('cpeTable: apply valid entries, skip broken regex', res1.ok === true && res1.applied === 2 && res1.skipped === 1, res1);
+    var rz = obj.deriveCpeProduct('', 'ZebraTool 2.1');
+    check('cpeTable: remote row resolves name', rz && rz.vendor === 'zebra' && rz.product === 'ztool', rz);
+    check('cpeTable: status shows remote', obj.cpeTableStatus().source === 'remote' && obj.cpeTableStatus().entries === 2, obj.cpeTableStatus());
+    check('cpeTable: non-JSON rejected', obj.applyCpeTableText('not json').ok === false);
+    check('cpeTable: missing entries array rejected', obj.applyCpeTableText('{"foo":1}').ok === false);
+    obj.cpeTablePath = require('path').join(require('os').tmpdir(), 'invscanner-cpetable-' + Date.now(), 'cpe-table.json');
+    require('fs').mkdirSync(require('path').dirname(obj.cpeTablePath), { recursive: true });
+    require('fs').writeFileSync(obj.cpeTablePath, JSON.stringify({ entries: [{ match: '^CacheApp', vendor: 'cv', product: 'cp' }] }));
+    obj.remoteCpeEntries = null; obj.loadRemoteCpeTable();
+    check('cpeTable: loads cached file at startup', obj.cpeTableStatus().source === 'remote' && !!obj.deriveCpeProduct('', 'CacheApp 1'), obj.cpeTableStatus());
+    var httpCalls = 0, savedHttp = obj.cpeTableHttpGet;
+    obj.cpeTableHttpGet = function (url, cb) { httpCalls++; cb(null, JSON.stringify({ entries: [{ match: '^FetchApp', vendor: 'fv', product: 'fp' }] })); };
+    obj.remoteCpeEntries = null; obj.cpeTableLoadedAt = null; obj.pluginSettings = {};
+    obj.maybeFetchCpeTable(function () { });
+    check('cpeTable: maybeFetch fetches when stale and enabled', httpCalls === 1 && !!obj.deriveCpeProduct('', 'FetchApp'), httpCalls);
+    httpCalls = 0; obj.pluginSettings = { vulnerabilityScanner: { cpeTableEnabled: false } };
+    obj.maybeFetchCpeTable(function () { });
+    check('cpeTable: disabled means no HTTP at all', httpCalls === 0, httpCalls);
+    httpCalls = 0; obj.pluginSettings = {}; obj.cpeTableLoadedAt = new Date().toISOString();
+    obj.maybeFetchCpeTable(function () { });
+    check('cpeTable: fresh cache skips fetch', httpCalls === 0, httpCalls);
+    obj.handleAdminPostReq({ body: { action: 'save_settings', scanIntervalHours: '24', updateHours: '168', anyCveMaxAgeYears: '5', collectIntervalMinutes: '1440', notifyThreshold: 'HIGH', notifyOnScan: 'true', notifyUnratedRepeat: 'false', autoProductMatch: 'true', collectOnAgentConnect: 'true', cpeTableEnabled: 'true', cpeTableUrl: 'http://insecure.example/x' } },
+        mockRes(function (d) { check('cpeTable settings: http URL rejected', d.error && /URL/.test(d.error), d); }), user);
+    obj.handleAdminPostReq({ body: { action: 'save_settings', scanIntervalHours: '24', updateHours: '168', anyCveMaxAgeYears: '5', collectIntervalMinutes: '1440', notifyThreshold: 'HIGH', notifyOnScan: 'true', notifyUnratedRepeat: 'false', autoProductMatch: 'true', collectOnAgentConnect: 'true', cpeTableEnabled: 'false', cpeTableUrl: 'https://example.org/cpe-table.json', scanMeshes: '', notifyMeshIds: '', notifySeverities: '' } },
+        mockRes(function (d) {
+            check('cpeTable settings: save roundtrip', d.settings && d.settings.cpeTableEnabled === false && d.settings.cpeTableUrl === 'https://example.org/cpe-table.json', d.settings);
+            check('cpeTable settings: sources marked file', d.sources && d.sources.cpeTableUrl === 'file' && d.sources.revertAllowed.cpeTableUrl === true, d.sources);
+        }), user);
+    obj.cpeTableHttpGet = savedHttp; obj.cpeTablePath = savedPath; obj.remoteCpeEntries = savedRemote; obj.cpeTableLoadedAt = savedLoadedAt; obj.pluginSettings = savedSettings;
+    next();
+});
+
 (function run(i) {
     if (i >= steps.length) {
         console.log(failures === 0 ? '\ntest-plugin: ALL PASSED' : '\ntest-plugin: ' + failures + ' FAILURE(S)');

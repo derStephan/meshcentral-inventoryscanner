@@ -179,6 +179,22 @@
                 <div><input type="checkbox" id="setCollectOnConnect">
                     <div class="hint">Staggered randomly (5s to 5min) so reconnecting fleets do not cause a load spike.</div></div>
 
+                <label for="setAutoMatch">Auto-map unknown software names to CPE products</label>
+                <div><input type="checkbox" id="setAutoMatch">
+                    <div class="hint">Programs without a table entry are matched against the CPE product names that actually exist in the
+                    downloaded NVD data (name cleaned, publisher as vendor evidence, versions always re-checked). Offline, no configuration
+                    needed; switch off to use only the curated + custom tables.</div></div>
+
+                <label for="setCpeTableEnabled">Update mapping table from repository</label>
+                <div><input type="checkbox" id="setCpeTableEnabled">
+                    <div class="hint">The curated table is maintained as <code>cpe-table.json</code> in this plugin's GitHub repository and
+                    re-downloaded with every NVD feed refresh. Without network access (or with this off) the built-in fallback table stays active.</div></div>
+
+                <label for="setCpeTableUrl">Mapping table URL</label>
+                <div><input type="text" id="setCpeTableUrl" style="width:420px">
+                    <select id="setCpeTableUrlSrc" class="srcsel"></select>
+                    <div class="hint">https only. Only change this if you maintain your own table copy.</div></div>
+
                 <label for="setNotifyOnScan">Notify admins after scans</label>
                 <div><input type="checkbox" id="setNotifyOnScan"></div>
 
@@ -216,13 +232,17 @@
         <div class="tab-content" id="tab-cpe">
             <h2>Software &rarr; CPE Mapping</h2>
             <div class="info">
-                This is the complete mapping used by the scanner: the built-in table (verified CPE codes) plus your
-                custom entries. Custom entries are checked first, so they extend or override the built-in mapping.
-                To <strong>change</strong> a built-in row, click <em>Override</em>, adjust the values and press <em>Add</em>.
+                This is the mapping used by the scanner: the maintained table (the remote
+                <code>cpe-table.json</code> from this plugin's repository when reachable, otherwise the built-in
+                fallback) plus your custom entries. Custom entries are checked first, so they extend or override
+                the table. Software matching no entry is additionally auto-mapped against the CPE products present
+                in the NVD data (Settings tab, "Auto-map"). To <strong>change</strong> a row, click
+                <em>Override</em>, adjust the values and press <em>Add</em>.
                 <code>Regex</code> is matched case-insensitively against the software display name;
                 <code>vendor</code>/<code>product</code> must be real, NVD-verified CPE codes (e.g. <code>mozilla</code>/<code>firefox</code>).
-                Products without a mapping are reported as <em>not assessable</em>.
+                Products with neither a mapping nor a provable NVD product token stay <em>not assessable</em>.
             </div>
+            <div class="hint" id="cpeTableSourceInfo" style="margin-bottom:6px;"></div>
 
             <div class="filter-row">
                 <input type="text" id="cpeFilter" class="filter-input" placeholder="Filter mappings by regex, vendor or product...">
@@ -719,7 +739,7 @@
                     html += '<td><span class="badge badge-custom">Custom</span></td>';
                     html += '<td><button class="small red del-cpe-btn">Delete</button></td>';
                 } else {
-                    html += '<td><span class="badge badge-builtin">Built-in</span></td>';
+                    html += '<td><span class="badge badge-builtin">' + (e.source === 'remote' ? 'Remote' : 'Built-in') + '</span></td>';
                     html += '<td><button class="small override-cpe-btn">Override</button></td>';
                 }
                 html += '</tr>';
@@ -734,6 +754,10 @@
             post('get_cpe_table', {}).then(function (data) {
                 if (data.error) { showMsg('cpeMsg', data.error, false); return; }
                 state.cpeEntries = data.entries || [];
+                var ct = data.cpeTable || {};
+                $('cpeTableSourceInfo').innerHTML = (ct.source === 'remote')
+                    ? ('Active table: remote copy from ' + esc(ct.url || '') + ' (updated ' + esc(ct.updated || '?') + ')' + (ct.enabled ? '' : ' - automatic refresh is OFF'))
+                    : ('Active table: built-in fallback' + (ct.enabled ? ' (remote copy not fetched yet - retried with every feed update)' : ' (automatic refresh is OFF)'));
                 renderCpeTable();
             }).catch(function (e) { showMsg('cpeMsg', 'Failed to load the CPE table: ' + e.message, false); });
         }
@@ -828,6 +852,10 @@
                 setBool('setNotifyOnScan', s.notifyOnScan);
                 setBool('setNotifyRepeat', s.notifyUnratedRepeat);
                 setBool('setCollectOnConnect', s.collectOnAgentConnect);
+                setBool('setAutoMatch', s.autoProductMatch);
+                setBool('setCpeTableEnabled', s.cpeTableEnabled);
+                if (s.cpeTableUrl !== undefined) $('setCpeTableUrl').value = s.cpeTableUrl;
+                applyConfigSourceUi($('setCpeTableUrlSrc'), src.cpeTableUrl, 'revertCpeTableUrl');
                 if (s.scanIntervalHours !== undefined) $('setInterval').value = s.scanIntervalHours;
                 applyConfigSourceUi($('setIntervalSrc'), src.scanIntervalHours, 'revertScanIntervalHours');
                 if (s.updateHours !== undefined) $('setUpdateHours').value = s.updateHours;
@@ -896,6 +924,9 @@
                 notifyOnScan: $('setNotifyOnScan').checked ? 'true' : 'false',
                 notifyUnratedRepeat: $('setNotifyRepeat').checked ? 'true' : 'false',
                 collectOnAgentConnect: $('setCollectOnConnect').checked ? 'true' : 'false',
+                autoProductMatch: $('setAutoMatch').checked ? 'true' : 'false',
+                cpeTableEnabled: $('setCpeTableEnabled').checked ? 'true' : 'false',
+                cpeTableUrl: $('setCpeTableUrl').value.trim(),
                 scanMeshes: (allChecked || !anyChecked) ? '' : scanIds.join(','),
                 notifyMeshIds: notifyIds.join(','),
                 notifySeverities: notifySevs.join(',')

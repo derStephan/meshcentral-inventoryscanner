@@ -1,0 +1,300 @@
+{
+  "updated": "2026-11-06",
+  "entries": [
+    {
+      "match": "mozilla firefox",
+      "vendor": "mozilla",
+      "product": "firefox"
+    },
+    {
+      "match": "mozilla thunderbird",
+      "vendor": "mozilla",
+      "product": "thunderbird"
+    },
+    {
+      "match": "google chrome",
+      "vendor": "google",
+      "product": "chrome"
+    },
+    {
+      "match": "microsoft edge",
+      "vendor": "microsoft",
+      "product": "edge"
+    },
+    {
+      "match": "microsoft teams",
+      "vendor": "microsoft",
+      "product": "teams"
+    },
+    {
+      "match": "adobe acrobat reader",
+      "vendor": "adobe",
+      "product": "acrobat_reader"
+    },
+    {
+      "match": "adobe acrobat( \\(64-bit\\))?",
+      "vendor": "adobe",
+      "product": "acrobat"
+    },
+    {
+      "match": "^adobe acrobat",
+      "vendor": "adobe",
+      "product": "acrobat"
+    },
+    {
+      "match": "microsoft 365|microsoft office|office 16|microsoft onenote",
+      "vendor": "microsoft",
+      "product": "office"
+    },
+    {
+      "match": "microsoft onedrive",
+      "vendor": "microsoft",
+      "product": "onedrive"
+    },
+    {
+      "match": "microsoft visual studio code",
+      "vendor": "microsoft",
+      "product": "visual_studio_code"
+    },
+    {
+      "match": "microsoft visual studio",
+      "vendor": "microsoft",
+      "product": "visual_studio"
+    },
+    {
+      "match": "microsoft sql server",
+      "vendor": "microsoft",
+      "product": "sql_server"
+    },
+    {
+      "match": "^copilot",
+      "vendor": "microsoft",
+      "product": "copilot"
+    },
+    {
+      "match": "oracle java|^java",
+      "vendor": "oracle",
+      "product": "jre"
+    },
+    {
+      "match": "java.*development kit",
+      "vendor": "oracle",
+      "product": "jdk"
+    },
+    {
+      "match": "virtualbox",
+      "vendor": "oracle",
+      "product": "vm_virtualbox"
+    },
+    {
+      "match": "apache netbeans",
+      "vendor": "apache",
+      "product": "netbeans"
+    },
+    {
+      "match": "openoffice",
+      "vendor": "apache",
+      "product": "openoffice"
+    },
+    {
+      "match": "^7-zip",
+      "vendor": "7-zip",
+      "product": "7-zip"
+    },
+    {
+      "match": "notepad\\+\\+",
+      "vendor": "notepad-plus-plus",
+      "product": "notepad++"
+    },
+    {
+      "match": "vlc media player",
+      "vendor": "videolan",
+      "product": "vlc_media_player"
+    },
+    {
+      "match": "^python",
+      "vendor": "python",
+      "product": "python"
+    },
+    {
+      "match": "node\\.js",
+      "vendor": "nodejs",
+      "product": "node.js"
+    },
+    {
+      "match": "^libreoffice",
+      "vendor": "libreoffice",
+      "product": "libreoffice"
+    },
+    {
+      "match": "^irfanview",
+      "vendor": "irfanview",
+      "product": "irfanview"
+    },
+    {
+      "match": "tortoisesvn",
+      "vendor": "tigris",
+      "product": "tortoisesvn"
+    },
+    {
+      "match": "tortoisegit",
+      "vendor": "tortoisegit",
+      "product": "tortoisegit"
+    },
+    {
+      "match": "pdf-xchange",
+      "vendor": "pdf-xchange",
+      "product": "pdf-xchange_editor"
+    },
+    {
+      "match": "winscp",
+      "vendor": "winscp",
+      "product": "winscp"
+    },
+    {
+      "match": "foxit pdf editor",
+      "vendor": "foxit",
+      "product": "pdf_editor"
+    },
+    {
+      "match": "screentogif",
+      "vendor": "screentogif",
+      "product": "screentogif"
+    },
+    {
+      "match": "^gimp",
+      "vendor": "gimp",
+      "product": "gimp"
+    },
+    {
+      "match": "audacity",
+      "vendor": "audacity",
+      "product": "audacity"
+    },
+    {
+      "match": "^inkscape",
+      "vendor": "inkscape",
+      "product": "inkscape"
+    },
+    {
+      "match": "keepassxc",
+      "vendor": "keepassxc",
+      "product": "keepassxc"
+    },
+    {
+      "match": "keepass(?!xc)",
+      "vendor": "sourceforge",
+      "product": "keepass"
+    },
+    {
+      "match": "mremoteng",
+      "vendor": "mremoteng",
+      "product": "mremoteng"
+    },
+    {
+      "match": "forticlient",
+      "vendor": "fortinet",
+      "product": "forticlient"
+    },
+    {
+      "match": "teamviewer",
+      "vendor": "teamviewer",
+      "product": "teamviewer"
+    },
+    {
+      "match": "anydesk",
+      "vendor": "anydesk",
+      "product": "anydesk"
+    },
+    {
+      "match": "^putty",
+      "vendor": "putty",
+      "product": "putty"
+    },
+    {
+      "match": "filezilla",
+      "vendor": "filezilla_project",
+      "product": "filezilla"
+    },
+    {
+      "match": "wireshark",
+      "vendor": "wireshark",
+      "product": "wireshark"
+    },
+    {
+      "match": "^curl",
+      "vendor": "haxx",
+      "product": "curl"
+    },
+    {
+      "match": "openssl",
+      "vendor": "openssl",
+      "product": "openssl"
+    },
+    {
+      "match": "^php ",
+      "vendor": "php",
+      "product": "php"
+    },
+    {
+      "match": "^nextcloud talk",
+      "vendor": "nextcloud",
+      "product": "talk"
+    },
+    {
+      "match": "^nextcloud",
+      "vendor": "nextcloud",
+      "product": "nextcloud"
+    },
+    {
+      "match": "chromium",
+      "vendor": "google",
+      "product": "chromium"
+    },
+    {
+      "match": "^git(?!hub)",
+      "vendor": "git",
+      "product": "git"
+    },
+    {
+      "match": "brave browser|brave \\d",
+      "vendor": "brave",
+      "product": "brave"
+    },
+    {
+      "match": "docker desktop",
+      "vendor": "docker",
+      "product": "docker_desktop"
+    },
+    {
+      "match": "electron",
+      "vendor": "electron",
+      "product": "electron"
+    },
+    {
+      "match": "power ?bi( |$|desktop)",
+      "vendor": "microsoft",
+      "product": "powerbi"
+    },
+    {
+      "match": "globalprotect",
+      "vendor": "paloaltonetworks",
+      "product": "globalprotect"
+    },
+    {
+      "match": "sumatrapdf",
+      "vendor": "sumrapdf",
+      "product": "sumatrapdf"
+    },
+    {
+      "match": "securepoint (ssl vpn|vpn client)",
+      "vendor": "securepoint",
+      "product": "securepoint"
+    },
+    {
+      "match": "pcvisit remotehost",
+      "vendor": "pcvisit",
+      "product": "pcvisit"
+    }
+  ]
+}

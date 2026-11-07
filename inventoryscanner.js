@@ -85,6 +85,18 @@ module.exports.inventoryscanner = function (parent) {
     obj.pluginSettingsPath = path.join(obj.meshServer.datapath, 'plugins', 'inventoryscanner', 'scanner-settings.json');
     /** @type {object} In-memory plugin settings overlay: <code>{ vulnerabilityScanner: {...}, inventoryScanner: {...} }</code>. */
     obj.pluginSettings = {};
+
+    /** @type {string} Cache of the remotely maintained CPE mapping table (plugins/inventoryscanner/cpe-table.json). */
+    obj.cpeTablePath = path.join(obj.meshServer.datapath, 'plugins', 'inventoryscanner', 'cpe-table.json');
+    /** @type {string} Default URL of the repository-maintained CPE mapping table. */
+    obj.CPE_TABLE_DEFAULT_URL = 'https://raw.githubusercontent.com/derStephan/meshcentral-inventoryscanner/main/cpe-table.json';
+    /** @type {number} Hard cap for remote table payloads (2 MB). */
+    obj.CPE_TABLE_MAX_BYTES = 2 * 1024 * 1024;
+    /** @type {Array<object>|null} Compiled remote table ({ match: RegExp, vendor, product }) or null. */
+    obj.remoteCpeEntries = null;
+    /** @type {string|null} Timestamp (ISO) of the last successfully applied remote table. */
+    obj.cpeTableLoadedAt = null;
+
     /** @type {number} Timer generation; incremented on every settings save so old chained timers stop themselves. */
     obj.timerGen = 0;
     /** @type {Array<object>} User-customized CPE entries: <code>{ match, vendor, product }</code>.
@@ -152,7 +164,9 @@ module.exports.inventoryscanner = function (parent) {
         obj.loadScans();
         obj.loadCollectedInventory();
         obj.loadCustomCpe();
+        obj.loadRemoteCpeTable();
         obj.loadPluginSettings();
+        obj.maybeFetchCpeTable();
         obj.installRouteHook();
         obj.ensureNvdData();
         // Self-heal: check if NVD timer is stale (> 1 week since last successful update)
@@ -462,6 +476,7 @@ module.exports.inventoryscanner = function (parent) {
                 if (!err) {
                     obj.updateTimerArmed = true;
                 }
+                obj.maybeFetchCpeTable();
                 obj.scheduleUpdate();
             });
         }, hours * 3600 * 1000);
@@ -485,19 +500,25 @@ module.exports.inventoryscanner = function (parent) {
         var notifyThreshold = 'HIGH'; // fallback severity for groups without a specific setting
         var notifyThresholds = {};    // meshId -> severity threshold (per-group override)
         var notifyUnratedRepeat = false; // remind on every scan about findings without a rating
+        var autoProductMatch = true; // automatic product-token matching for unmapped names
+        var cpeTableEnabled = true;  // refresh the curated table from the repository
+        var cpeTableUrl = obj.CPE_TABLE_DEFAULT_URL;
         if (cfg && (typeof cfg === 'object')) {
             if (typeof cfg.scanIntervalHours === 'number' && cfg.scanIntervalHours >= 0) { intervalHours = cfg.scanIntervalHours; }
             if (Array.isArray(cfg.scanMeshes) && cfg.scanMeshes.length > 0) { meshes = cfg.scanMeshes.slice(); }
             if (typeof cfg.notifyOnScan === 'boolean') { notifyOnScan = cfg.notifyOnScan; }
             if (typeof cfg.notifyThreshold === 'string') { notifyThreshold = cfg.notifyThreshold.toUpperCase(); }
             if (typeof cfg.notifyUnratedRepeat === 'boolean') { notifyUnratedRepeat = cfg.notifyUnratedRepeat; }
+            if (typeof cfg.autoProductMatch === 'boolean') { autoProductMatch = cfg.autoProductMatch; }
+            if (typeof cfg.cpeTableEnabled === 'boolean') { cpeTableEnabled = cfg.cpeTableEnabled; }
+            if ((typeof cfg.cpeTableUrl === 'string') && /^https:\/\//i.test(cfg.cpeTableUrl)) { cpeTableUrl = cfg.cpeTableUrl; }
             if (cfg.notify && (typeof cfg.notify === 'object')) {
                 for (var mid in cfg.notify) {
                     if (typeof cfg.notify[mid] === 'string') { notifyThresholds[mid] = cfg.notify[mid].toUpperCase(); }
                 }
             }
         }
-        return { intervalHours: intervalHours, meshes: meshes, notifyOnScan: notifyOnScan, notifyThreshold: notifyThreshold, notifyThresholds: notifyThresholds, notifyUnratedRepeat: notifyUnratedRepeat };
+        return { intervalHours: intervalHours, meshes: meshes, notifyOnScan: notifyOnScan, notifyThreshold: notifyThreshold, notifyThresholds: notifyThresholds, notifyUnratedRepeat: notifyUnratedRepeat, autoProductMatch: autoProductMatch, cpeTableEnabled: cpeTableEnabled, cpeTableUrl: cpeTableUrl };
     };
 
     /**
@@ -1651,7 +1672,8 @@ obj.loadNvdFromAllFiles = function () {
         { match: /^gimp/i, vendor: 'gimp', product: 'gimp' },
         { match: /audacity/i, vendor: 'audacity', product: 'audacity' },
         { match: /^inkscape/i, vendor: 'inkscape', product: 'inkscape' },
-        { match: /^keepass/i, vendor: 'keepassxc', product: 'keepassxc' },
+        { match: /keepassxc/i, vendor: 'keepassxc', product: 'keepassxc' },
+        { match: /keepass(?!xc)/i, vendor: 'sourceforge', product: 'keepass' },
         { match: /mremoteng/i, vendor: 'mremoteng', product: 'mremoteng' },
         { match: /forticlient/i, vendor: 'fortinet', product: 'forticlient' },
         { match: /teamviewer/i, vendor: 'teamviewer', product: 'teamviewer' },
@@ -1665,11 +1687,137 @@ obj.loadNvdFromAllFiles = function () {
         // Nextcloud / Kollaboration
         { match: /^nextcloud talk/i, vendor: 'nextcloud', product: 'talk' },
         { match: /^nextcloud/i, vendor: 'nextcloud', product: 'nextcloud' },
+        // Common software whose display name does not trivially reduce to its CPE product
+        { match: /chromium/i, vendor: 'google', product: 'chromium' },
+        { match: /^git(?!hub)/i, vendor: 'git', product: 'git' },
+        { match: /brave browser|brave \d/i, vendor: 'brave', product: 'brave' },
+        { match: /docker desktop/i, vendor: 'docker', product: 'docker_desktop' },
+        { match: /electron/i, vendor: 'electron', product: 'electron' },
+        { match: /power ?bi( |$|desktop)/i, vendor: 'microsoft', product: 'powerbi' },
+        { match: /globalprotect/i, vendor: 'paloaltonetworks', product: 'globalprotect' },
+        { match: /sumatrapdf/i, vendor: 'sumrapdf', product: 'sumatrapdf' },
         // VPN / Remote
         { match: /securepoint (ssl vpn|vpn client)/i, vendor: 'securepoint', product: 'securepoint' },
         { match: /pcvisit remotehost/i, vendor: 'pcvisit', product: 'pcvisit' }
     ];
 
+    /**
+     * @brief Validate and apply a remote CPE table JSON payload (string or object).
+     * Entry regexes compile with the i flag only (same semantics as the built-in table);
+     * invalid entries are skipped, not fatal. Accepts { entries:[{match,vendor,product}] }.
+     * @param {string|object} payload - Raw JSON text or parsed object.
+     * @returns {object} { ok: boolean, applied: number, skipped: number, error?: string }
+     */
+    obj.applyCpeTableText = function (payload) {
+        var data = null;
+        try { data = (typeof payload === 'string') ? JSON.parse(payload) : payload; } catch (ex) { return { ok: false, applied: 0, skipped: 0, error: 'Invalid JSON: ' + ex.message }; }
+        if (!data || !Array.isArray(data.entries)) { return { ok: false, applied: 0, skipped: 0, error: 'Missing entries array.' }; }
+        if (data.entries.length > 20000) { return { ok: false, applied: 0, skipped: 0, error: 'Too many entries.' }; }
+        var applied = 0, skipped = 0, out = [];
+        for (var i = 0; i < data.entries.length; i++) {
+            var en = data.entries[i];
+            if (!en || (typeof en.match !== 'string') || (typeof en.vendor !== 'string') || (typeof en.product !== 'string') ||
+                (en.match.length === 0) || (en.match.length > 500) || (en.vendor.length > 200) || (en.product.length > 200)) { skipped++; continue; }
+            try { out.push({ match: new RegExp(en.match, 'i'), vendor: en.vendor.toLowerCase(), product: en.product.toLowerCase() }); applied++; }
+            catch (ex) { skipped++; }
+        }
+        if (applied === 0) { return { ok: false, applied: 0, skipped: skipped, error: 'No valid entries.' }; }
+        obj.remoteCpeEntries = out;
+        obj.cpeTableLoadedAt = new Date().toISOString();
+        return { ok: true, applied: applied, skipped: skipped };
+    };
+
+    /** @brief Load the cached remote CPE table from disk (silent; absence just keeps the built-in table). */
+    obj.loadRemoteCpeTable = function () {
+        try {
+            if (fs.existsSync(obj.cpeTablePath)) {
+                var r = obj.applyCpeTableText(fs.readFileSync(obj.cpeTablePath, 'utf8'));
+                if (r.ok) {
+                    try { obj.cpeTableLoadedAt = new Date(fs.statSync(obj.cpeTablePath).mtimeMs).toISOString(); } catch (ex) { }
+                    obj.debug('plugin:inventory_scanner', 'Loaded remote CPE table:', r.applied, 'entries');
+                } else { obj.debug('plugin:inventory_scanner', 'Cached CPE table invalid, using built-in:', r.error); }
+            }
+        } catch (ex) { obj.debug('plugin:inventory_scanner', 'CPE table cache read failed:', ex.message); }
+    };
+
+    /**
+     * @brief Fetch the remote CPE mapping table (https only, size-capped) and cache it.
+     * The HTTP layer is a separate indirection (obj.cpeTableHttpGet) so tests run offline.
+     * @param {function} callback - Called with (err, result).
+     */
+    obj.fetchCpeTable = function (callback) {
+        var url = obj.scannerConfig().cpeTableUrl;
+        if (!/^https:\/\//i.test(url)) { if (callback) callback(new Error('CPE table URL must be https')); return; }
+        obj.cpeTableHttpGet(url, function (err, text) {
+            if (err) { if (callback) callback(err); return; }
+            var r = obj.applyCpeTableText(text);
+            if (!r.ok) { if (callback) callback(new Error('CPE table rejected: ' + r.error)); return; }
+            try {
+                fs.mkdirSync(path.dirname(obj.cpeTablePath), { recursive: true });
+                fs.writeFileSync(obj.cpeTablePath, text);
+            } catch (ex) { obj.debug('plugin:inventory_scanner', 'Could not cache CPE table:', ex.message); }
+            if (callback) callback(null, r);
+        });
+    };
+
+    /** @brief HTTP GET text with size cap and redirects (overridable indirection for tests). */
+    obj.cpeTableHttpGet = function (url, callback) {
+        var getIt = function (u, redirectsLeft) {
+            var req = https.get(u, { headers: { 'User-Agent': 'meshcentral-inventoryscanner' }, timeout: 30000 }, function (res) {
+                if (((res.statusCode == null) || (res.statusCode >= 300) && (res.statusCode < 400)) && res.headers.location && (redirectsLeft > 0)) {
+                    res.resume();
+                    var nu = res.headers.location;
+                    if (nu.indexOf('http') !== 0) { nu = u.replace(/\/[^\/]*$/, '') + nu; }
+                    if (!/^https:\/\//i.test(nu)) { callback(new Error('Redirect away from https blocked')); return; }
+                    getIt(nu, redirectsLeft - 1);
+                    return;
+                }
+                if (res.statusCode !== 200) { res.resume(); callback(new Error('HTTP ' + res.statusCode)); return; }
+                var size = 0, parts = [];
+                res.on('data', function (chunk) {
+                    size += chunk.length;
+                    if (size > obj.CPE_TABLE_MAX_BYTES) { req.destroy(new Error('CPE table too large')); return; }
+                    parts.push(chunk);
+                });
+                res.on('end', function () { callback(null, Buffer.concat(parts).toString('utf8')); });
+            });
+            req.on('error', function (err) { callback(err); });
+            req.on('timeout', function () { req.destroy(new Error('CPE table fetch timeout')); });
+        };
+        getIt(url, 3);
+    };
+
+    /** @brief Refresh the remote table if enabled and due (age > NVD updateHours cycle). */
+    obj.maybeFetchCpeTable = function (callback) {
+        var scfg = obj.scannerConfig();
+        if (!scfg.cpeTableEnabled) { if (callback) callback(null, { skipped: 'disabled' }); return; }
+        var uh = 24 * 7;
+        try { var ec = obj.effectiveSectionConfig('vulnerabilityScanner'); if (ec && (typeof ec.updateHours === 'number') && (ec.updateHours >= 1)) { uh = ec.updateHours; } } catch (ex) { }
+        var ageLimit = uh * 3600 * 1000;
+        if (obj.remoteCpeEntries != null) {
+            var age = (obj.cpeTableLoadedAt != null) ? (Date.now() - Date.parse(obj.cpeTableLoadedAt)) : 0;
+            if (age < ageLimit) { if (callback) callback(null, { skipped: 'fresh' }); return; }
+        }
+        obj.fetchCpeTable(function (err, r) {
+            if (err) { obj.debug('plugin:inventory_scanner', 'CPE table update failed (keeping current table):', err.message); }
+            if (callback) callback(err, r);
+        });
+    };
+
+    /** @brief The software table in force: validated remote table when loaded, else the built-in one. */
+    obj.activeSoftwareTable = function () { return (obj.remoteCpeEntries != null) ? obj.remoteCpeEntries : obj.SOFTWARE_CPE_TABLE; };
+
+    /** @brief Status info about the active CPE table for the UI. */
+    obj.cpeTableStatus = function () {
+        var scfg = obj.scannerConfig();
+        return {
+            source: (obj.remoteCpeEntries != null) ? 'remote' : 'builtin',
+            updated: obj.cpeTableLoadedAt || '',
+            url: scfg.cpeTableUrl,
+            enabled: scfg.cpeTableEnabled,
+            entries: (obj.remoteCpeEntries != null) ? obj.remoteCpeEntries.length : obj.SOFTWARE_CPE_TABLE.length
+        };
+    };
     /**
      * @brief Map a display name to a known CPE vendor/product via the curated table.
      * @param {string} name - The software display name.
@@ -1683,37 +1831,166 @@ obj.loadNvdFromAllFiles = function () {
         for (var c = 0; c < custom.length; c++) {
             if (custom[c].match.test(name)) { return { vendor: custom[c].vendor, product: custom[c].product }; }
         }
-        for (var i = 0; i < obj.SOFTWARE_CPE_TABLE.length; i++) {
-            var e = obj.SOFTWARE_CPE_TABLE[i];
+        var table = obj.activeSoftwareTable();
+        for (var i = 0; i < table.length; i++) {
+            var e = table[i];
             if (e.match.test(name)) { return { vendor: e.vendor, product: e.product }; }
         }
         return null;
     };
 
     /**
-     * @brief Map a software display name to a CPE <code>{ vendor, product }</code> target.
-     * Only the curated <code>SOFTWARE_CPE_TABLE</code> is used (explicit vendor+product,
-     * e.g. "7-Zip" -> 7zip, "Notepad++" -> notepad_plus_plus). This ensures the CVE search
-     * is exact (vendor+product) and cannot produce cross-vendor false positives.
-     * NO generic token matching, NO publisher-substring fallback, NO CPE API calls.
-     * @param {string} publisher - The software publisher (unused, kept for compatibility).
-     * @param {string} name - The software display name.
-     * @returns {object|null} <code>{ vendor, product, viaCurated: true }</code>, or null if no mapping exists.
+     * @brief Map a software display name + publisher to a CPE { vendor, product } target.
+     * Matching order (most to least precise): custom entries, curated table, then the
+     * automatic evidence matcher below - the latter can be switched off with the
+     * vulnerabilityScanner setting autoProductMatch (default: on). Results are tagged
+     * viaCurated / viaAuto for transparency.
+     * @param {string} publisher - The software publisher (vendor evidence).
+     * @param {string} name - The software display name (product evidence).
+     * @returns {object|null} <code>{ vendor, product, viaCurated|viaAuto }</code> or null.
      */
     obj.deriveCpeProduct = function (publisher, name) {
         if (!name) return null;
         var known = obj.matchKnownProduct(name);
-        if (known) {
-            return { vendor: known.vendor, product: known.product, viaCurated: true };
+        if (known) { return { vendor: known.vendor, product: known.product, viaCurated: true }; }
+        try {
+            if (obj.scannerConfig().autoProductMatch !== false) {
+                var auto = obj.autoMatchProductTokens(publisher, name);
+                if (auto) return auto;
+            }
+        } catch (ex) { }
+        return null;
+    };
+
+    // ---- Automatic product-token matching (offline, no configuration) ----
+    // Same principle as OWASP Dependency-Check's evidence matching: vendor/product
+    // evidence is derived from the installed-software entry, and a CPE product is only
+    // accepted when the token provably occurs in the loaded NVD CVE data
+    // (obj.cpeProductTokens / obj.productIndexByProduct, built at feed load time).
+    // CVE version ranges are always re-checked by the search itself, so a token hit on
+    // a patched version reports "no CVE for <product>" instead of a finding. The NVD's
+    // CPE dictionary API is never called.
+
+    /** @type {Object<string, string>} Publisher keyword -> CPE vendor (word-boundary match). */
+    obj.PUBLISHER_VENDOR_MAP = {
+        'adobe': 'adobe', 'microsoft': 'microsoft', 'google': 'google', 'mozilla': 'mozilla',
+        'videolan': 'videolan', 'oracle': 'oracle', 'ibm': 'ibm', 'sap': 'sap',
+        'vmware': 'vmware', 'citrix': 'citrix', 'cisco': 'cisco',
+        'zoom video communications': 'zoom', 'teamviewer': 'teamviewer', 'anydesk': 'anydesk',
+        'fortinet': 'fortinet', 'kaspersky': 'kaspersky', 'eset': 'eset', 'avast': 'avast',
+        'avg': 'avg', 'bitdefender': 'bitdefender', 'mcafee': 'mcafee', 'symantec': 'symantec',
+        'trend micro': 'trend_micro', 'f secure': 'f-secure', 'sophos': 'sophos',
+        'malwarebytes': 'malwarebytes', 'piriform': 'piriform', 'foxit': 'foxit',
+        'autodesk': 'autodesk', 'solidworks': 'solidworks', 'corel': 'corel', 'nitro': 'nitro',
+        'opera software': 'opera', 'brave software': 'brave', 'vivaldi': 'vivaldi',
+        'libreoffice': 'libreoffice', 'document foundation': 'documentfoundation',
+        'python software foundation': 'python', 'eclipse foundation': 'eclipse', 'eclipse adoptium': 'eclipse',
+        'adoptium': 'eclipse', 'node js': 'nodejs', 'docker': 'docker', 'git scm': 'git',
+        'github': 'github', 'slack technologies': 'slack', 'realvnc': 'realvnc', 'turbovnc': 'turbovnc',
+        'tightvnc': 'tightvnc', 'ultravnc': 'ultravnc', 'openvpn': 'openvpn', 'tailscale': 'tailscale',
+        'dropbox': 'dropbox', 'logmein': 'logmein', 'securepoint': 'secpoint',
+        'palo alto networks': 'paloaltonetworks'
+    };
+
+    /** @type {Object<string, 1>} Single-word tokens too generic for vendor-less searching. */
+    obj.GENERIC_PRODUCT_TOKENS = {
+        'client': 1, 'server': 1, 'agent': 1, 'agents': 1, 'service': 1, 'services': 1,
+        'update': 1, 'updates': 1, 'updater': 1, 'driver': 1, 'drivers': 1, 'plugin': 1,
+        'plugins': 1, 'extension': 1, 'extensions': 1, 'add-in': 1, 'addin': 1, 'tools': 1,
+        'tool': 1, 'viewer': 1, 'player': 1, 'editor': 1, 'manager': 1, 'runtime': 1,
+        'framework': 1, 'engine': 1, 'connector': 1, 'component': 1, 'library': 1, 'suite': 1,
+        'software': 1, 'installer': 1, 'program': 1, 'desktop': 1, 'app': 1, 'apps': 1,
+        'sync': 1, 'link': 1, 'pro': 1, 'plus': 1, 'core': 1, 'pack': 1, 'data': 1
+    };
+
+    /** @type {RegExp} Architecture / language suffix noise in display names. */
+    obj.NAME_ARCH_LANG_RE = /\b(?:x[ -]?(?:64|86)|amd64|arm64|aarch64|32[- ]bit|64[- ]bit|(?:de|en|es|fr|it|nl|pl|ru|ja|zh|ko|pt|sv|tr)[-_](?:de|us|gb|fr|es|it|nl|pl|ru|jp|kr|br|se|tr|cn|tw)|multi[- ]?language|german|english|french|spanish|italian)\b/gi;
+    /** @type {RegExp} Edition/installer noise in display names. */
+    obj.NAME_EDITION_RE = /\b(?:installer|setup|program|version|build|edition|community|professional|enterprise|standard|home|education|student|trial|preview|insider|beta|alpha|lts)\b/gi;
+    /** @type {RegExp} Version-number and year noise in display names. */
+    obj.NAME_VERSION_RE = /\b(?:v?\d+[.,]\d+[\d.]*|\b(?:19|20)\d\d\b|update\s?\d+)\b/gi;
+
+    /**
+     * @brief Lower-case a display name into a CPE-style product token: parenthesized
+     * parts are dropped, non-alphanumerics collapse to '_', '+' and '.' are kept.
+     * @param {string} s - The raw display name.
+     * @returns {string} The token (possibly empty).
+     */
+    obj.cpeTokenize = function (s) {
+        var t = String(s || '').toLowerCase().replace(/\([^)]*\)/g, ' ');
+        t = t.replace(/[^a-z0-9+._]+/g, '_').replace(/^_+|_+$/g, '').replace(/_{2,}/g, '_');
+        return t;
+    };
+
+    /**
+     * @brief Derive a CPE vendor from a publisher display name using word-boundary
+     * keywords. Unmapped publishers yield '' (no vendor evidence).
+     * @param {string} publisher - The publisher display name.
+     * @returns {string} A vendor token or ''.
+     */
+    obj.deriveVendorFromPublisher = function (publisher) {
+        var p = String(publisher || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+        if (!p) return '';
+        var padded = ' ' + p + ' ';
+        for (var key in obj.PUBLISHER_VENDOR_MAP) {
+            if (padded.indexOf(' ' + key + ' ') >= 0) { return obj.PUBLISHER_VENDOR_MAP[key]; }
+        }
+        return '';
+    };
+
+    /** @brief True if a token is specific enough to be searched across all vendors. */
+    obj.isTrustworthyProductToken = function (token) {
+        if (!token || (token.length < 3)) return false;
+        if (token.indexOf('_') >= 0) return true;
+        return (token.length >= 6) && !obj.GENERIC_PRODUCT_TOKENS[token];
+    };
+
+    /**
+     * @brief Automatic evidence matching (see block comment above). Candidate tokens:
+     * the noise-stripped name, the raw name, the version-stripped name, and the name
+     * minus a leading vendor word. Candidates are validated against the real product
+     * tokens of the loaded NVD data; vendor evidence must not contradict them.
+     * @param {string} publisher - Vendor evidence (may be empty).
+     * @param {string} name - Product evidence (display name).
+     * @returns {object|null} <code>{ vendor, product, viaAuto: true }</code> or null.
+     */
+    obj.autoMatchProductTokens = function (publisher, name) {
+        var vendor = obj.deriveVendorFromPublisher(publisher);
+        var raw = obj.cpeTokenize(name);
+        if (!raw) return null;
+        var semi = name.replace(obj.NAME_ARCH_LANG_RE, ' ').replace(obj.NAME_EDITION_RE, ' ');
+        var light = obj.cpeTokenize(semi);
+        var heavy = obj.cpeTokenize(semi.replace(obj.NAME_VERSION_RE, ' ').replace(/(?:\s|^)\d{1,4}(?=\s|$)/g, ' '));
+        var cands = [];
+        var push = function (t) { if (t && (t.length >= 3) && (cands.indexOf(t) < 0)) cands.push(t); };
+        push(light); push(raw); push(heavy);
+        if (vendor) {
+            if ((light.indexOf(vendor + '_') === 0) && (light.length > vendor.length + 1)) push(light.substring(vendor.length + 1));
+            if ((heavy.indexOf(vendor + '_') === 0) && (heavy.length > vendor.length + 1)) push(heavy.substring(vendor.length + 1));
+        }
+        for (var c = 0; c < cands.length; c++) {
+            var token = cands[c];
+            if (!obj.cpeProductTokens[token]) continue;
+            var vendors = obj.productIndexByProduct[token];
+            if (!vendors || (vendors.length === 0)) continue;
+            if (vendor) {
+                for (var v = 0; v < vendors.length; v++) {
+                    if (vendors[v].vendor === vendor) { return { vendor: vendor, product: token, viaAuto: true }; }
+                }
+                continue;
+            }
+            if (vendors.length === 1) { return { vendor: vendors[0].vendor, product: token, viaAuto: true }; }
+            if (obj.isTrustworthyProductToken(token)) { return { vendor: '', product: token, viaAuto: true }; }
         }
         return null;
     };
+
 
 /**
      * @brief Scan a software inventory list for CVE matches.
      * Searches by product name only (independent of vendor) against the NVD index.
      * Products with a curated CPE mapping but no CVE match are reported as "no CVE for <product>".
-     * Products without a curated mapping are reported as "not assessable".
+     * Products proven by neither table nor automatic matching are reported as "not assessable".
      * @param {Array<object>} softwareList - The installed software list (from the plugin DB).
      * @param {function} callback - Called with <code>(deviceVulns)</code>.
      */
@@ -1763,8 +2040,8 @@ obj.loadNvdFromAllFiles = function () {
 
             // No CVE match in the curated list. If the product is known via the curated
             // table but has no CVEs in the NVD list -> "no CVE".
-            // If it is NOT in the curated table -> "not assessable" (no guessing,
-            // no CPE API candidate). Unknown/OEM/driver software is handled via Windows
+            // If neither curated table nor automatic token matching prove a real CPE
+            // product -> "not assessable" (no API calls). Unknown/OEM/driver software is handled via Windows
             // Update / vendor channels and is transparently reported as such.
             if (searchResult) {
                 deviceVulns.push({
@@ -2279,17 +2556,19 @@ obj.loadNvdFromAllFiles = function () {
      */
     obj.getCpeTableHandler = function (req, res, user) {
         var entries = [];
-        // Built-in entries
-        for (var i = 0; i < obj.SOFTWARE_CPE_TABLE.length; i++) {
-            var e = obj.SOFTWARE_CPE_TABLE[i];
-            entries.push({ match: e.match.source, vendor: e.vendor, product: e.product, source: 'built-in' });
+        // Table in force: remote when loaded and valid, else the built-in one
+        var table = obj.activeSoftwareTable();
+        var tblSource = (obj.remoteCpeEntries != null) ? 'remote' : 'built-in';
+        for (var i = 0; i < table.length; i++) {
+            var e = table[i];
+            entries.push({ match: e.match.source, vendor: e.vendor, product: e.product, source: tblSource });
         }
         // Custom entries
         for (var i = 0; i < obj.customCpeEntries.length; i++) {
             var e = obj.customCpeEntries[i];
             entries.push({ match: e.match, vendor: e.vendor, product: e.product, source: 'custom' });
         }
-        res.type('json'); res.json({ entries: entries });
+        res.type('json'); res.json({ entries: entries, cpeTable: obj.cpeTableStatus() });
     };
 
     /**
@@ -2378,7 +2657,10 @@ obj.loadNvdFromAllFiles = function () {
                 updateHours: (typeof vsc.updateHours === 'number') ? vsc.updateHours : 168,
                 anyCveMaxAgeYears: obj.anyCveMaxAgeYears(),
                 collectIntervalMinutes: cc.intervalMinutes,
-                collectOnAgentConnect: cc.collectOnAgentConnect
+                collectOnAgentConnect: cc.collectOnAgentConnect,
+                autoProductMatch: sc.autoProductMatch,
+                cpeTableEnabled: sc.cpeTableEnabled,
+                cpeTableUrl: sc.cpeTableUrl
             },
             sources: {
                 scanIntervalHours: src('vulnerabilityScanner', 'scanIntervalHours'),
@@ -2391,7 +2673,13 @@ obj.loadNvdFromAllFiles = function () {
                 notifyPerGroup: perGroupMap('vulnerabilityScanner', 'notify'),
                 collectIntervalMinutes: src('inventoryScanner', 'collectIntervalMinutes'),
                 collectOnAgentConnect: src('inventoryScanner', 'collectOnAgentConnect'),
+                autoProductMatch: src('vulnerabilityScanner', 'autoProductMatch'),
+                cpeTableEnabled: src('vulnerabilityScanner', 'cpeTableEnabled'),
+                cpeTableUrl: src('vulnerabilityScanner', 'cpeTableUrl'),
                 revertAllowed: {
+                    autoProductMatch: (obj.pluginSettings.vulnerabilityScanner != null) && Object.prototype.hasOwnProperty.call(obj.pluginSettings.vulnerabilityScanner, 'autoProductMatch'),
+                    cpeTableEnabled: (obj.pluginSettings.vulnerabilityScanner != null) && Object.prototype.hasOwnProperty.call(obj.pluginSettings.vulnerabilityScanner, 'cpeTableEnabled'),
+                    cpeTableUrl: (obj.pluginSettings.vulnerabilityScanner != null) && Object.prototype.hasOwnProperty.call(obj.pluginSettings.vulnerabilityScanner, 'cpeTableUrl'),
                     scanIntervalHours: (obj.pluginSettings.vulnerabilityScanner != null) && Object.prototype.hasOwnProperty.call(obj.pluginSettings.vulnerabilityScanner, 'scanIntervalHours'),
                     updateHours: (obj.pluginSettings.vulnerabilityScanner != null) && Object.prototype.hasOwnProperty.call(obj.pluginSettings.vulnerabilityScanner, 'updateHours'),
                     anyCveMaxAgeYears: (obj.pluginSettings.vulnerabilityScanner != null) && Object.prototype.hasOwnProperty.call(obj.pluginSettings.vulnerabilityScanner, 'anyCveMaxAgeYears'),
@@ -2442,6 +2730,9 @@ obj.loadNvdFromAllFiles = function () {
             if (!/^mesh\/[^:]+$/.test(id) || (obj.SETTING_SEVERITIES.indexOf(sev) < 0)) { return send({ error: 'Invalid per-group notification setting.' }); }
             notify[id] = sev;
         }
+        var cpeTableUrl = String(req.body.cpeTableUrl || '').trim();
+        if (cpeTableUrl === '') { cpeTableUrl = obj.CPE_TABLE_DEFAULT_URL; }
+        else if (!/^https:\/\/[^\s"'<>]{5,250}$/.test(cpeTableUrl)) { return send({ error: 'Invalid CPE table URL (must be a short https URL).' }); }
         obj.pluginSettings = {
             vulnerabilityScanner: {
                 scanIntervalHours: iv.value,
@@ -2449,6 +2740,9 @@ obj.loadNvdFromAllFiles = function () {
                 notifyOnScan: boolSetting(req.body.notifyOnScan, true),
                 notifyThreshold: notifyThreshold,
                 notifyUnratedRepeat: boolSetting(req.body.notifyUnratedRepeat, false),
+                autoProductMatch: boolSetting(req.body.autoProductMatch, true),
+                cpeTableEnabled: boolSetting(req.body.cpeTableEnabled, true),
+                cpeTableUrl: cpeTableUrl,
                 notify: notify,
                 updateHours: uh.value,
                 anyCveMaxAgeYears: ag.value
@@ -2482,6 +2776,9 @@ obj.loadNvdFromAllFiles = function () {
             revertNotify: ['vulnerabilityScanner', 'notify'],
             revertUpdateHours: ['vulnerabilityScanner', 'updateHours'],
             revertAnyCveMaxAgeYears: ['vulnerabilityScanner', 'anyCveMaxAgeYears'],
+            revertAutoProductMatch: ['vulnerabilityScanner', 'autoProductMatch'],
+            revertCpeTableEnabled: ['vulnerabilityScanner', 'cpeTableEnabled'],
+            revertCpeTableUrl: ['vulnerabilityScanner', 'cpeTableUrl'],
             revertCollectIntervalMinutes: ['inventoryScanner', 'collectIntervalMinutes'],
             revertCollectOnAgentConnect: ['inventoryScanner', 'collectOnAgentConnect']
         };

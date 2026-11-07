@@ -15,6 +15,7 @@ MUST stay at repository root (never re-nest them in a folder - that silently bre
   inventoryscanner.js          server code + browser-exported functions (module.exports.inventoryscanner(parent))
   config.json                  plugin manifest: installer metadata (and MeshCentral-side config file)
   CHANGELOG.md                 changelogUrl target shown in the installer UI
+  cpe-table.json               THE maintained mapping table: downloaded by running servers, edit = no release needed
   views/assessment.handlebars  admin panel (incl. its inline <script> - the panel logic lives HERE)
   views/report.handlebars      printable vulnerability report (overview + one page per location)
   views/deviceReport.handlebars printable device inventory report (host names, one page per location)
@@ -22,6 +23,7 @@ tools/                         self-contained verification for agents (no MeshCe
   check.js                     node --check on JS, inline-script extraction check, JSON validity, render-name match
   test-plugin.js               behavioral tests against the real plugin module with mocked MeshCentral
   test-views.js                compiles+renders all three views with Handlebars (needs `npm install`)
+  coverage-benchmark.js        read-only mapping audit against the top NVD products by CVE count (run server-side with --nvd <datapath>/nvd)
 README.md                      user-facing documentation
 package.json                   repo metadata; `npm test` runs tools/check.js + tools/test-plugin.js + tools/test-views.js
 ```
@@ -35,7 +37,8 @@ Pure admin tool for MeshCentral (all endpoints gated on full site admin, `user.s
    config) → `uiCustomEvent(command, myparent)` → CSV pushed over the websocket →
    browser `saveAs()` via the exported `inventoryCsv` function. Whole-inventory CSV downloads additionally exist as
    plain URLs (`action=export&type=...`), linked in the panel top nav and suitable for bookmarks (MeshCentral has no config-driven main-menu links).
-2. **Offline CVE scan** against locally cached NVD 2.0 feeds (`<datapath>/nvd/`), conservative curated CPE matching.
+2. **Offline CVE scan** against locally cached NVD 2.0 feeds (`<datapath>/nvd/`): curated CPE table + automatic
+   evidence matcher (name tokens validated against the NVD product index, publisher -> vendor).
 3. **Assessment panel** (`pluginadmin.ashx?pin=inventoryscanner&action=show`): multi-location CVE review, group-wide
    ratings (mandatory comment), false-positive flags (optional comment), filter/sort, CPE Mapping management tab, and a **Settings tab** for
    all scanner/collection options (overrides config.json, applies without restart).
@@ -115,18 +118,23 @@ POST body `action=`:
 | `save_assessment` | `meshId` or `meshIds` (comma list), `cveId`, `assessment`, `comment` | comment **mandatory**; id must match `CVE-\d{4}-\d{4,}` or be `WINDOWS-UPDATES`; mesh ids validated `^mesh/[^:]+$`; comment trimmed, ≤1000 chars, stored **raw** |
 | `flag_false_positive` | `meshId(s)`, `cveId`, `comment?` | comment **optional** (empty stays empty); sets `assessment:'UNKNOWN', flagged:true` |
 | `unflag_false_positive` | `meshId(s)`, `cveId` | deletes flagged entries for all given meshes |
-| `get_cpe_table` | — | `{entries:[{match,vendor,product,source:'built-in'|'custom'}]}` |
+| `get_cpe_table` | — | `{entries:[{match,vendor,product,source:'built-in'|'remote'|'custom'}], cpeTable:{source,updated,url,enabled,entries}}` |
 | `delete_cpe_table` | `match`,`vendor`,`product` | custom entries only (built-ins can be shadowed, not deleted) |
 | `add_cpe` | `match`,`vendor`,`product` | regex validated via `new RegExp`; custom wins over built-in |
 | `get_locations` | — | all non-deleted meshes `{locations:[{id,name}]}` (also feeds the Settings tab group table) |
 | `remove_cpe` | `index` | legacy index-based removal |
 | `get_settings` | — | `{settings:{...effective...}, sources:{key:'file'|'config.json'|'default', notifyPerGroup:{meshId:src}, revertAllowed:{key:bool}}}` |
 | `save_settings` | full form field set (see `saveSettingsHandler`) | validates everything, writes `scanner-settings.json`, runs `rescheduleAll()`, answers with the `get_settings` payload; `reset=true` clears all overrides |
-| `revert_setting` | one key of `revertScanIntervalHours`/`revertScanMeshes`/`revertNotifyOnScan`/`revertNotifyThreshold`/`revertNotifyUnratedRepeat`/`revertNotify`/`revertUpdateHours`/`revertAnyCveMaxAgeYears`/`revertCollectIntervalMinutes`/`revertCollectOnAgentConnect` = 'true' | removes that single override so config.json/default applies again |
+| `revert_setting` | one key of `revertScanIntervalHours`/`revertScanMeshes`/`revertNotifyOnScan`/`revertNotifyThreshold`/`revertNotifyUnratedRepeat`/`revertNotify`/`revertUpdateHours`/`revertAnyCveMaxAgeYears`/`revertAutoProductMatch`/`revertCollectIntervalMinutes`/`revertCollectOnAgentConnect` = 'true' | removes that single override so config.json/default applies again |
 
 Assessments persist in `<datapath>/nvd/assessments.json`, key `"<meshId>:<cveId>"` →
 `{meshId, cveId, assessment, comment, lastModified, assessedBy, assessedById, flagged?}`.
 Scheduled results in `<datapath>/nvd/scans.json` → `meshId -> {time, cves:[{cve, severity, ...}]}`.
+Remote CPE table: repo `cpe-table.json` → fetched when stale at startup and after every NVD download cycle, cached at
+`<datapath>/plugins/inventoryscanner/cpe-table.json`. `activeSoftwareTable()` = remote entries when a valid table was
+applied, else `SOFTWARE_CPE_TABLE`; custom (UI) entries always first. Entry regexes compile with the `i` flag ONLY;
+bad JSON/regex → payload rejected, current table keeps running. Keys: `cpeTableEnabled`/`cpeTableUrl` (Settings tab).
+
 UI-managed scanner settings in `<datapath>/plugins/inventoryscanner/scanner-settings.json` →
 `{vulnerabilityScanner:{...}, inventoryScanner:{...}}`, merged over `config.settings` by
 `obj.effectiveSectionConfig(section)` (file wins per key). **The plugin never writes config.json.**
@@ -171,8 +179,15 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
 
 ## Design decisions (with reasons)
 
-1. **Conservative matching:** curated `SOFTWARE_CPE_TABLE` (+`custom-cpe.json`) only; no token guessing, no
-   publisher/vendor guessing, no cross-vendor matches. False negatives acceptable, false positives not.
+1. **Two-stage matching (Dependency-Check style, fully offline):** custom entries + curated `SOFTWARE_CPE_TABLE`
+   first (exact vendor+product); then `obj.autoMatchProductTokens` derives candidate product tokens from the display
+   name (arch/language/edition/version/year noise stripped) and accepts one ONLY if the token exists in
+   `obj.cpeProductTokens` (product tokens actually present in the loaded CVE feeds). Publisher keywords map to
+   vendors via `obj.PUBLISHER_VENDOR_MAP` (word-boundary); candidate vendor evidence must not contradict the
+   index. Ambiguous multi-vendor tokens without vendor evidence need `isTrustworthyProductToken` (multi-word or
+   long, not in `GENERIC_PRODUCT_TOKENS`). CVE version ranges are always re-checked, so a token hit on a patched
+   version degrades to "no CVE for <product>", never to a false finding. Setting `autoProductMatch` (default true)
+   disables only the auto stage. No CPE dictionary API exists anywhere.
 2. **Coverage honesty:** `buildOverallReport` classifies every installed program by its scan row status
    (`assessable` vs `not assessable`, deduped by name+version) and both reports publish `coveragePercent` —
    a small finding count must not read as "everything clean".
@@ -206,7 +221,9 @@ never touches config.json). The config.json keys below remain the fallback/seed:
 
 - `plugins.enabled: true` - REQUIRED (the only mandatory manual config edit). Do NOT set `plugins.list`:
   it switches pluginHandler to the development loader and ignores DB-installed plugins (web installer).
-- `vulnerabilityScanner`: `scanIntervalHours` (720 = monthly OK), `scanMeshes`, `notifyOnScan`, `notifyThreshold`,
+- `vulnerabilityScanner`: `autoProductMatch` (default true; automatic evidence matcher, see design decisions),
+  `cpeTableEnabled`/`cpeTableUrl` (remote curated table; default = this repo's cpe-table.json on main),
+  `scanIntervalHours` (720 = monthly OK), `scanMeshes`, `notifyOnScan`, `notifyThreshold`,
   `notifyUnratedRepeat`, `notify` (per-group), `updateHours`, `anyCveMaxAgeYears` (suppresses ancient version-less
   `kind:"any"` CVE matches).
 - `inventoryScanner` (note: one letter less than the section above): `collectIntervalMinutes`, `collectOnAgentConnect`.
@@ -224,10 +241,10 @@ npm test           # = tools/check.js && tools/test-plugin.js && tools/test-view
 
 - `tools/check.js`: `node --check` on the plugin, inline-script syntax/`{{`-hazard check, JSON validity of
   config files, and view-name↔render-name consistency. Must run anywhere (no dependencies).
-- `tools/test-plugin.js`: 83 behavioral assertions against the real module (mocked MeshCentral DB/webserver):
+- `tools/test-plugin.js`: 104 behavioral assertions against the real module (mocked MeshCentral DB/webserver):
   locations grouping & counting, manual-rating severity override, FP exclusion, host-name preference, coverage
   numbers, multi-mesh scan/`mixed` logic, all POST handlers incl. validation/rejections, routes, admin gating
-  (401), CPE table add/delete, vulns CSV header/content, toolbar button injection (simulated browser DOM), `longTimeout` chunking, restart-proof schedule delays,
+  (401), CPE table add/delete, vulns CSV header/content, toolbar button injection (simulated browser DOM), remote CPE table apply/cache/fetch/settings, `longTimeout` chunking, restart-proof schedule delays,
   scheduled-scan notification content in repeat and once mode, NVD-status derivation, settings overlay priority,
   save/revert/reset roundtrips incl. validation rejections, timer-generation invalidation, per-cycle collector config.
 - `tools/test-views.js`: compiles all three views and renders them with mock data **and empty data**.
