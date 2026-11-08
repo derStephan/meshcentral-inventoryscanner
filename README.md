@@ -66,10 +66,12 @@ Open `https://<server>/pluginadmin.ashx?pin=inventoryscanner&action=show`:
 * **CPE Mapping tab** - the table actually in use is visible in the UI: the mapping table maintained in this
   repository (`cpe-table.json`, auto-refreshed) or its built-in fallback, plus your custom entries (always
   checked first). Improving a mapping is a one-line repository change - no plugin release, no server edit.
+* **Updates tab** - winget auto-update control: groups, ignore list, per-device exclusions, batch table and log.
 * **Settings tab** - configure everything from the UI: scan interval, which groups are scanned, notification threshold (global + per group), notify mode, feed refresh and inventory collection. Saved to `scanner-settings.json`, effective **immediately without a restart**, and these values **override the same keys in config.json** — the plugin never writes config.json, it only reads it as fallback.
 
 ### 4. Printable audit reports (HTML, Print/Save-as-PDF)
-A top navigation connects all pages (Assessment Panel / Vulnerability Report / Device Report). Both reports start with an overview page, then **one page per location** (real page breaks for printing), and state their own blind spot (**CPE coverage**) so a low finding count can never be misread as "everything is clean".
+A top navigation connects all pages (Assessment Panel / Settings / CPE Mapping / Updates / Vulnerability
+Report / Device Report). Both reports start with an overview page, then **one page per location** (real page breaks for printing), and state their own blind spot (**CPE coverage**) so a low finding count can never be misread as "everything is clean".
 
 * **Vulnerability Report** (`action=report`) — executive summary KPIs, severity distribution, per-location findings (CVE, severity, CVSS, software, version, rating, comment, affected devices). No device list — that is in the Device Report.
 * **Device Report** (`action=deviceReport`) — device inventory per location with **host names** (not display names), OS, program counts and per-severity finding counts.
@@ -83,6 +85,30 @@ On a configurable interval (e.g. monthly) the server re-scans all groups, stores
 * Scheduling is restart-proof (computed from the persisted last-scan timestamp) and safe for intervals beyond 24.8 days.
 
 ---
+
+### 6. Automatic software updates via winget (opt-in)
+
+The plugin can keep Windows endpoints patched through the official **winget** package manager - on a
+schedule or on demand from the panel's **Updates** tab. It is completely opt-in: nothing runs until you
+enable it *and* tick at least one device group.
+
+* **Two-phase per device, package by package**: one script run lists everything with an available upgrade
+  (`winget list --upgrade-available`), then upgrades the applicable ones individually
+  (`winget upgrade --id <id> --exact --silent --accept-package-agreements ...`). No `--all` is ever
+  issued, so nothing outside the plan gets touched. Installers run silently; a device is never rebooted.
+* **Ignore list (license protection)**: package ids you add (e.g. `Adobe.Acrobat.Reader.64-bit`) are
+  skipped in every batch - and additionally pinned on the client with `winget pin add --installed`, so
+  even a manual `winget upgrade --all` by a user leaves the licensed version in place. Remove an entry
+  from the list to let updates flow again.
+* **Per-device exclusions**: tick "Excluded" next to any machine to keep it out of automatic *and* manual
+  batches (e.g. kiosk PCs, presentation laptops).
+* **Scheduling**: an interval in hours (default weekly); runs are queued with two devices in parallel to
+  spare the network; devices offline during a batch are skipped, not retried forever.
+* **Full audit trail**: every batch is logged line by line (`winget-update.log`, tailable in the UI), and
+  the per-device result table shows which package went from which version to which - or why it failed
+  (exit code + last installer output).
+* **Requirements on the client**: Windows 10 1809+/11 with winget available (App Installer). Devices
+  without it are reported as such per run - nothing else about the batch changes.
 
 ## Requirements
 
@@ -185,6 +211,12 @@ tab wins over these values until you revert it.
 | `anyCveMaxAgeYears` | `5` | "Suppress version-less CVEs older than N years" (`0` = never) |
 | `collectIntervalMinutes` (*`inventoryScanner`* section) | `1440` | Collect inventory every N minutes (`0` = off) |
 | `collectOnAgentConnect` (*`inventoryScanner`* section) | `true` | "Collect when an agent connects" |
+| `enabled` (*`wingetUpdater`* section) | `false` | Automatic winget updates on/off (Updates tab) |
+| `intervalHours` (*`wingetUpdater`* section) | `168` | Batch interval (hours) |
+| `updateMeshes` (*`wingetUpdater`* section) | none | Device groups that receive automatic updates |
+| `excludeNodes` (*`wingetUpdater`* section) | none | Node ids permanently excluded from batches |
+| `ignorePackages` (*`wingetUpdater`* section) | none | `[{id, note}]` package ids never upgraded (also client-pinned) |
+| `pinSync` (*`wingetUpdater`* section) | `true` | Keep the client-side pins in sync with the ignore list |
 
 Group ids are MeshCentral mesh `_id`s formatted `mesh/<domain>/<name>` - in the default domain that means a
 double slash, e.g. `mesh//Server1`. Easiest lookup: the checkbox `value`s in the panel (view page source) or
@@ -241,6 +273,8 @@ another plugin's buttons, ours are left out (no duplicates).
 <datapath>/plugins/inventoryscanner/custom-cpe.json      your CPE mappings
 <datapath>/plugins/inventoryscanner/cpe-table.json       cached copy of the repository CPE table
 <datapath>/plugins/inventoryscanner/scanner-settings.json  values saved in the Settings tab
+<datapath>/plugins/inventoryscanner/winget-results.json        last winget batch result per device
+<datapath>/plugins/inventoryscanner/winget-update.log          winget batch log (rotated at ~5 MB)
 <datapath>/plugins/inventoryscanner/data/<nodeid>/       collected software + Windows-update state per device
 ```
 

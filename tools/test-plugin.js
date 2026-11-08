@@ -617,3 +617,68 @@ steps.push(function (next) {
     }
     steps[i](function () { run(i + 1); });
 })(0);
+
+// ---- winget updater: script builder, queue, parser, config, status ----
+steps.push(function (next) {
+    var dp3 = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-wg-'));
+    var ws3 = { meshes: { 'mesh//grp1': { name: 'HQ' }, 'mesh//grp2': { name: 'Branch' } }, wsagents: {} };
+    var obj3 = factory({ parent: { db: db, datapath: dp3, debug: function () { }, config: { settings: {} }, webserver: ws3 } });
+    obj3.pluginSettings = {};
+    var sent = [];
+    ws3.wsagents['node//d1'] = { send: function (m) { sent.push(JSON.parse(m)); } };
+    ws3.wsagents['node//d2'] = { send: function (m) { sent.push(JSON.parse(m)); } };
+    ws3.wsagents['node//d3'] = { send: function (m) { sent.push(JSON.parse(m)); } };
+
+    // builder
+    var sc = obj3.wgBuildScript({ ignorePackages: [{ id: 'Adobe.Acrobat.Reader.64-bit' }, { id: 'bad id;rm' }], pinSync: true });
+    check('wg script: marker + json lines', sc.indexOf(obj3.WINGET_MARKER) >= 0 && sc.indexOf('ConvertTo-Json') >= 0);
+    check('wg script: good id embedded, bad id dropped', sc.indexOf("'Adobe.Acrobat.Reader.64-bit'") >= 0 && sc.indexOf('bad id') < 0, sc.substring(0, 200));
+    check('wg script: pin block present', sc.indexOf('winget pin add') >= 0);
+    check('wg script: upgrade call shape', /winget upgrade --id \$p\.id --exact --silent/.test(sc));
+    var sc2 = obj3.wgBuildScript({ ignorePackages: [], pinSync: false });
+    check('wg script: pinSync off removes pin block', sc2.indexOf('winget pin add') < 0);
+
+    // config validation via routes
+    var wgTimers = [];
+    obj3.longTimeout = function (cb, ms) { wgTimers.push(ms); };
+    var post = function (body, cb) { obj3.handleAdminPostReq({ body: body }, mockRes(cb), user); };
+    post({ action: 'wg_save_config', enabled: 'true', intervalHours: 'abc', updateMeshes: '', excludeNodes: '', ignorePackages: '[]', pinSync: 'true' }, function (d) {
+        check('wg cfg: rejects bad interval', !!d.error, d);
+        post({ action: 'wg_save_config', enabled: 'true', intervalHours: '48', updateMeshes: 'mesh//grp1', excludeNodes: 'node//d3', ignorePackages: JSON.stringify([{ id: 'OpenJS.NodeJS.18', note: 'lts license' }, { id: 'DROP TABLE' }]), pinSync: 'false' }, function (dBad) {
+            check('wg cfg: invalid id rejected explicitly', !!dBad.error && /ignore/i.test(dBad.error), dBad);
+            post({ action: 'wg_save_config', enabled: 'true', intervalHours: '48', updateMeshes: 'mesh//grp1', excludeNodes: 'node//d3', ignorePackages: JSON.stringify([{ id: 'OpenJS.NodeJS.18', note: 'lts license' }]), pinSync: 'false' }, function (d2) {
+            check('wg cfg: save ok with valid id', !d2.error && d2.config.ignorePackages.length === 1 && d2.config.ignorePackages[0].id === 'OpenJS.NodeJS.18', d2.config);
+            var w3 = obj3.wingetConfig();
+            check('wg cfg: effective after save', w3.enabled === true && w3.intervalHours === 48 && w3.meshes.length === 1 && w3.excludeNodes[0] === 'node//d3' && w3.pinSync === false, w3);
+
+            // batch: d1,d2 in scope (grp1), d3 excluded, d4 in grp2 not in meshes
+            obj3.WINGET_MAX_PARALLEL = 2;
+            var r = obj3.wgStartBatch('scheduled', null);
+            check('wg batch: started and queued two (parallel cap)', obj3.wgBatchRunning === true && sent.length === 2, sent.length);
+            if (sent.length < 2) { check('wg batch: two sends queued', false, sent.length); next(); return; }
+            var msg0 = sent[0];
+            check('wg batch: runcommands message shape', msg0.action === 'runcommands' && msg0.type === 2 && msg0.runAsUser === 0 && msg0.reply === true && String(msg0.sessionid).indexOf('invscanner-wg-') === 0, msg0);
+
+            // responses: d1 ok (single result -> PS unwraps object), d2 no winget
+            obj3.onAgentResponse({ action: 'msg', type: 'runcommands', sessionid: msg0.sessionid, result: 'noise' + String.fromCharCode(10) + obj3.WINGET_MARKER + '{"winget":true,"results":{"id":"OpenJS.NodeJS.18","name":"Node.js","from":"18.19.0","to":"18.20.8","state":"ok","exit":0,"log":"done"}}' }, '', 'node//d1');
+            check('wg parse: unwrapped single result normalized', obj3.wgResults['node//d1'].results.length === 1 && obj3.wgResults['node//d1'].results[0].state === 'ok', obj3.wgResults['node//d1']);
+            var m2 = sent[1];
+            check('wg queue: second device was sent', m2.sessionid.indexOf('invscanner-wg-') === 0);
+            obj3.onAgentResponse({ action: 'msg', type: 'runcommands', sessionid: m2.sessionid, result: obj3.WINGET_MARKER + '{"winget":false}' }, '', 'node//d2');
+            check('wg parse: winget false recorded', obj3.wgResults['node//d2'].winget === false);
+            // foreign sessions are not consumed
+            check('wg hook: foreign runcommands not consumed', obj3.onAgentResponse({ action: 'msg', type: 'runcommands', sessionid: 'other', result: 'x' }, '', 'node//d1') === false);
+            check('wg batch: drained after responses', obj3.wgBatchRunning === false);
+            check('wg state: results persisted', fs.existsSync(obj3.wingetResultsPath));
+
+            post({ action: 'wg_status' }, function (st) {
+                var d1 = st.devices.filter(function (x) { return x.id === 'node//d1'; })[0];
+                var d3 = st.devices.filter(function (x) { return x.id === 'node//d3'; })[0];
+                check('wg status: device table joined', st.devices.length === 4 && d1.last.ok === 1 && d3.excluded === true, st.devices);
+                check('wg timer: save re-armed the batch timer', wgTimers.indexOf(48 * 3600 * 1000) >= 0, wgTimers);
+                next();
+            });
+            });
+        });
+    });
+});

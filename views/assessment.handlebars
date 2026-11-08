@@ -92,6 +92,7 @@
         <a href="#" class="navtab active" data-tab="assessment">Assessment</a>
         <a href="#" class="navtab" data-tab="settings">Settings</a>
         <a href="#" class="navtab" data-tab="cpe">CPE Mapping</a>
+        <a href="#" class="navtab" data-tab="updates">Updates</a>
         <span class="navsep"></span>
         <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=report" target="_blank" rel="noopener">Vulnerability Report</a>
         <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=deviceReport" target="_blank" rel="noopener">Device Report</a>
@@ -285,6 +286,56 @@
             </div>
             <div id="cpeMsg"></div>
         </div>
+
+        <div class="tab-content" id="tab-updates">
+            <div class="info">
+                Automatic software updates via <code>winget</code> on Windows devices. Nothing runs until you enable
+                it here <strong>and</strong> tick at least one device group. Updates are silent, one package at a
+                time, and a device is never rebooted. Packages on the ignore list are skipped and (optionally) pinned
+                on the client, so even a manual <code>winget upgrade --all</code> leaves license-bound versions
+                alone. Devices without winget are reported per run; offline devices are skipped. A full run is
+                logged below with one line per package.
+            </div>
+
+            <div class="controls">
+                <label><input type="checkbox" id="wgEnabled"> Enable automatic winget updates</label>
+                <label><input type="checkbox" id="wgPinSync"> Pin ignored packages on clients</label>
+                <label>Interval (hours) <input type="text" id="wgInterval" class="num" style="width:70px;"></label>
+                <button id="wgSaveBtn">Save Configuration</button>
+                <button id="wgRunBtn" class="green">Run Now</button>
+                <span id="wgRunState" class="hint"></span>
+            </div>
+            <div class="hint">"Save Configuration" stores everything on this tab: switches, groups, ignore list and device exclusions.</div>
+
+            <h3>Device groups to update automatically</h3>
+            <div class="table-container"><table>
+                <thead><tr><th>Group</th><th style="width:120px;">Auto-update</th></tr></thead>
+                <tbody id="wgGroupBody"><tr><td colspan="2" style="color:#888">Loading...</td></tr></tbody>
+            </table></div>
+
+            <h3>Ignore list (never auto-upgrade these package ids)</h3>
+            <div class="controls">
+                <input id="wgIgId" type="text" placeholder="package id, e.g. Adobe.Acrobat.Reader.64-bit" style="min-width:280px;">
+                <input id="wgIgNote" type="text" placeholder="reason (optional: license pinned to v11)" style="min-width:240px;">
+                <button id="wgIgAdd">Add</button>
+            </div>
+            <div class="table-container"><table>
+                <thead><tr><th style="width:320px;">Package id</th><th>Note</th><th style="width:80px;"></th></tr></thead>
+                <tbody id="wgIgBody"></tbody>
+            </table></div>
+            <div id="wgMsg"></div>
+
+            <h3>Devices</h3>
+            <div class="hint">Tick "Excluded" to keep a single machine out of every automatic and manual batch.</div>
+            <div class="table-container"><table>
+                <thead><tr><th>Device</th><th>Group</th><th style="width:70px;">Online</th><th style="width:90px;">Excluded</th><th style="width:260px;">Last run</th></tr></thead>
+                <tbody id="wgDevBody"><tr><td colspan="5" style="color:#888">Loading...</td></tr></tbody>
+            </table></div>
+
+            <h3>Update log</h3>
+            <div><button id="refreshWgLogBtn" class="small">Refresh log</button> <span id="wgLogInfo" class="hint"></span></div>
+            <pre id="wgLog" style="max-height:260px;overflow:auto;background:#0f1720;color:#cfe3f5;padding:8px;border-radius:6px;font-size:11px;margin-top:6px;white-space:pre-wrap;">(not loaded yet)</pre>
+        </div>
     </div>
 
     <div class="location-selector" id="locationPanel">
@@ -372,7 +423,7 @@
 
         // ---------- tabs ----------
 
-        var tabTitles = { assessment: 'Vulnerability Assessment', settings: 'Settings', cpe: 'Software → CPE Mapping' };
+        var tabTitles = { assessment: 'Vulnerability Assessment', settings: 'Settings', cpe: 'Software → CPE Mapping', updates: 'Software Updates (winget)' };
         var tabs = document.querySelectorAll('.navtab');
         for (var t = 0; t < tabs.length; t++) {
             tabs[t].addEventListener('click', function (e) {
@@ -385,10 +436,158 @@
                 for (var j = 0; j < contents.length; j++) { contents[j].classList.remove('active'); }
                 var target = document.getElementById('tab-' + name);
                 if (target) { target.classList.add('active'); }
+                if (name === 'updates') { loadWgTab(); }
                 var pt = document.getElementById('pageTitle');
                 if (pt && tabTitles[name]) { pt.textContent = tabTitles[name]; }
             });
         }
+
+        // ---------- winget updates tab ----------
+
+        var wgApp = { cfg: null, status: null, groups: [], loaded: false };
+
+        function wgGroupIds() {
+            var out = [];
+            var cbs = document.querySelectorAll('#wgGroupBody input[type=checkbox]');
+            for (var i = 0; i < cbs.length; i++) { if (cbs[i].checked) { out.push(cbs[i].value); } }
+            return out;
+        }
+
+        function wgExcludeIds() {
+            var out = [];
+            var cbs = document.querySelectorAll('#wgDevBody input.wgExcl');
+            for (var i = 0; i < cbs.length; i++) { if (cbs[i].checked) { out.push(cbs[i].value); } }
+            return out;
+        }
+
+        function renderWgGroups() {
+            var sel = (wgApp.cfg && wgApp.cfg.config.updateMeshes) || [];
+            var html = '';
+            for (var i = 0; i < wgApp.groups.length; i++) {
+                var g = wgApp.groups[i];
+                html += '<tr><td>' + esc(g.name) + '</td><td><input type="checkbox" class="wgGrp" value="' + esc(g.id) + '"' + (sel.indexOf(g.id) >= 0 ? ' checked' : '') + '></td></tr>';
+            }
+            if (html === '') { html = '<tr><td colspan="2" style="color:#888">No device groups found.</td></tr>'; }
+            $('wgGroupBody').innerHTML = html;
+        }
+
+        function renderWgIgnore() {
+            var list = (wgApp.cfg && wgApp.cfg.config.ignorePackages) || [];
+            var html = '';
+            for (var i = 0; i < list.length; i++) {
+                html += '<tr><td><code>' + esc(list[i].id) + '</code></td><td>' + esc(list[i].note || '') + '</td>';
+                html += '<td><button class="small red wgIgDel" data-idx="' + i + '">Remove</button></td></tr>';
+            }
+            $('wgIgBody').innerHTML = html;
+        }
+
+        function renderWgDevices() {
+            if (!wgApp.status) { return; }
+            var devs = wgApp.status.devices || [];
+            var html = '';
+            for (var i = 0; i < devs.length; i++) {
+                var d = devs[i];
+                var last = '-';
+                if (d.last) {
+                    last = esc(d.last.time || '') + ' - ';
+                    if (d.last.error) { last += esc(d.last.error); }
+                    else if (!d.last.winget) { last += 'winget not available'; }
+                    else { last += (d.last.ok || 0) + ' ok, ' + (d.last.skipped || 0) + ' skipped, ' + (d.last.failed || 0) + ' failed'; }
+                }
+                html += '<tr><td>' + esc(d.host) + '</td><td>' + esc(d.group) + '</td>';
+                html += '<td>' + (d.online ? 'yes' : '<span style="color:#a33">offline</span>') + '</td>';
+                html += '<td><input type="checkbox" class="wgExcl" value="' + esc(d.id) + '"' + (d.excluded ? ' checked' : '') + '></td>';
+                html += '<td style="font-size:11px">' + last + '</td></tr>';
+            }
+            if (html === '') { html = '<tr><td colspan="5" style="color:#888">No devices.</td></tr>'; }
+            $('wgDevBody').innerHTML = html;
+        }
+
+        function loadWgLog() {
+            post('get_log', { type: 'winget' }).then(function (data) {
+                if (data.error) { $('wgLog').textContent = data.error; return; }
+                $('wgLog').textContent = (data.lines && data.lines.length) ? data.lines.join(String.fromCharCode(10)) : '(empty)';
+                $('wgLogInfo').textContent = data.note || ((data.lines || []).length + ' lines · ' + (data.file || ''));
+            }).catch(function (ex) { $('wgLog').textContent = 'Failed: ' + ex.message; });
+        }
+
+        function loadWgTab() {
+            post('wg_get_config', {}).then(function (d) {
+                if (d.error) { showMsg('wgMsg', d.error, false); return; }
+                wgApp.cfg = d;
+                $('wgEnabled').checked = d.config.enabled === true;
+                $('wgPinSync').checked = d.config.pinSync !== false;
+                $('wgInterval').value = d.config.intervalHours;
+                renderWgIgnore();
+                return post('get_locations', {});
+            }).then(function (l) {
+                if (l && l.locations) { wgApp.groups = l.locations; renderWgGroups(); }
+                return post('wg_status', {});
+            }).then(function (s) {
+                if (s && s.devices) { wgApp.status = s; renderWgDevices(); wgPollState(); }
+                loadWgLog();
+                wgApp.loaded = true;
+            }).catch(function (ex) { showMsg('wgMsg', 'Failed to load update state: ' + ex.message, false); });
+        }
+
+        function saveWgConfig() {
+            var body = {
+                enabled: $('wgEnabled').checked ? 'true' : 'false',
+                pinSync: $('wgPinSync').checked ? 'true' : 'false',
+                intervalHours: $('wgInterval').value.trim(),
+                updateMeshes: wgGroupIds().join(','),
+                excludeNodes: wgExcludeIds().join(','),
+                ignorePackages: JSON.stringify(((wgApp.cfg && wgApp.cfg.config.ignorePackages) || []))
+            };
+            post('wg_save_config', body).then(function (d) {
+                if (d.error) { showMsg('wgMsg', d.error, false); return; }
+                wgApp.cfg = d;
+                showMsg('wgMsg', 'Configuration saved and scheduled immediately (the batch timer was re-armed).', true);
+                renderWgGroups();
+            }).catch(function (ex) { showMsg('wgMsg', 'Save failed: ' + ex.message, false); });
+        }
+
+        var wgPollTimer = null;
+        function wgPollState() {
+            if (wgPollTimer != null) { clearTimeout(wgPollTimer); wgPollTimer = null; }
+            var running = wgApp.status && wgApp.status.running;
+            $('wgRunState').textContent = running ? ('batch running - ' + wgApp.status.active + ' active, ' + wgApp.status.queued + ' queued') : '';
+            if (running) {
+                wgPollTimer = setTimeout(function () {
+                    post('wg_status', {}).then(function (s) { wgApp.status = s; renderWgDevices(); wgPollState(); loadWgLog(); }).catch(function () { });
+                }, 10000);
+            }
+        }
+
+        $('wgSaveBtn').addEventListener('click', saveWgConfig);
+        $('wgRunBtn').addEventListener('click', function () {
+            if (!window.confirm('Run the winget update batch now on all in-scope, non-excluded devices?')) { return; }
+            post('wg_run', {}).then(function (d) {
+                if (d.busy) { showMsg('wgMsg', 'A batch is already running.', false); return; }
+                showMsg('wgMsg', d.started ? 'Batch started - watch the devices table and log.' : 'Nothing to run (no target devices?).', d.started !== false);
+                post('wg_status', {}).then(function (s) { wgApp.status = s; renderWgDevices(); wgPollState(); }).catch(function () { });
+            }).catch(function (ex) { showMsg('wgMsg', 'Run failed: ' + ex.message, false); });
+        });
+        $('wgIgAdd').addEventListener('click', function () {
+            var id = $('wgIgId').value.trim();
+            if (id === '' || !/^[A-Za-z0-9._+-]{1,128}$/.test(id)) { showMsg('wgMsg', 'Package ids look like Vendor.Product (letters, digits, dots, + and -).', false); return; }
+            if (!wgApp.cfg) { return; }
+            var list = wgApp.cfg.config.ignorePackages || [];
+            for (var i = 0; i < list.length; i++) { if (list[i].id.toLowerCase() === id.toLowerCase()) { showMsg('wgMsg', 'That id is already on the list.', false); return; } }
+            list.push({ id: id, note: $('wgIgNote').value.trim().substring(0, 200) });
+            wgApp.cfg.config.ignorePackages = list;
+            $('wgIgId').value = ''; $('wgIgNote').value = '';
+            renderWgIgnore();
+            showMsg('wgMsg', 'Added - press "Save Configuration" to persist.', true);
+        });
+        $('wgIgBody').addEventListener('click', function (e) {
+            var el = e.target;
+            if (!el || !el.classList || !el.classList.contains('wgIgDel')) { return; }
+            var idx = parseInt(el.getAttribute('data-idx'), 10);
+            var list = (wgApp.cfg && wgApp.cfg.config.ignorePackages) || [];
+            if (!isNaN(idx) && idx >= 0 && idx < list.length) { list.splice(idx, 1); renderWgIgnore(); showMsg('wgMsg', 'Removed - press "Save Configuration" to persist.', true); }
+        });
+        $('refreshWgLogBtn').addEventListener('click', function () { loadWgLog(); });
 
         // ---------- floating location selector ----------
 

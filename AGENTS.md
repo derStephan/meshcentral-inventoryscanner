@@ -121,6 +121,11 @@ POST body `action=`:
 | `get_cpe_table` | — | `{entries:[{match,vendor,product,source:'built-in'|'remote'|'custom'}], cpeTable:{source,updated,url,enabled,entries}}` |
 | `delete_cpe_table` | `match`,`vendor`,`product` | custom entries only (built-ins can be shadowed, not deleted) |
 | `add_cpe` | `match`,`vendor`,`product` | regex validated via `new RegExp`; custom wins over built-in |
+| `wg_get_config` | — | effective wingetUpdater config + per-key sources + queue state |
+| `wg_save_config` | enabled, intervalHours, updateMeshes(csv), excludeNodes(csv), ignorePackages(JSON), pinSync | validates EVERYTHING, writes overlay, `rescheduleAll()` |
+| `wg_run` | — | starts a manual batch over all non-excluded nodes; {busy} while one runs |
+| `wg_status` | — | devices table (host, group, online, excluded, last-run summary) + queue state |
+| `get_log` | `type` = nvd\|winget | whitelisted log tail (last 300 lines) |
 | `update_nvd` | — | starts `runNvdUpdate(true)` (background) and answers {started:true} / {alreadyRunning:true}; concurrent runs skip via the `nvdUpdateRunning` flag |
 | `get_nvdlog` | — | `{lines:[...last 200 of nvd-download.log], size, file}`; `note` if file missing |
 | `get_locations` | — | all non-deleted meshes `{locations:[{id,name}]}` (also feeds the Settings tab group table) |
@@ -179,6 +184,27 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   Save posts the full field set, "Reset all" posts `reset=true`. The group table is filled client-side from
   `get_locations`; all-checked or none-checked is sent as an empty list = "all groups".
 
+## Winget auto-update engine (verified contracts)
+
+- Transport (verified in MeshCentral `agents/meshcore.js`): the server sends
+  `{action:'runcommands', type:2, cmds:<powershell>, runAsUser:0, reply:true, sessionid, responseid}`
+  (type 2 = PowerShell via stdin, runAsUser 0 = the agent's SYSTEM context); the agent answers
+  `{action:'msg', type:'runcommands', result, sessionid, responseid}`, captured by the same
+  `routeAgentCommand` hook as the inventory collector. Sessions are identified by the
+  `invscanner-wg-<node>` sessionid prefix; foreign sessions are never consumed.
+- The per-device PowerShell script (single round trip): existence probe (`Get-Command winget`),
+  `winget list --upgrade-available --accept-source-agreements --disable-interactivity`, a strict regex
+  per table line (name / dotted id / version / available / source), skip-if-ignored (case-insensitive id
+  match), `winget upgrade --id <id> --exact --silent --accept-package-agreements --accept-source-agreements
+  --disable-interactivity` per remaining package, best-effort `winget pin add --id <id> --installed --exact`
+  for ignore entries (pinSync), and ONE answer line `@@INVWUP@@{json}`. `ConvertTo-Json` unwraps
+  single-element arrays - the parser rewraps them. Anything unparsable is recorded as an error, never as
+  a silent success.
+- Batching: queue with 2 devices in parallel (`WINGET_MAX_PARALLEL`), 2 h watchdog per device, results in
+  `winget-results.json`, log `winget-update.log` (rotates ~5 MB). Scheduled batches require explicit
+  `updateMeshes`; manual "Run Now" covers every non-excluded desktop node. No reboots are ever triggered
+  (`--allow-reboot` is never used).
+
 ## Design decisions (with reasons)
 
 1. **Two-stage matching (Dependency-Check style, fully offline):** custom entries + curated `SOFTWARE_CPE_TABLE`
@@ -229,6 +255,11 @@ never touches config.json). The config.json keys below remain the fallback/seed:
   `notifyUnratedRepeat`, `notify` (per-group), `updateHours`, `anyCveMaxAgeYears` (suppresses ancient version-less
   `kind:"any"` CVE matches).
 - `inventoryScanner` (note: one letter less than the section above): `collectIntervalMinutes`, `collectOnAgentConnect`.
+- `wingetUpdater` (sibling section, own Updates-tab form): `enabled` (default **false**), `intervalHours` (168),
+  `updateMeshes` (array; scheduled batches ONLY run on these - empty means NOTHING runs on purpose),
+  `excludeNodes` (node ids), `ignorePackages` ([{id,note}] - never upgraded, additionally `winget pin add
+  --installed` on the clients when `pinSync` true), `pinSync` (true). All ids validated against
+  `WINGET_ID_RE` before anything reaches the agent shell.
 
 **When adding a setting key, update all of:** `scannerConfig`/`collectorConfig`, `getSettingsHandler` (value +
 sources + revertAllowed), `saveSettingsHandler` (+ `SETTING_MAP` for revert), the Settings tab form, the README
@@ -243,10 +274,10 @@ npm test           # = tools/check.js && tools/test-plugin.js && tools/test-view
 
 - `tools/check.js`: `node --check` on the plugin, inline-script syntax/`{{`-hazard check, JSON validity of
   config files, and view-name↔render-name consistency. Must run anywhere (no dependencies).
-- `tools/test-plugin.js`: 118 behavioral assertions against the real module (mocked MeshCentral DB/webserver):
+- `tools/test-plugin.js`: 137 behavioral assertions against the real module (mocked MeshCentral DB/webserver):
   locations grouping & counting, manual-rating severity override, FP exclusion, host-name preference, coverage
   numbers, multi-mesh scan/`mixed` logic, all POST handlers incl. validation/rejections, routes, admin gating
-  (401), CPE table add/delete, vulns CSV header/content, toolbar button injection (simulated browser DOM), remote CPE table apply/cache/fetch/settings, NVD download-log tailing, manual NVD update trigger + concurrency guard, unknown-version matching rules, `longTimeout` chunking, restart-proof schedule delays,
+  (401), CPE table add/delete, vulns CSV header/content, toolbar button injection (simulated browser DOM), remote CPE table apply/cache/fetch/settings, NVD download-log tailing, manual NVD update trigger + concurrency guard, unknown-version matching rules, winget updater (builder/parser/queue/routes), `longTimeout` chunking, restart-proof schedule delays,
   scheduled-scan notification content in repeat and once mode, NVD-status derivation, settings overlay priority,
   save/revert/reset roundtrips incl. validation rejections, timer-generation invalidation, per-cycle collector config.
 - `tools/test-views.js`: compiles all three views and renders them with mock data **and empty data**.
