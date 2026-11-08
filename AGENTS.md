@@ -145,7 +145,7 @@ UI-managed scanner settings in `<datapath>/plugins/inventoryscanner/scanner-sett
 `{ meshes:[{id,name}], cves:[{cve, severity, cvss, description, software, version,
 locations:[{meshId,name,devices:[hostnames]}], assessments:{meshId:rec|null}, assessment:rec|null,
 mixed:bool, anyFlagged:bool}], flaggedCount, totalCves, lastUpdate }`.
-`mixed` = at least one but not all affected locations carry (differing) assessments; `assessment` is set only when
+**Unknown installed version (no DisplayVersion - hotfixes, add-ons):** `defMatches` asserts ONLY `kind:'any'` `assessment` is set only when
 uniform across ALL affected locations; a fully unrated finding is `mixed:false, assessment:null`.
 
 **`buildOverallReport()` shape** (drives both report views):
@@ -171,7 +171,7 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
 - Save/flag/unflag post the **meshIds of all affected selected locations** in one request; after success the row
   state is patched client-side (no rescan).
 - All dynamic values rendered via `esc()` (comments stored raw → escape at output; never double-escape).
-- The inline JS must contain **no `{{`** (Handlebars would consume it) except the intended `'{{shortName}}'` token.
+- The page heading (`h1#pageTitle`) follows the active tab (titles map in the tab click handler); the (Handlebars would consume it) except the intended `'{{shortName}}'` token.
   `tools/check.js` enforces both this and `node --check` on the extracted script.
 
 - Settings tab: fetches `get_settings` + `get_locations` on load; each numeric field carries a source select
@@ -243,10 +243,10 @@ npm test           # = tools/check.js && tools/test-plugin.js && tools/test-view
 
 - `tools/check.js`: `node --check` on the plugin, inline-script syntax/`{{`-hazard check, JSON validity of
   config files, and view-name↔render-name consistency. Must run anywhere (no dependencies).
-- `tools/test-plugin.js`: 111 behavioral assertions against the real module (mocked MeshCentral DB/webserver):
+- `tools/test-plugin.js`: 118 behavioral assertions against the real module (mocked MeshCentral DB/webserver):
   locations grouping & counting, manual-rating severity override, FP exclusion, host-name preference, coverage
   numbers, multi-mesh scan/`mixed` logic, all POST handlers incl. validation/rejections, routes, admin gating
-  (401), CPE table add/delete, vulns CSV header/content, toolbar button injection (simulated browser DOM), remote CPE table apply/cache/fetch/settings, NVD download-log tailing, manual NVD update trigger + concurrency guard, `longTimeout` chunking, restart-proof schedule delays,
+  (401), CPE table add/delete, vulns CSV header/content, toolbar button injection (simulated browser DOM), remote CPE table apply/cache/fetch/settings, NVD download-log tailing, manual NVD update trigger + concurrency guard, unknown-version matching rules, `longTimeout` chunking, restart-proof schedule delays,
   scheduled-scan notification content in repeat and once mode, NVD-status derivation, settings overlay priority,
   save/revert/reset roundtrips incl. validation rejections, timer-generation invalidation, per-cycle collector config.
 - `tools/test-views.js`: compiles all three views and renders them with mock data **and empty data**.

@@ -102,20 +102,18 @@
     </div>
 
     <div class="container">
-        <h1>Vulnerability Assessment</h1>
+        <h1 id="pageTitle">Vulnerability Assessment</h1>
         <div class="status">
             NVD database: {{#if totalCves}}{{#if lastUpdate}}last updated {{lastUpdate}}{{else}}loaded{{/if}}{{else}}not downloaded yet{{/if}} &middot; Indexed CVEs: {{totalCves}} &middot;
             Scheduled scans: {{#if scanIntervalHours}}every {{scanIntervalHours}}h{{else}}disabled{{/if}}{{#if lastScan}} (last run {{lastScan}}){{/if}}
         </div>
-        <div class="info">
-            Select the <strong>locations</strong> to assess via the floating panel on the right. The table shows all findings of the
-            selected locations; a rating you save applies to <strong>every selected location</strong> in which the finding occurs
-            (no duplicate work per location). Ratings are stored per location and a non-empty comment is required for a rating.
-            <strong>False positives</strong> are excluded from the vulnerability counts and need no comment.
-            Only full site administrators can use this panel.
-        </div>
-
         <div class="tab-content active" id="tab-assessment">
+            <div class="info">
+                Select the <strong>locations</strong> to assess via the floating panel on the right. The table shows all findings of the
+                selected locations; a rating you save applies to <strong>every selected location</strong> in which the finding occurs
+                (no duplicate work per location). Ratings are stored per location and a non-empty comment is required for a rating.
+                <strong>False positives</strong> are excluded from the vulnerability counts and need no comment.
+            </div>
             <div class="controls">
                 <button id="scanBtn">Scan &amp; Review</button>
                 <button id="locationToggle" class="location-toggle">Locations (<span id="locCountTxt">all</span>)</button>
@@ -147,7 +145,7 @@
         </div>
 
         <div class="tab-content" id="tab-settings">
-            <h2>Scheduled scanning &amp; collection</h2>
+            <h3>Scheduled scanning &amp; collection</h3>
             <div class="info">
                 Values saved here go into <code>scanner-settings.json</code> inside the plugin's data folder and
                 <strong>override the same keys in the server's config.json</strong> - immediately and without a
@@ -241,19 +239,23 @@
         </div>
 
         <div class="tab-content" id="tab-cpe">
-            <h2>Software &rarr; CPE Mapping</h2>
             <div class="info">
-                This is the mapping used by the scanner: the maintained table (the remote
-                <code>cpe-table.json</code> from this plugin's repository when reachable, otherwise the built-in
-                fallback) plus your custom entries. Custom entries are checked first, so they extend or override
-                the table. Software matching no entry is additionally auto-mapped against the CPE products present
-                in the NVD data (Settings tab, "Auto-map"). To <strong>change</strong> a row, click
-                <em>Override</em>, adjust the values and press <em>Add</em>.
-                <code>Regex</code> is matched case-insensitively against the software display name;
-                <code>vendor</code>/<code>product</code> must be real, NVD-verified CPE codes (e.g. <code>mozilla</code>/<code>firefox</code>).
-                Products with neither a mapping nor a provable NVD product token stay <em>not assessable</em>.
+                Every NVD CVE names the affected software with a technical code, a <strong>CPE</strong> like
+                <code>cpe:...:mozilla:firefox</code>. This page is the dictionary that tells the scanner which
+                code belongs to which program on your PCs:
+                <ul style="margin:6px 0 6px 18px;padding:0;">
+                    <li><strong>Regex</strong> is matched case-insensitively against the installed program name.</li>
+                    <li><strong>Vendor / Product</strong> is the CPE code that gets searched in the CVE database.</li>
+                </ul>
+                Rows labelled <em>Remote</em> come from the table maintained in the plugin's GitHub repository
+                (downloaded automatically); rows labelled <em>Custom</em> are your own additions and are always
+                checked first, so they win over any remote row. Programs that match no row here are still checked
+                automatically against the product names present in the NVD data ("Auto-map" in the Settings tab).
+                Only software where even that proves nothing is listed as <em>not assessable</em> - never as "clean".
+                <br><br>
+                <strong>Fix a wrong row:</strong> <em>Override</em> copies it as a custom entry you can edit,
+                <em>Delete</em> removes only your custom entries, never remote ones.
             </div>
-            <div class="hint" id="cpeTableSourceInfo" style="margin-bottom:6px;"></div>
 
             <div class="filter-row">
                 <input type="text" id="cpeFilter" class="filter-input" placeholder="Filter mappings by regex, vendor or product...">
@@ -370,6 +372,7 @@
 
         // ---------- tabs ----------
 
+        var tabTitles = { assessment: 'Vulnerability Assessment', settings: 'Settings', cpe: 'Software → CPE Mapping' };
         var tabs = document.querySelectorAll('.navtab');
         for (var t = 0; t < tabs.length; t++) {
             tabs[t].addEventListener('click', function (e) {
@@ -382,6 +385,8 @@
                 for (var j = 0; j < contents.length; j++) { contents[j].classList.remove('active'); }
                 var target = document.getElementById('tab-' + name);
                 if (target) { target.classList.add('active'); }
+                var pt = document.getElementById('pageTitle');
+                if (pt && tabTitles[name]) { pt.textContent = tabTitles[name]; }
             });
         }
 

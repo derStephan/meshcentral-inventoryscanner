@@ -37,6 +37,10 @@ Two ways to export, depending on what you need:
   The `vulns` export has one row per software/OS finding with a `Status` column:
   `CVE`, `no CVE for <product>`, `not assessable` or `false positive`.
 
+    Software entries without a version number (hotfixes, add-ons) are handled conservatively: only
+    CVEs applying to ALL versions are asserted for them, so historical version-bounded findings never
+    flood the list.
+
 CSVs are Excel-safe (UTF-8 BOM) and neutralized against CSV formula injection (CWE-1236).
 
 ### 2. Offline CVE scanner (NVD 2.0)

@@ -17,7 +17,7 @@
  * NVD feed is downloaded.
  *
  * @author derStephan
- * @version 1.3.0
+ * @version 1.5.0
  *
  * Transparency: This plugin was created with the assistance of Qwen 3.6 27B and Qwen 3.8 Flash Next.
  * Security audit (2026-11-06) performed by NVIDIA Nemotron 3 550B A55B via opencode.
@@ -1529,7 +1529,14 @@ obj.loadNvdFromAllFiles = function () {
      * @returns {boolean} True if the definition matches the version.
      */
     obj.defMatches = function (def, version) {
-        if (!version) { version = ''; }
+        if (version == null) version = '';
+        if (version === '') {
+            // Unknown installed version (entries without DisplayVersion): bounded definitions
+            // cannot be asserted. An empty version sorts below every upper bound, so without
+            // this guard EVERY historical CVE with an end boundary would match such software.
+            // Only "applies to all versions" definitions stay reportable (age-filtered).
+            return (def.kind === 'any');
+        }
         if (def.kind === 'any') return true;
         if (def.kind === 'exact') {
             var dv = def.version;
@@ -2084,7 +2091,7 @@ obj.loadNvdFromAllFiles = function () {
                     status: 'no CVE for ' + searchResult.product,
                     isCve: false,
                     cve: '', severity: '', cvss: '',
-                    description: 'CPE product "' + searchResult.vendor + '/' + searchResult.product + '" exists, but no matching CVE was found in the NVD list.',
+                    description: 'CPE product "' + searchResult.vendor + '/' + searchResult.product + '" exists, but no matching CVE was found in the NVD list.' + (version === '' ? ' The installed version is unknown, so version-bounded CVEs were not asserted - only all-version entries were checked.' : ''),
                     software: name, version: version,
                     published: '', references: []
                 });

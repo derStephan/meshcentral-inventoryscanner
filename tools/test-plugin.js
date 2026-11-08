@@ -586,6 +586,30 @@ steps.push(function (next) {
     next();
 });
 
+// ---- unknown installed version must never assert version-bounded CVEs ----
+steps.push(function (next) {
+    check('defMatch: unknown version rejects bounded range', obj.defMatches({ part: 'a', kind: 'range', endExc: '3.6.13' }, '') === false);
+    check('defMatch: unknown version rejects exact defs', obj.defMatches({ part: 'a', kind: 'exact', version: '3.6' }, '') === false);
+    check('defMatch: unknown version keeps all-version defs', obj.defMatches({ part: 'a', kind: 'any' }, '') === true);
+    var dp2 = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-verless-'));
+    var obj2 = factory({ parent: { db: db, datapath: dp2, debug: function () { }, config: { settings: {} }, webserver: { meshes: {} } } });
+    obj2.productIndex['mozilla|firefox'] = [
+        { part: 'a', kind: 'range', endExc: '3.6.13', cves: [{ id: 'CVE-2008-1111', severity: 'HIGH', cvss: 7, description: 'old flood', published: '2008-06-01T00:00:00', references: [] }] },
+        { part: 'a', kind: 'range', startInc: '1.0', endExc: '3.6.28', cves: [{ id: 'CVE-2011-2222', severity: 'CRITICAL', cvss: 9.5, description: 'ancient', published: '2011-03-01T00:00:00', references: [] }] }
+    ];
+    obj2.scanDeviceSoftware([{ name: 'Mozilla Firefox', publisher: 'Mozilla Corporation', version: '' }], function (res2) {
+        check('scan: versionless software asserts no bounded CVEs', res2.filter(function (x) { return x.isCve; }).length === 0, res2.map(function (x) { return x.cve; }));
+        var row2 = res2.filter(function (x) { return /^no CVE/.test(x.status || ''); })[0];
+        check('scan: versionless row explains the unknown version', !!row2 && /version is unknown/.test(row2.description), row2 && row2.description);
+        obj2.scanDeviceSoftware([{ name: 'Mozilla Firefox', publisher: 'Mozilla Corporation', version: '121.0.1' }], function (res3) {
+            check('scan: current version still not matched by history', res3.filter(function (x) { return x.isCve; }).length === 0, res3.map(function (x) { return x.cve; }));
+            var row3 = res3.filter(function (x) { return /^no CVE/.test(x.status || ''); })[0];
+            check('scan: known version omits the unknown-version note', !!row3 && !/version is unknown/.test(row3.description), row3 && row3.description);
+            next();
+        });
+    });
+});
+
 (function run(i) {
     if (i >= steps.length) {
         console.log(failures === 0 ? '\ntest-plugin: ALL PASSED' : '\ntest-plugin: ' + failures + ' FAILURE(S)');
