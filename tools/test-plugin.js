@@ -639,6 +639,19 @@ steps.push(function (next) {
 });
 
 
+
+// ---- v2.1.1: Debian epoch / snap wrapper versions ----
+steps.push(function (next) {
+    check('normver: epoch + core extract', obj.normalizeCveVersion('1:2.3.4-3ubuntu1') === '2.3.4' && obj.normalizeCveVersion('22.04.0-1build1') === '22.04.0', [obj.normalizeCveVersion('1:2.3.4-3ubuntu1'), obj.normalizeCveVersion('22.04.0-1build1')]);
+    check('normver: snap wrapper is unknown', obj.normalizeCveVersion('1:1snap1-0ubuntu5') === '', obj.normalizeCveVersion('1:1snap1-0ubuntu5'));
+    check('normver: plain numbers untouched', obj.normalizeCveVersion('17') === '17' && obj.normalizeCveVersion('8u202') === '8', [obj.normalizeCveVersion('17'), obj.normalizeCveVersion('8u202')]);
+    var bounded = { kind: 'range', startInc: null, startExc: null, endInc: null, endExc: '2.0.0.20' };
+    check('defMatch: snap wrapper hits no historical range', obj.defMatches(bounded, '1:1snap1-0ubuntu5') === false);
+    check('defMatch: any-def still matches (age filter applies)', obj.defMatches({ kind: 'any' }, '1:1snap1-0ubuntu5') === true);
+    check('defMatch: real core compares', obj.defMatches({ kind: 'range', endInc: '22.04.5', startInc: '22.04' }, '1:22.04.0-1build1') === true && obj.defMatches({ kind: 'range', endExc: '22.04.0' }, '1:22.04.0-1build1') === false);
+    next();
+});
+
 (function run(i) {
     if (i >= steps.length) {
         console.log(failures === 0 ? '\ntest-plugin: ALL PASSED' : '\ntest-plugin: ' + failures + ' FAILURE(S)');

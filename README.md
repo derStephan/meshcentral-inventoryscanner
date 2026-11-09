@@ -301,6 +301,10 @@ another plugin's buttons, ours are left out (no duplicates).
 * **Coverage:** software is CVE-checked when a curated/custom mapping matches or the automatic evidence matcher
   proves a real NVD product; OEM drivers/utilities usually stay `not assessable` (they are patched via vendor
   channels, not NVD/MSRC). Every report states its CPE coverage percentage.
+* **Linux snap/DEB wrapper versions:** strings like '1:1snap1-0ubuntu5' contain no upstream version (the real
+  Firefox lives inside the snap), so such rows are treated as unknown-version and only carry
+  all-version, age-filtered findings. Ordinary DEB versions (epochs and '-1ubuntu2' suffixes)
+  are parsed down to their numeric core. For snap apps run 'snap list' on the box if you need the exact release.
 * **Offline devices** show their last collected state; check the inventory age before trusting a device row.
 * The toast notification is ephemeral — if no admin is logged in at scan time, read it in **My Server → Events**
   (event retention applies, default ~30 days).

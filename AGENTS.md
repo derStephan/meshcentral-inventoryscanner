@@ -150,7 +150,10 @@ UI-managed scanner settings in `<datapath>/plugins/inventoryscanner/scanner-sett
 `{ meshes:[{id,name}], cves:[{cve, severity, cvss, description, software, version,
 locations:[{meshId,name,devices:[hostnames]}], assessments:{meshId:rec|null}, assessment:rec|null,
 mixed:bool, anyFlagged:bool}], flaggedCount, totalCves, lastUpdate }`.
-**Unknown installed version (no DisplayVersion - hotfixes, add-ons):** `defMatches` asserts ONLY `kind:'any'` `assessment` is set only when
+**Unknown installed version:** version strings first pass `normalizeCveVersion`: Debian epochs stripped
+  (`1:2.3.4-3ubuntu1` -> `2.3.4`), numeric cores without distro decoration (`22.04.0-1build1` -> `22.04.0`),
+  snap/DEB wrapper strings that contain no program version (`1:1snap1-0ubuntu5`) -> `''`. An empty version
+  asserts ONLY `kind:'any'` `assessment` is set only when
 uniform across ALL affected locations; a fully unrated finding is `mixed:false, assessment:null`.
 
 **`buildOverallReport()` shape** (drives both report views):
@@ -289,7 +292,7 @@ npm test           # = tools/check.js && tools/test-plugin.js && tools/test-view
 
 - `tools/check.js`: `node --check` on the plugin, inline-script syntax/`{{`-hazard check, JSON validity of
   config files, and view-name↔render-name consistency. Must run anywhere (no dependencies).
-- `tools/test-plugin.js`: 152 behavioral assertions against the real module (mocked MeshCentral DB/webserver):
+- `tools/test-plugin.js`: 158 behavioral assertions against the real module (mocked MeshCentral DB/webserver):
   locations grouping & counting, manual-rating severity override, FP exclusion, host-name preference, coverage
   numbers, multi-mesh scan/`mixed` logic, all POST handlers incl. validation/rejections, routes, admin gating
   (401), CPE table add/delete, vulns CSV header/content, toolbar button injection (simulated browser DOM), remote CPE table apply/cache/fetch/settings, NVD download-log tailing, manual NVD update trigger + concurrency guard, unknown-version matching rules, winget updater (builder/parser/queue/routes), `longTimeout` chunking, restart-proof schedule delays,

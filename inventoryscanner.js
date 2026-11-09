@@ -17,7 +17,7 @@
  * NVD feed is downloaded.
  *
  * @author derStephan
- * @version 2.1.0
+ * @version 2.1.1
  *
  * Transparency: This plugin was created with the assistance of Qwen 3.6 27B and Qwen 3.8 Flash Next.
  * Security audit (2026-11-06) performed by NVIDIA Nemotron 3 550B A55B via opencode.
@@ -856,7 +856,7 @@ module.exports.inventoryscanner = function (parent) {
             if (sw == null) continue;
             var name = String(sw.name || sw.Name || sw.displayName || sw.DisplayName || '');
             var version = String(sw.version != null ? sw.version : (sw.Version != null ? sw.Version : ''));
-            var vm = version.trim().match(/^(?:0?v|v)?(\d+)(?:[._](\d+))?/);
+            var vm = String(obj.normalizeCveVersion(version) || version).trim().match(/^(?:0?v|v)?(\d+)(?:[._](\d+))?/);
             var key = null;
             if (name !== '' && vm != null) {
                 var pub = String(sw.publisher || sw.Publisher || '');
@@ -2184,8 +2184,33 @@ obj.loadNvdFromAllFiles = function () {
      * @param {string} version - The installed version.
      * @returns {boolean} True if the definition matches the version.
      */
+    /**
+     * @brief Extract a comparable version core from an inventory version string.
+     * Debian epochs ("1:1snap1-0ubuntu5") are stripped; a real numeric core is
+     * returned without distro decoration ("22.04.0-1build1" -> "22.04.0",
+     * "3.0~beta2-2" -> "3.0"). Wrapper versions that carry NO usable program
+     * version (snap builds such as "1:1snap1-0ubuntu5" where the real Firefox
+     * version lives inside the snap, not in dpkg) return '' - which routes the
+     * row through the unknown-version logic in defMatches (only all-version
+     * definitions, age-filtered) instead of comparing "parseInt('1:1snap1...')"
+     * (=1) against fifteen-year-old ranges.
+     * @param {string} v - Raw installed version.
+     * @returns {string} numeric core, possibly empty = unknown.
+     */
+    obj.normalizeCveVersion = function (v) {
+        var s = String(v == null ? '' : v).trim();
+        if (s === '') return '';
+        if (/^\d+:/.test(s)) { s = s.replace(/^\d+:/, ''); }
+        var hasDot = /\d\.\d/.test(s);
+        if (!hasDot && /(snap|ubuntu|deb\d|dfsg|ds|build|repack)/i.test(s) && /\d+[a-z]/i.test(s)) { return ''; }
+        var m = s.match(/^\d+(?:\.\d+)*/);
+        return (m ? m[0] : '');
+    };
+
+
     obj.defMatches = function (def, version) {
         if (version == null) version = '';
+        version = obj.normalizeCveVersion(version);
         if (version === '') {
             // Unknown installed version (entries without DisplayVersion): bounded definitions
             // cannot be asserted. An empty version sorts below every upper bound, so without
