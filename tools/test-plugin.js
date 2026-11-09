@@ -737,6 +737,17 @@ steps.push(function (next) {
     next();
 });
 
+
+// ---- v2.1.8: every script statement is single-line (agent runs PowerShell line-interactive) ----
+steps.push(function (next) {
+    var sc = obj.wgBuildScript({ ignorePackages: [{ id: 'A.B' }], pinSync: true }, false);
+    var openers = sc.split(String.fromCharCode(10)).filter(function (l) { return /[({]s*$/.test(l) && !/^\s*\$/.test(l); });
+    check('script: no line opens an unfinished block', openers.length === 0, openers.slice(0, 2));
+    check('script: app-paths lookup present', sc.indexOf('App Paths') >= 0 && sc.indexOf('(default)') >= 0);
+    check('script: transcript closes on early exit', sc.indexOf('Stop-Transcript -ErrorAction') >= 0 && sc.indexOf('false}') >= 0);
+    next();
+});
+
 (function run(i) {
     if (i >= steps.length) {
         console.log(failures === 0 ? '\ntest-plugin: ALL PASSED' : '\ntest-plugin: ' + failures + ' FAILURE(S)');

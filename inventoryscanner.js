@@ -17,7 +17,7 @@
  * NVD feed is downloaded.
  *
  * @author derStephan
- * @version 2.1.7
+ * @version 2.1.8
  *
  * Transparency: This plugin was created with the assistance of Qwen 3.6 27B and Qwen 3.8 Flash Next.
  * Security audit (2026-11-06) performed by NVIDIA Nemotron 3 550B A55B via opencode.
@@ -585,12 +585,15 @@ module.exports.inventoryscanner = function (parent) {
         return out;
     };
 
-    /**
-     * @brief Build the per-device PowerShell script (see header comment).
-     * Only ids matching WINGET_ID_RE are embedded, quote-escaped as a second
-     * layer; an unusable id is dropped rather than interpolated blindly.
-     * @param {object} wcfg - wingetConfig() result.
-     * @returns {string} PowerShell script.
+        /**
+     * @brief Build the one-shot PowerShell script (runs as SYSTEM over the
+     * agent's runcommands channel). CRITICAL: the agent feeds PowerShell in
+     * line-interactive mode (each stdin line is executed as its own
+     * statement; PSReadLine errors on continuation lines), so EVERY statement
+     * MUST be a single self-contained line - no multi-line blocks.
+     * @param {object} wcfg - The winget config section.
+     * @param {boolean} [dry] - Dry run: list only, install/pin nothing.
+     * @returns {string} The script text.
      */
     obj.wgBuildScript = function (wcfg, dry) {
         var ids = [];
@@ -602,6 +605,9 @@ module.exports.inventoryscanner = function (parent) {
         var pinLines = (!dry && wcfg.pinSync && ids.length > 0) ? [
             "foreach ($pn in $invIgnore) { try { $null = (& $wg pin add --id $pn --installed --exact --accept-source-agreements --disable-interactivity 2>&1) } catch { } }"
         ] : [];
+        var dryGuard = dry
+            ? "if ($invDry) { $results += @{ id = $p.id; name = $p.name; from = $p.from; to = $p.to; state = 'dry-run' }; continue };"
+            : "";
         return [
             "$ProgressPreference = 'SilentlyContinue'",
             "$invDry = " + (dry ? '$true' : '$false'),
@@ -611,38 +617,21 @@ module.exports.inventoryscanner = function (parent) {
             "if (Test-Path $invT) { try { if ((Get-Item $invT).Length -gt 5MB) { Move-Item $invT ($invT + '.old') -Force } } catch { } }",
             "try { '' | Out-File -FilePath $invT -Append -Encoding utf8 -ErrorAction Stop } catch { $invT = Join-Path $env:ProgramData 'invscanner-winget.log'; try { '' | Out-File -FilePath $invT -Append -Encoding utf8 -ErrorAction Stop } catch { $invT = Join-Path $env:TEMP 'invscanner-winget.log' } }",
             "try { Start-Transcript -Path $invT -Append | Out-Null } catch { }",
-            '$wg = $null',
-            'foreach ($wc in @((Get-Command winget -ErrorAction SilentlyContinue), (Get-ChildItem ($env:ProgramFiles + "\\WindowsApps\\Microsoft.DesktopAppInstaller_*\\winget.exe") -ErrorAction SilentlyContinue | Select-Object -First 1))) { if ($wc -ne $null -and $wc.FullName) { $wg = $wc.FullName; break } }',
-            'if ($wg -eq $null) { Write-Output \'' + obj.WINGET_MARKER + '{"winget":false}\'; exit }',
-            '$invIgnore = @(' + psList + ')',
+            "$wg = $null",
+            "$invAP = $null; try { $invAP = (Get-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\winget.exe' -ErrorAction Stop).'(default)' } catch { }; if ($invAP -and (Test-Path $invAP)) { $wg = $invAP }",
+            "if (-not $wg) { foreach ($wc in @((Get-Command winget -ErrorAction SilentlyContinue), (Get-ChildItem ($env:ProgramFiles + \"\\WindowsApps\\Microsoft.DesktopAppInstaller_*\\winget.exe\") -ErrorAction SilentlyContinue | Select-Object -First 1))) { if ($wc -ne $null -and $wc.FullName) { $wg = $wc.FullName; break } } }",
+            "if ($wg -eq $null) { Write-Output '" + obj.WINGET_MARKER + "{\"winget\":false}'; Stop-Transcript -ErrorAction SilentlyContinue; exit }",
+            "$invIgnore = @(" + psList + ")",
             "$raw = ''",
-            'try { $raw = ((& $wg list --upgrade-available --accept-source-agreements --disable-interactivity) 2>&1) -join [Environment]::NewLine } catch { }',
-            '$rows = @()',
-            'foreach ($line in ($raw -split "`r?`n")) {',
-            "  if ($line -match '^(.+?)\\s{2,}([A-Za-z0-9._+-]+\\.[A-Za-z0-9._+-]+)\\s{2,}(\\S+)\\s{2,}(\\S+)\\s{2,}(\\S+)\\s*$') {",
-            '    $rows += [pscustomobject]@{ name = $matches[1].Trim(); id = $matches[2]; from = $matches[3]; to = $matches[4] }',
-            '  }',
-            '}',
-            '$results = @()',
-            'foreach ($p in $rows) {',
-            '  $skip = $false',
-            '  foreach ($ig in $invIgnore) { if ($p.id -ieq $ig) { $skip = $true; break } }',
-            "  if ($skip) { $results += @{ id = $p.id; name = $p.name; from = $p.from; to = $p.to; state = 'skipped-ignored' }; continue }",
-            "  if ($p.to -ieq 'Unknown' -or $p.to -eq $p.from) { $results += @{ id = $p.id; name = $p.name; from = $p.from; to = $p.to; state = 'skipped-noversion' }; continue }",
-            "  if ($invDry) { $results += @{ id = $p.id; name = $p.name; from = $p.from; to = $p.to; state = 'dry-run' }; continue }",
-            '  $o = (& $wg upgrade --id $p.id --exact --silent --accept-package-agreements --accept-source-agreements --disable-interactivity) 2>&1',
-            '  $code = $LASTEXITCODE',
-            "  $tail = (($o | Select-Object -Last 3) -join ' ')",
-            '  if ($tail -isnot [string]) { $tail = [string]$tail }',
-            '  if ($tail.Length -gt 400) { $tail = $tail.Substring(0,400) }',
-            "  $st = 'failed'",
-            "  if ($code -eq 0) { $st = 'ok' }",
-            '  $results += @{ id = $p.id; name = $p.name; from = $p.from; to = $p.to; state = $st; exit = $code; log = $tail }',
-            '}'
+            "try { $raw = ((& $wg list --upgrade-available --accept-source-agreements --disable-interactivity) 2>&1) -join [Environment]::NewLine } catch { }",
+            "$rows = @()",
+            "foreach ($line in ($raw -split '[\\r\\n]+')) { if ($line -match '^(.+?)\\s{2,}([A-Za-z0-9._+-]+\\.[A-Za-z0-9._+-]+)\\s{2,}(\\S+)\\s{2,}(\\S+)\\s{2,}(\\S+)\\s*$') { $rows += [pscustomobject]@{ name = $matches[1].Trim(); id = $matches[2]; from = $matches[3]; to = $matches[4] } } }",
+            "$results = @()",
+            "foreach ($p in $rows) { $skip = $false; foreach ($ig in $invIgnore) { if ($p.id -ieq $ig) { $skip = $true; break } }; if ($skip) { $results += @{ id = $p.id; name = $p.name; from = $p.from; to = $p.to; state = 'skipped-ignored' }; continue }; if ($p.to -ieq 'Unknown' -or $p.to -eq $p.from) { $results += @{ id = $p.id; name = $p.name; from = $p.from; to = $p.to; state = 'skipped-noversion' }; continue }; " + dryGuard + " $o = (& $wg upgrade --id $p.id --exact --silent --accept-package-agreements --accept-source-agreements --disable-interactivity) 2>&1; $code = $LASTEXITCODE; $tail = (($o | Select-Object -Last 3) -join ' '); if ($tail -isnot [string]) { $tail = [string]$tail }; if ($tail.Length -gt 400) { $tail = $tail.Substring(0,400) }; $st = 'failed'; if ($code -eq 0) { $st = 'ok' }; $results += @{ id = $p.id; name = $p.name; from = $p.from; to = $p.to; state = $st; exit = $code; log = $tail } }"
         ].concat(pinLines, [
-            'if ($null -eq $results) { $results = @() }',
-            '@{ winget = $true; dry = $invDry; results = @($results) } | ConvertTo-Json -Compress -Depth 5 | ForEach-Object { Write-Output (\'' + obj.WINGET_MARKER + '\' + $_) }',
-            "try { Stop-Transcript | Out-Null } catch { }"
+            "if ($null -eq $results) { $results = @() }",
+            "@{ winget = $true; dry = $invDry; results = @($results) } | ConvertTo-Json -Compress -Depth 5 | ForEach-Object { Write-Output ('" + obj.WINGET_MARKER + "' + $_) }",
+            "Stop-Transcript -ErrorAction SilentlyContinue"
         ]).join(String.fromCharCode(10));
     };
 

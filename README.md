@@ -116,8 +116,8 @@ runs works with the switch off - only actual upgrades require it.
   the per-device result table shows which package went from which version to which - or why it failed
   (exit code + last installer output).
 * **Requirements on the client**: Windows 10 1809+/11 with winget available (App Installer). Scripts run
-  as SYSTEM, where `winget` is not in the PATH - the plugin locates it under
-  `C:\Program Files\WindowsApps\Microsoft.DesktopAppInstaller_*\winget.exe` as a fallback. Devices
+  as SYSTEM, where `winget` is neither in the PATH nor findable in the (non-enumerable) WindowsApps
+  folder - the plugin resolves it through the machine-wide App Paths registry entry instead. Devices
   without it are reported as such per run - nothing else about the batch changes.
 
 ## Requirements
