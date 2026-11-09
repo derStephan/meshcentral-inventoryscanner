@@ -17,7 +17,7 @@
  * NVD feed is downloaded.
  *
  * @author derStephan
- * @version 2.1.2
+ * @version 2.1.3
  *
  * Transparency: This plugin was created with the assistance of Qwen 3.6 27B and Qwen 3.8 Flash Next.
  * Security audit (2026-11-06) performed by NVIDIA Nemotron 3 550B A55B via opencode.
@@ -667,6 +667,20 @@ module.exports.inventoryscanner = function (parent) {
     };
 
     /**
+     * @brief winget only exists on Windows. A node counts as Windows once the agent
+     *   reported an OS description; nodes that never reported stay visible (unknown OS -
+     *   excluding them would hide fresh installs).
+     * @param {object} node - The node record.
+     * @returns {boolean} true unless the node is provably non-Windows.
+     */
+    obj.wgIsWindowsNode = function (node) {
+        if (node == null) return false;
+        var o = String(node.osdesc || '');
+        if (o === '') return true;
+        return /windows/i.test(o);
+    };
+
+    /**
      * @brief Resolve the device list for a batch.
      * @param {boolean} onlyMeshes - restrict to the configured meshes (scheduled runs).
      * @param {function} cb - (nodeids)
@@ -680,6 +694,7 @@ module.exports.inventoryscanner = function (parent) {
                 for (var i = 0; i < nodes.length; i++) {
                     var n = nodes[i];
                     if ((n == null) || (n._id == null) || (n.deleted != null)) continue;
+                    if (!obj.wgIsWindowsNode(n)) continue;
                     if (onlyMeshes) {
                         if (wcfg.meshes == null) continue; // scheduled: require explicit group opt-in
                         if (wcfg.meshes.indexOf(n.meshid) < 0) continue;
@@ -1130,6 +1145,7 @@ module.exports.inventoryscanner = function (parent) {
                     for (var i = 0; i < nodes.length; i++) {
                         var n = nodes[i];
                         if ((n == null) || (n._id == null) || (n.deleted != null)) continue;
+                        if (!obj.wgIsWindowsNode(n)) continue;
                         var rec = obj.wgResults[n._id];
                         var sum = null;
                         if (rec != null) {
@@ -1143,6 +1159,7 @@ module.exports.inventoryscanner = function (parent) {
                         }
                         devices.push({
                             id: n._id, host: obj.getHostName ? obj.getHostName(n) : (n.rname || n.name || n._id),
+                            given: (typeof n.name === 'string' && n.name.trim() !== '') ? n.name.trim() : '',
                             group: meshNames[n.meshid] || n.meshid || '',
                             online: (ws != null && ws.wsagents != null && ws.wsagents[n._id] != null),
                             excluded: wcfg.excludeNodes.indexOf(n._id) >= 0,
@@ -1151,7 +1168,7 @@ module.exports.inventoryscanner = function (parent) {
                         });
                     }
                 }
-                devices.sort(function (a, b) { return (a.group === b.group) ? String(a.host).localeCompare(String(b.host)) : String(a.group).localeCompare(String(b.group)); });
+                devices.sort(function (a, b) { return (a.group === b.group) ? String(a.given || a.host).localeCompare(String(b.given || b.host)) : String(a.group).localeCompare(String(b.group)); });
                 send({
                     devices: devices, running: obj.wgBatchRunning, active: obj.wgActive, queued: obj.wgQueue.length,
                     config: { enabled: wcfg.enabled, scheduling: obj.WINGET_SCHEDULING_DESC, updateMeshes: wcfg.meshes || [], excludeNodes: wcfg.excludeNodes, ignorePackages: wcfg.ignorePackages, pinSync: wcfg.pinSync }

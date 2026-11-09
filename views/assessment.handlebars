@@ -336,9 +336,10 @@
                 <button id="wgDryOneBtn">Dry run this device</button>
                 <button id="wgRunOneBtn" class="green">Update this device now</button>
             </div>
-            <div class="hint">The list holds every device, sorted by location and name. Excluded devices stay out of every
-            automatic and manual batch; "Update this device now" intentionally overrides an exclusion so you can test
-            a single machine. Changes become effective when you press "Save Configuration".</div>
+            <div class="hint">The list holds every Windows device (sorted by location, then given name; phones and Linux
+            machines are hidden, devices that never reported an OS stay listed until their OS is known). Excluded devices
+            stay out of every automatic and manual batch; "Update this device now" intentionally overrides an
+            exclusion so you can test a single machine. Changes take effect after "Save Configuration".</div>
             <div class="table-container"><table>
                 <thead><tr><th>Excluded devices</th><th style="width:220px;">Last automatic run</th></tr></thead>
                 <tbody id="wgExclBody"><tr><td colspan="2" style="color:#888">none</td></tr></tbody>
@@ -508,7 +509,8 @@
             var opts = '<option value="">- all devices stay in scope -</option>';
             for (var i = 0; i < devs.length; i++) {
                 var d = devs[i];
-                var label = (d.group ? d.group + ' - ' : '') + d.host + (d.excluded ? ' (excluded)' : (d.online ? '' : ' (offline)'));
+                var shown = d.given || d.host;
+                var label = (d.group ? d.group + ' - ' : '') + shown + (d.given && d.host && d.given !== d.host ? ' [' + d.host + ']' : '') + (d.excluded ? ' (excluded)' : (d.online ? '' : ' (offline)'));
                 opts += '<option value="' + esc(d.id) + '"' + (d.id === cur ? ' selected' : '') + '>' + esc(label) + '</option>';
             }
             if (sel) { sel.innerHTML = opts; }
@@ -533,7 +535,7 @@
                     else if (d2.last.dry) { last += (d2.last.would || 0) + ' would update, ' + (d2.last.skipped || 0) + ' skipped'; }
                     else { last += (d2.last.ok || 0) + ' ok, ' + (d2.last.skipped || 0) + ' skipped, ' + (d2.last.failed || 0) + ' failed'; }
                 }
-                html += '<tr><td>' + esc(d2.host) + '</td><td>' + esc(d2.group) + '</td>';
+                html += '<tr><td>' + esc(d2.given || d2.host) + '</td><td>' + esc(d2.group) + '</td>';
                 html += '<td>' + (d2.online ? 'yes' : '<span style="color:#a33">offline</span>') + '</td>';
                 html += '<td>' + (d2.excluded ? 'yes' : '') + '</td>';
                 html += '<td style="font-size:11px">' + last + '</td></tr>';

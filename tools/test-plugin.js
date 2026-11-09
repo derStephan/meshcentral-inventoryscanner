@@ -16,7 +16,7 @@ const factory = require(path.join(__dirname, '..', 'inventoryscanner.js')).inven
 // ---------- fixtures ----------
 const nodes = [
     { _id: 'node//d1', meshid: 'mesh//grp1', rname: 'host1', name: 'Given1', osdesc: 'Windows 10' },
-    { _id: 'node//d2', meshid: 'mesh//grp1', rname: 'host2', name: 'Given2', osdesc: 'Ubuntu 22.04' },
+    { _id: 'node//d2', meshid: 'mesh//grp1', rname: 'host2', name: 'Given2', osdesc: 'Windows 11' },
     { _id: 'node//d3', meshid: 'mesh//grp2', rname: 'host3', name: 'Given3', osdesc: 'Ubuntu 22.04' },
     { _id: 'node//d4', meshid: 'mesh//grp2', name: 'Given4Only', osdesc: 'Windows 10' }
 ];
@@ -666,6 +666,20 @@ steps.push(function (next) {
     }), user);
 });
 
+
+// ---- v2.1.3: non-Windows nodes hidden from the updater ----
+steps.push(function (next) {
+    nodes.push({ _id: 'node//iphone1', meshid: 'mesh//grp1', rname: 'iph1', name: 'Phone1', osdesc: 'iOS 17.5' });
+    nodes.push({ _id: 'node//deb12', meshid: 'mesh//grp1', rname: 'debby', name: 'DebServer', osdesc: 'Debian GNU/Linux 12' });
+    nodes.push({ _id: 'node//newbi', meshid: 'mesh//grp1', rname: 'fresh', name: 'FreshBox' });
+    obj.handleAdminPostReq({ body: { action: 'wg_status' } }, mockRes(function (d) {
+        var ids = (d.devices || []).map(function (x) { return x.id; });
+        check('status: iPhone and Linux hidden, unknown-OS kept', ids.indexOf('node//iphone1') < 0 && ids.indexOf('node//deb12') < 0 && ids.indexOf('node//newbi') >= 0, ids);
+        nodes.splice(nodes.length - 3, 3);
+        next();
+    }), user);
+});
+
 (function run(i) {
     if (i >= steps.length) {
         console.log(failures === 0 ? '\ntest-plugin: ALL PASSED' : '\ntest-plugin: ' + failures + ' FAILURE(S)');
@@ -734,8 +748,7 @@ steps.push(function (next) {
 
             post({ action: 'wg_status' }, function (st) {
                 var d1 = st.devices.filter(function (x) { return x.id === 'node//d1'; })[0];
-                var d3 = st.devices.filter(function (x) { return x.id === 'node//d3'; })[0];
-                check('wg status: device table joined', st.devices.length === 4 && d1.last.ok === 1 && d3.excluded === true, st.devices);
+                check('wg status: device table joined (windows only, given first)', st.devices.length === 3 && d1.last.ok === 1 && d1.given === 'Given1' && st.config.excludeNodes.indexOf('node//d3') >= 0, st.devices);
                 obj3.wgResults['node//d1'] = { time: new Date().toISOString(), winget: true, dry: true, results: [{ id: 'Foo.Bar', name: 'Foo', from: '1', to: '2', state: 'dry-run' }] };
                 post({ action: 'wg_status' }, function (st2) {
                     var dd = st2.devices.filter(function (x) { return x.id === 'node//d1'; })[0];
