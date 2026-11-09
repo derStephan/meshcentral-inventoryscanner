@@ -106,6 +106,10 @@ runs works with the switch off - only actual upgrades require it.
   *Exclude* keeps a device out of every automatic and manual batch (kiosk PCs, presentation laptops),
   *Include again* puts it back, *Update this device now* patches exactly that one machine.
   A dry run shows what would happen first, without touching anything.
+* **Per-device actions**: every row of the device table carries its own *Dry run*, *Update now* and
+  *Exclude/Include* buttons - no separate selector needed.
+* **Device events**: finished runs (also dry runs, timeouts and offline skips) appear on the
+  device's own events page in MeshCentral, visible to everyone with rights on that machine.
 * **Scheduling without intervals**: a device is updated as soon as it connects on a calendar day it has
   not been updated on yet - and at the latest 24 h after its previous run if the connection never dropped.
   Batches run two devices in parallel; offline devices are simply picked up at the next connect.
@@ -164,10 +168,17 @@ this repository's config.json and push - every server checks that file and offer
 (the install always pulls the current downloadUrl ZIP). Git tags are not used; a "downgrade to a
 specific version" picker is deliberately not offered.
 
-One **Upgrade** click is enough: MeshCentral unpacks the new files and the plugin notices
-the version change on disk during its startup hook, then hot-swaps the fresh instance into the
-plugin loader (require-cache bust) - no server restart needed. Reopen the plugin tab once so the
-browser picks up the new UI; an already-open page keeps running its old inline script.
+After **Upgrade**, MeshCentral unpacks the new files and calls the plugin's startup hook; the
+plugin then detects the newer manifest on disk and hot-swaps the fresh instance into the plugin
+loader (require-cache bust) - normally one click, no server restart. Two honest caveats:
+
+* The Plugins page shows **no progress** while downloading/unpacking (that is MeshCentral's own
+  UI; large ZIPs on slow links can take minutes) and the table may still print the old version
+  until the page is refreshed. The plugin's own log (`winget-update.log`) shows
+  `upgrade detected ... reloading without server restart` and `hot reload complete` when done.
+* If the running MeshCentral never calls the startup hook again (older loaders), the new code
+  activates with the next server restart instead. Deliberately, the plugin does NOT poll for
+  upgrades - checking the disk on a timer is not a plugin's job.
 
 ### Install & startup timings (what to expect)
 
@@ -313,10 +324,12 @@ another plugin's buttons, ours are left out (no duplicates).
 * **Coverage:** software is CVE-checked when a curated/custom mapping matches or the automatic evidence matcher
   proves a real NVD product; OEM drivers/utilities usually stay `not assessable` (they are patched via vendor
   channels, not NVD/MSRC). Every report states its CPE coverage percentage.
-* **Linux snap/DEB wrapper versions:** strings like '1:1snap1-0ubuntu5' contain no upstream version (the real
-  Firefox lives inside the snap), so such rows are treated as unknown-version and only carry
-  all-version, age-filtered findings. Ordinary DEB versions (epochs and '-1ubuntu2' suffixes)
-  are parsed down to their numeric core. For snap apps run 'snap list' on the box if you need the exact release.
+* **Linux snap/DEB versions:** Debian and Ubuntu backport security fixes into the SAME upstream
+  version (e.g. ghostscript '10.02.1~dfsg1-0ubuntu7.10'), so the NVD's upstream ranges would
+  report already-fixed CVEs. Any version carrying distro decoration (ubuntu, dfsg, +exp, bzr,
+  ~, debN, snap wrappers) is therefore treated as unknown: no bounded-range findings are
+  reported for it, and the row explains 'version not assessable'. For snap apps, 'snap list'
+  on the device shows the real upstream release.
 * **Offline devices** show their last collected state; check the inventory age before trusting a device row.
 * **A batch or dry run that never completes**: check the client transcript first - it is written to the
   agent folder, or ProgramData/TEMP if that path is locked. The plugin also consumes answers that

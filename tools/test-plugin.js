@@ -642,13 +642,13 @@ steps.push(function (next) {
 
 // ---- v2.1.1: Debian epoch / snap wrapper versions ----
 steps.push(function (next) {
-    check('normver: epoch + core extract', obj.normalizeCveVersion('1:2.3.4-3ubuntu1') === '2.3.4' && obj.normalizeCveVersion('22.04.0-1build1') === '22.04.0', [obj.normalizeCveVersion('1:2.3.4-3ubuntu1'), obj.normalizeCveVersion('22.04.0-1build1')]);
+    check('normver: epoch + core extract, distro patch levels unknown', obj.normalizeCveVersion('1:2.3.4-1') === '2.3.4' && obj.normalizeCveVersion('22.04.0-1build2') === '22.04.0' && obj.normalizeCveVersion('2.7.7ubuntu5.3') === '' && obj.normalizeCveVersion('10.02.1~dfsg1-0ubuntu7.10') === '', [obj.normalizeCveVersion('1:2.3.4-1'), obj.normalizeCveVersion('2.7.7ubuntu5.3')]);
     check('normver: snap wrapper is unknown', obj.normalizeCveVersion('1:1snap1-0ubuntu5') === '', obj.normalizeCveVersion('1:1snap1-0ubuntu5'));
     check('normver: plain numbers untouched', obj.normalizeCveVersion('17') === '17' && obj.normalizeCveVersion('8u202') === '8', [obj.normalizeCveVersion('17'), obj.normalizeCveVersion('8u202')]);
     var bounded = { kind: 'range', startInc: null, startExc: null, endInc: null, endExc: '2.0.0.20' };
     check('defMatch: snap wrapper hits no historical range', obj.defMatches(bounded, '1:1snap1-0ubuntu5') === false);
     check('defMatch: any-def still matches (age filter applies)', obj.defMatches({ kind: 'any' }, '1:1snap1-0ubuntu5') === true);
-    check('defMatch: real core compares', obj.defMatches({ kind: 'range', endInc: '22.04.5', startInc: '22.04' }, '1:22.04.0-1build1') === true && obj.defMatches({ kind: 'range', endExc: '22.04.0' }, '1:22.04.0-1build1') === false);
+    check('defMatch: real core compares', obj.defMatches({ kind: 'range', endInc: '22.04.5', startInc: '22.04' }, '1:22.04.0-1') === true && obj.defMatches({ kind: 'range', endExc: '22.04.0' }, '1:22.04.0-1') === false);
     next();
 });
 
@@ -776,6 +776,30 @@ steps.push(function (next) {
         check('transport: decodes back to the script', decoded.indexOf(obj.WINGET_MARKER) >= 0 && decoded.indexOf('$invDry = $true') >= 0 && decoded === script, decoded.length + ':' + script.length);
     }
     check('transport: fits the pipe (no cmd ceiling involved)', line.length > 100 && line.length < 60000, line.length);
+    next();
+});
+
+
+
+// ---- v2.5.0: device events, pluginadmin url, per-row actions ----
+steps.push(function (next) {
+    var evts = [];
+    var realDispatch = meshServer.DispatchEvent;
+    meshServer.DispatchEvent = function (ids, src, ev) { evts.push({ ids: ids, ev: ev }); };
+    var got = 0;
+    var realGet = obj.db.Get;
+    obj.db.Get = function (id, cb) { got++; return realGet.call(obj.db, id, function (e, docs) { cb(e, [{ _id: id, meshid: 'mesh//grp1' }]); }); };
+    obj.wgRaiseNodeEvent('node//evt1', 'Winget updater: 1 package(s) updated, 0 failed');
+    obj.db.Get = realGet;
+    meshServer.DispatchEvent = realDispatch;
+    check('events: node event dispatched to node+mesh targets', evts.length === 1 && evts[0].ids.indexOf('node//evt1') >= 0 && evts[0].ev.etype === 'node' && evts[0].ev.visibility === 'nodes', evts);
+    var upd = [];
+    var realGP = obj.db.getPlugins, realUP = obj.db.updatePlugin;
+    obj.db.getPlugins = function (cb) { cb(null, [{ _id: 'plugin//p1', shortName: 'inventoryscanner', url: '/?viewmode=43' }]); };
+    obj.db.updatePlugin = function (id, doc, cb) { upd.push([id, doc]); if (cb) cb(); };
+    obj.fixOwnPluginUrl();
+    obj.db.getPlugins = realGP; obj.db.updatePlugin = realUP;
+    check('plugin list: configure url pointed at the admin panel', upd.length === 1 && upd[0][1].url.indexOf('/pluginadmin.ashx?pin=inventoryscanner') === 0, upd);
     next();
 });
 

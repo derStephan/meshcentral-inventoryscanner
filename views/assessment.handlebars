@@ -329,28 +329,15 @@
             <div id="wgMsg"></div>
 
             <h3>Devices</h3>
-            <div class="controls">
-                <select id="wgDevSelect" style="min-width:340px;"><option value="">- all devices stay in scope -</option></select>
-                <button id="wgExclAdd">Exclude</button>
-                <button id="wgExclRem">Include again</button>
-                <button id="wgDryOneBtn">Dry run this device</button>
-                <button id="wgRunOneBtn" class="green">Update this device now</button>
-            </div>
-            <div class="hint">The list holds every Windows device (sorted by location, then given name; phones and Linux
-            machines are hidden, devices that never reported an OS stay listed until their OS is known). Excluded devices
-            stay out of every automatic and manual batch; "Update this device now" intentionally overrides an
-            exclusion so you can test a single machine. Changes take effect after "Save Configuration".</div>
+            <div class="hint">Every Windows device with its winget actions. Excluded machines stay out of all
+            automatic batches; "Update now" on a row intentionally still works for them (it targets one device).
+            Dry run shows what would happen without touching the machine.</div>
             <div class="table-container"><table>
-                <thead><tr><th>Excluded devices</th><th style="width:220px;">Last automatic run</th></tr></thead>
-                <tbody id="wgExclBody"><tr><td colspan="2" style="color:#888">none</td></tr></tbody>
-            </table></div>
-            <h4>Last results per device</h4>
-            <div class="table-container"><table>
-                <thead><tr><th>Device</th><th>Group</th><th style="width:70px;">Online</th><th style="width:90px;">Excluded</th><th style="width:280px;">Last run</th></tr></thead>
-                <tbody id="wgDevBody"><tr><td colspan="5" style="color:#888">Loading...</td></tr></tbody>
+                <thead><tr><th>Device</th><th>Group</th><th style="width:70px;">Online</th><th style="width:90px;">Excluded</th><th style="width:250px;">Last run</th><th style="width:270px;">Actions</th></tr></thead>
+                <tbody id="wgDevBody"><tr><td colspan="6" style="color:#888">Loading...</td></tr></tbody>
             </table></div>
 
-            <h3>Update log</h3>
+            <h3>Update log</h3>            <h3>Update log</h3>
             <div><button id="refreshWgLogBtn" class="small">Refresh log</button> <span id="wgLogInfo" class="hint"></span></div>
             <pre id="wgLog" style="max-height:260px;overflow:auto;background:#0f1720;color:#cfe3f5;padding:8px;border-radius:6px;font-size:11px;margin-top:6px;white-space:pre-wrap;">(not loaded yet)</pre>
         </div>
@@ -516,26 +503,8 @@
         function renderWgDevices() {
             if (!wgApp.status) { return; }
             var devs = wgApp.status.devices || [];
-            var sel = $('wgDevSelect');
-            var cur = sel ? sel.value : '';
-            var opts = '<option value="">- all devices stay in scope -</option>';
-            for (var i = 0; i < devs.length; i++) {
-                var d = devs[i];
-                var shown = d.given || d.host;
-                var label = (d.group ? d.group + ' - ' : '') + shown + (d.given && d.host && d.given !== d.host ? ' [' + d.host + ']' : '') + (d.excluded ? ' (excluded)' : (d.online ? '' : ' (offline)'));
-                opts += '<option value="' + esc(d.id) + '"' + (d.id === cur ? ' selected' : '') + '>' + esc(label) + '</option>';
-            }
-            if (sel) { sel.innerHTML = opts; }
-            if (devs.length === 0) { showMsg('wgMsg', 'The server reported no devices (check the update log below).', false); }
-            var exl = (wgApp.cfg && wgApp.cfg.config.excludeNodes) || [];
-            var ehtml = '';
-            for (var e = 0; e < exl.length; e++) {
-                var dd = null;
-                for (var k = 0; k < devs.length; k++) { if (devs[k].id === exl[e]) { dd = devs[k]; break; } }
-                ehtml += '<tr><td>' + esc(dd ? ((dd.group ? dd.group + ' - ' : '') + dd.host) : exl[e]) + '</td><td>' + esc(dd && dd.last ? fmtLocal(dd.last.time) : 'never') + '</td></tr>';
-            }
-            if (ehtml === '') { ehtml = '<tr><td colspan="2" style="color:#888">none - every device is in scope</td></tr>'; }
-            $('wgExclBody').innerHTML = ehtml;
+            if (devs.length === 0) { showMsg('wgMsg', 'The server reported no Windows devices (check the update log below).', false); }
+            var exl = ((wgApp.cfg && wgApp.cfg.config.excludeNodes) || []);
             var html = '';
             for (var i2 = 0; i2 < devs.length; i2++) {
                 var d2 = devs[i2];
@@ -551,56 +520,52 @@
                 html += '<tr><td>' + esc(d2.given || d2.host) + '</td><td>' + esc(d2.group) + '</td>';
                 html += '<td>' + (d2.online ? 'yes' : '<span style="color:#a33">offline</span>') + '</td>';
                 html += '<td>' + (d2.excluded ? 'yes' : '') + '</td>';
-                html += '<td style="font-size:11px">' + last + '</td></tr>';
+                html += '<td style="font-size:11px">' + last + '</td>';
+                html += '<td style="white-space:nowrap">';
+                html += '<button class="small" data-wgact="dry" data-wgid="' + esc(d2.id) + '">Dry run</button> ';
+                html += '<button class="small green" data-wgact="run" data-wgid="' + esc(d2.id) + '">Update now</button> ';
+                html += '<button class="small' + (d2.excluded ? '' : ' red') + '" data-wgact="' + (d2.excluded ? 'incl' : 'excl') + '" data-wgid="' + esc(d2.id) + '">' + (d2.excluded ? 'Include' : 'Exclude') + '</button>';
+                html += '</td></tr>';
             }
-            if (html === '') { html = '<tr><td colspan="5" style="color:#888">No devices.</td></tr>'; }
+            if (html === '') { html = '<tr><td colspan="6" style="color:#888">No devices.</td></tr>'; }
             $('wgDevBody').innerHTML = html;
         }
 
-        function wgSetExcluded(list) {
+        function wgToggleExclude(id, wantExcluded) {
             if (!wgApp.cfg) { wgApp.cfg = { config: {} }; }
-            wgApp.cfg.config.excludeNodes = list;
+            var l = (((wgApp.cfg && wgApp.cfg.config.excludeNodes) || [])).slice();
+            var at = l.indexOf(id);
+            if (wantExcluded && at < 0) { l.push(id); }
+            if (!wantExcluded && at >= 0) { l.splice(at, 1); }
+            wgApp.cfg.config.excludeNodes = l;
+            var s = wgApp.status && wgApp.status.devices;
+            if (s) { for (var q = 0; q < s.length; q++) { if (s[q].id === id) { s[q].excluded = wantExcluded; } } }
             renderWgDevices();
             showMsg('wgMsg', 'Exclusion changed - press "Save Configuration" to persist.', true);
         }
 
-        function wgSelectedDevice() {
-            var sel = $('wgDevSelect');
-            if (!sel || sel.value === '') { showMsg('wgMsg', 'Pick a device in the list first.', false); return null; }
-            return sel.value;
-        }
-
-        function wgRunOne(dry) {
-            var id = wgSelectedDevice();
-            if (id == null) { return; }
+        function wgRunOne(id, dry) {
+            if (!id) { return; }
             if (!dry && !confirm('Run winget updates on this ONE device now? Other devices are not touched.')) { return; }
             post('wg_run', { nodeIds: id, dry: dry ? 'true' : 'false' }).then(function (d) {
                 if (d.error) { showMsg('wgMsg', d.error, false); return; }
                 if (d.busy) { showMsg('wgMsg', 'Another batch is still running.', false); return; }
-                showMsg('wgMsg', dry ? 'Dry run started for the selected device - results appear in the table and the log.' : 'Update started for the selected device only.', true);
+                showMsg('wgMsg', dry ? 'Dry run started for this device - results appear in the row and the log.' : 'Update started for this device only.', true);
                 if (wgApp.status) { wgApp.status.running = true; }
                 wgPollState();
             }).catch(function (ex) { showMsg('wgMsg', 'Run failed: ' + ex.message, false); });
         }
 
-        if ($('wgExclAdd')) {
-            $('wgExclAdd').addEventListener('click', function () {
-                var id = wgSelectedDevice();
-                if (id == null) { return; }
-                var l = (((wgApp.cfg && wgApp.cfg.config.excludeNodes) || [])).slice();
-                if (l.indexOf(id) < 0) { l.push(id); wgSetExcluded(l); }
-            });
-        }
-        if ($('wgExclRem')) {
-            $('wgExclRem').addEventListener('click', function () {
-                var id = wgSelectedDevice();
-                if (id == null) { return; }
-                var l = (((wgApp.cfg && wgApp.cfg.config.excludeNodes) || [])).filter(function (x) { return x !== id; });
-                wgSetExcluded(l);
-            });
-        }
-        if ($('wgDryOneBtn')) { $('wgDryOneBtn').addEventListener('click', function () { wgRunOne(true); }); }
-        if ($('wgRunOneBtn')) { $('wgRunOneBtn').addEventListener('click', function () { wgRunOne(false); }); }
+        $('wgDevBody').addEventListener('click', function (e) {
+            var b = e.target;
+            while (b && b !== this && !(b.getAttribute && b.getAttribute('data-wgact'))) { b = b.parentNode; }
+            if (!b || b === this) { return; }
+            var act = b.getAttribute('data-wgact'), id = b.getAttribute('data-wgid');
+            if (act === 'dry') { wgRunOne(id, true); }
+            else if (act === 'run') { wgRunOne(id, false); }
+            else if (act === 'excl') { wgToggleExclude(id, true); }
+            else if (act === 'incl') { wgToggleExclude(id, false); }
+        });
 
         function loadWgLog() {
             post('get_log', { type: 'winget' }).then(function (data) {

@@ -187,6 +187,20 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   Save posts the full field set, "Reset all" posts `reset=true`. The group table is filled client-side from
   `get_locations`; all-checked or none-checked is sent as an empty list = "all groups".
 
+## Upgrade path (verified; user decision: NO polling)
+
+- The swap lives INSIDE server_startup (event-driven, called by MeshCentral after installPlugin);
+  there is deliberately no timer/watchdog checking the disk. If a MeshCentral build never calls
+  server_startup again, the upgrade lands on the next restart - accepted trade-off, documented.
+- Node events: DispatchEvent(ids, source, event) persists via db.StoreEvent (meshcentral.js);
+  wg runs raise per-device events (etype 'node', visibility 'nodes', targets [nodeid, meshid])
+  so results show on the device's events page (viewmode 16).
+- fixOwnPluginUrl() rewrites the stored plugin doc url to /pluginadmin.ashx?pin=...&action=show,
+  because MeshCentral's generic configure link (?viewmode=43) 404s for this plugin.
+- normalizeCveVersion: ANY distro decoration (ubuntu/dfsg/+exp/bzr/~ /debN/snap wrapper) -> ''
+  (unknown) - Debian/Ubuntu patch fixes into identical upstream versions; plain '-1' suffixes
+  and epochs-without-decoration still extract their numeric core.
+
 ## Software-list pruning (verified)
 
 - `obj.getStoredSoftware` returns `pruneSuperseded(list)`: rows are grouped by resolved vendor|product
@@ -325,7 +339,7 @@ npm test           # = tools/check.js && tools/test-plugin.js && tools/test-view
 
 - `tools/check.js`: `node --check` on the plugin, inline-script syntax/`{{`-hazard check, JSON validity of
   config files, and view-name↔render-name consistency. Must run anywhere (no dependencies).
-- `tools/test-plugin.js`: 184 behavioral assertions against the real module (mocked MeshCentral DB/webserver):
+- `tools/test-plugin.js`: 186 behavioral assertions against the real module (mocked MeshCentral DB/webserver):
   locations grouping & counting, manual-rating severity override, FP exclusion, host-name preference, coverage
   numbers, multi-mesh scan/`mixed` logic, all POST handlers incl. validation/rejections, routes, admin gating
   (401), CPE table add/delete, vulns CSV header/content, toolbar button injection (simulated browser DOM), remote CPE table apply/cache/fetch/settings, NVD download-log tailing, manual NVD update trigger + concurrency guard, unknown-version matching rules, winget updater (builder/parser/queue/routes), `longTimeout` chunking, restart-proof schedule delays,

@@ -17,7 +17,7 @@
  * NVD feed is downloaded.
  *
  * @author derStephan
- * @version 2.2.1
+ * @version 2.5.0
  *
  * Transparency: This plugin was created with the assistance of Qwen 3.6 27B and Qwen 3.8 Flash Next.
  * Security audit (2026-11-06) performed by NVIDIA Nemotron 3 550B A55B via opencode.
@@ -204,6 +204,26 @@ module.exports.inventoryscanner = function (parent) {
         obj.scheduleScans();
         obj.scheduleInventoryCollection();
         obj.scheduleWingetUpdates();
+        obj.fixOwnPluginUrl();
+    };
+
+    /**
+     * @brief MeshCentral's plugin list offers a generic configure link (viewmode 43)
+     *   that 404s for this plugin; point the stored url at the real admin panel.
+     */
+    obj.fixOwnPluginUrl = function () {
+        try {
+            if (typeof obj.db.getPlugins !== 'function' || typeof obj.db.updatePlugin !== 'function') return;
+            var want = '/pluginadmin.ashx?pin=' + obj.shortName + '&action=show';
+            obj.db.getPlugins(function (err, docs) {
+                if (err || !docs) return;
+                for (var i = 0; i < docs.length; i++) {
+                    if (docs[i] && docs[i].shortName === obj.shortName && docs[i].url !== want) {
+                        try { obj.db.updatePlugin(docs[i]._id, { url: want }, function () { }); } catch (e) { }
+                    }
+                }
+            });
+        } catch (e) { }
     };
 
     /**
@@ -669,6 +689,29 @@ module.exports.inventoryscanner = function (parent) {
         } catch (e) { }
     };
 
+    /**
+     * @brief Raise a client-side event on the device's events page (MeshCentral
+     *   persists DispatchEvent payloads via db.StoreEvent; visibility 'nodes' shows
+     *   them to everyone with rights on that machine).
+     * @param {string} nodeid - The device.
+     * @param {string} msg - One-line summary.
+     */
+    obj.wgRaiseNodeEvent = function (nodeid, msg) {
+        try {
+            obj.db.Get(nodeid, function (err, nodes) {
+                try {
+                    if (err || !nodes || !nodes.length) return;
+                    var node = nodes[0];
+                    var targets = [nodeid];
+                    if (node.meshid != null) { targets.push(node.meshid); }
+                    obj.meshServer.DispatchEvent(targets, obj, {
+                        etype: 'node', nodeid: nodeid, msg: msg, visibility: 'nodes'
+                    });
+                } catch (e) { }
+            });
+        } catch (e) { }
+    };
+
     /** @brief Load persisted last-run results (survives restarts). */
     obj.wgLoadResults = function () {
         obj.wgResults = {};
@@ -792,6 +835,7 @@ module.exports.inventoryscanner = function (parent) {
                 if ((agent == null) || (typeof agent.send !== 'function')) {
                     obj.wgResults[nodeid] = { time: new Date().toISOString(), error: 'offline', results: [] };
                     obj.wgLog(nodeid + ' - skipped, agent offline');
+                    obj.wgRaiseNodeEvent(nodeid, 'Winget updater: skipped, the agent was offline');
                     continue;
                 }
                 var sid = 'invscanner-wg-' + safeNodeDir(nodeid);
@@ -827,6 +871,7 @@ module.exports.inventoryscanner = function (parent) {
         obj.wgActive--;
         obj.wgResults[entry.nodeid] = { time: new Date().toISOString(), error: 'timeout', results: [] };
         obj.wgLog(entry.nodeid + ' - no answer within the run timeout');
+        obj.wgRaiseNodeEvent(entry.nodeid, 'Winget updater: the device did not answer within the timeout');
         obj.wgPump();
     };
 
@@ -865,6 +910,7 @@ module.exports.inventoryscanner = function (parent) {
             if (s === 'ok') okN++; else if (s === 'dry-run') wouldN++; else if (s.indexOf('skipped') === 0) skipN++; else failN++;
         }
         obj.wgLog(nodeid + ' - ' + (rec.dry ? '[dry-run] ' : '') + (rec.error || (rec.winget ? (rec.dry ? ('would update ' + wouldN + ', ' + skipN + ' skipped, ' + failN + ' failed') : ('done: ' + okN + ' updated, ' + skipN + ' skipped, ' + failN + ' failed')) : 'winget not available')));
+        obj.wgRaiseNodeEvent(nodeid, 'Winget updater: ' + (rec.error ? rec.error : (rec.winget === false ? 'winget is not available on this device' : (rec.dry ? ('dry run - ' + wouldN + ' package(s) would be updated') : (okN + ' package(s) updated, ' + failN + ' failed')))));
         obj.wgSaveResults();
         obj.wgPump();
     };
@@ -2276,6 +2322,12 @@ obj.loadNvdFromAllFiles = function () {
         if (s === '') return '';
         if (/^\d+:/.test(s)) { s = s.replace(/^\d+:/, ''); }
         var hasDot = /\d\.\d/.test(s);
+        if (/ubuntu|dfsg|\+exp|bzr|deb\d|repack|~/.test(s)) {
+            // Debian/Ubuntu patch upstream fixes into the SAME upstream version -
+            // the NVD range check would report CVEs that the distrol already fixed.
+            // Without OVAL data the honest answer is: version not assessable.
+            return '';
+        }
         if (!hasDot && /(snap|ubuntu|deb\d|dfsg|ds|build|repack)/i.test(s) && /\d+[a-z]/i.test(s)) { return ''; }
         var m = s.match(/^\d+(?:\.\d+)*/);
         return (m ? m[0] : '');
