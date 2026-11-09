@@ -652,6 +652,20 @@ steps.push(function (next) {
     next();
 });
 
+
+// ---- v2.1.2: status handler robustness ----
+steps.push(function (next) {
+    nodes.push({ _id: 'node//amt1', meshid: 'mesh//grp1', rname: 'amt-host', type: 2 });
+    obj.wgResults['node//d2'] = { time: 'garbage-without-results' };
+    obj.handleAdminPostReq({ body: { action: 'wg_status' } }, mockRes(function (d) {
+        check('status: legacy type field no longer filters', (d.devices || []).filter(function (x) { return x.id === 'node//amt1'; }).length === 1, (d.devices || []).length);
+        check('status: malformed result record does not crash', (d.devices || []).filter(function (x) { return x.id === 'node//d2'; }).length === 1, d.error);
+        nodes.pop();
+        delete obj.wgResults['node//d2'];
+        next();
+    }), user);
+});
+
 (function run(i) {
     if (i >= steps.length) {
         console.log(failures === 0 ? '\ntest-plugin: ALL PASSED' : '\ntest-plugin: ' + failures + ' FAILURE(S)');

@@ -17,7 +17,7 @@
  * NVD feed is downloaded.
  *
  * @author derStephan
- * @version 2.1.1
+ * @version 2.1.2
  *
  * Transparency: This plugin was created with the assistance of Qwen 3.6 27B and Qwen 3.8 Flash Next.
  * Security audit (2026-11-06) performed by NVIDIA Nemotron 3 550B A55B via opencode.
@@ -680,7 +680,6 @@ module.exports.inventoryscanner = function (parent) {
                 for (var i = 0; i < nodes.length; i++) {
                     var n = nodes[i];
                     if ((n == null) || (n._id == null) || (n.deleted != null)) continue;
-                    if ((n.type != null) && (n.type !== 0)) continue; // desktop OS agents only
                     if (onlyMeshes) {
                         if (wcfg.meshes == null) continue; // scheduled: require explicit group opt-in
                         if (wcfg.meshes.indexOf(n.meshid) < 0) continue;
@@ -1131,13 +1130,13 @@ module.exports.inventoryscanner = function (parent) {
                     for (var i = 0; i < nodes.length; i++) {
                         var n = nodes[i];
                         if ((n == null) || (n._id == null) || (n.deleted != null)) continue;
-                        if ((n.type != null) && (n.type !== 0)) continue;
                         var rec = obj.wgResults[n._id];
                         var sum = null;
                         if (rec != null) {
                             var okN = 0, skN = 0, faN = 0, wdN = 0;
-                            for (var ri = 0; ri < rec.results.length; ri++) {
-                                var s = rec.results[ri].state || '';
+                            var rl = Array.isArray(rec.results) ? rec.results : [];
+                            for (var ri = 0; ri < rl.length; ri++) {
+                                var s = (rl[ri] && rl[ri].state) ? rl[ri].state : '';
                                 if (s === 'ok') okN++; else if (s === 'dry-run') wdN++; else if (s.indexOf('skipped') === 0) skN++; else faN++;
                             }
                             sum = { time: rec.time, winget: rec.winget === true, dry: rec.dry === true, ok: okN, would: wdN, skipped: skN, failed: faN, error: rec.error || '' };

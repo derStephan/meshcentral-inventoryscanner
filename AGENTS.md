@@ -124,7 +124,7 @@ POST body `action=`:
 | `wg_get_config` | — | effective wingetUpdater config + per-key sources + queue state |
 | `wg_save_config` | enabled, updateMeshes(csv), excludeNodes(csv), ignorePackages(JSON), pinSync (intervalHours accepted but ignored) | validates EVERYTHING, writes overlay, `rescheduleAll()` |
 | `wg_run` | optional `nodeIds`(csv; overrides scope+exclusions), `dry`('true') | manual batch; per-device or dry test runs; {busy} while one runs |
-| `wg_status` | — | devices table (host, group, online, excluded, last-run summary) + queue state |
+| `wg_status` | — | every non-deleted node (legacy node `type` is NOT a filter - MeshCentral does not set it); malformed stored records tolerated |
 | `get_log` | `type` = nvd\|winget | whitelisted log tail (last 300 lines) |
 | `update_nvd` | — | starts `runNvdUpdate(true)` (background) and answers {started:true} / {alreadyRunning:true}; concurrent runs skip via the `nvdUpdateRunning` flag |
 | `get_nvdlog` | — | `{lines:[...last 200 of nvd-download.log], size, file}`; `note` if file missing |
@@ -292,7 +292,7 @@ npm test           # = tools/check.js && tools/test-plugin.js && tools/test-view
 
 - `tools/check.js`: `node --check` on the plugin, inline-script syntax/`{{`-hazard check, JSON validity of
   config files, and view-name↔render-name consistency. Must run anywhere (no dependencies).
-- `tools/test-plugin.js`: 158 behavioral assertions against the real module (mocked MeshCentral DB/webserver):
+- `tools/test-plugin.js`: 160 behavioral assertions against the real module (mocked MeshCentral DB/webserver):
   locations grouping & counting, manual-rating severity override, FP exclusion, host-name preference, coverage
   numbers, multi-mesh scan/`mixed` logic, all POST handlers incl. validation/rejections, routes, admin gating
   (401), CPE table add/delete, vulns CSV header/content, toolbar button injection (simulated browser DOM), remote CPE table apply/cache/fetch/settings, NVD download-log tailing, manual NVD update trigger + concurrency guard, unknown-version matching rules, winget updater (builder/parser/queue/routes), `longTimeout` chunking, restart-proof schedule delays,

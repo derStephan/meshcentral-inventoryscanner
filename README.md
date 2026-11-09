@@ -90,7 +90,8 @@ On a configurable interval (e.g. monthly) the server re-scans all groups, stores
 
 The plugin can keep Windows endpoints patched through the official **winget** package manager -
 automatically or on demand from the panel's **Updates** tab. It is completely opt-in: nothing runs until you
-enable it *and* tick at least one device group.
+enable it *and* tick at least one device group. Browsing devices, editing exclusions and running dry
+runs works with the switch off - only actual upgrades require it.
 
 * **Two-phase per device, package by package**: one script run lists everything with an available upgrade
   (`winget list --upgrade-available`), then upgrades the applicable ones individually
