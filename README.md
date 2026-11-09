@@ -110,11 +110,14 @@ runs works with the switch off - only actual upgrades require it.
   not been updated on yet - and at the latest 24 h after its previous run if the connection never dropped.
   Batches run two devices in parallel; offline devices are simply picked up at the next connect.
 * **Full audit trail**: every batch is logged line by line (`winget-update.log`, tailable in the UI) AND every
-  script writes a PowerShell transcript to `C:\ProgramData\invscanner-winget.log` on the device itself -
+  script writes a PowerShell transcript to `invscanner-winget.log` in the agent's install folder on the
+  device itself (falls back to `C:\ProgramData` when that folder is not writable) -
   that is where to look if the server side stays silent, and
   the per-device result table shows which package went from which version to which - or why it failed
   (exit code + last installer output).
-* **Requirements on the client**: Windows 10 1809+/11 with winget available (App Installer). Devices
+* **Requirements on the client**: Windows 10 1809+/11 with winget available (App Installer). Scripts run
+  as SYSTEM, where `winget` is not in the PATH - the plugin locates it under
+  `C:\Program Files\WindowsApps\Microsoft.DesktopAppInstaller_*\winget.exe` as a fallback. Devices
   without it are reported as such per run - nothing else about the batch changes.
 
 ## Requirements

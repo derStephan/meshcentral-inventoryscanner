@@ -1,11 +1,4 @@
-feat: 2.1.5 - client-side transcript next to the agent binary
-
-Every winget update/dry-run script wraps itself in Start/Stop-Transcript
-writing invscanner-winget.log into the Mesh Agent install folder (parent-
-process probe; falls back to C:\ProgramData when that path is not writable,
-rotates once at 5 MB). This is the witness when a run never answers the
-server. The reply is emitted before the transcript closes; the server log
-names the location. Tests added (169 total).# AGENTS.md — MeshCentral Inventory & Vulnerability Scanner Plugin
+# AGENTS.md — MeshCentral Inventory & Vulnerability Scanner Plugin
 
 Guide for AI agents working on this repository. Everything stated here was verified against the running code and
 the test suite in `tools/`; trust the code and these notes over assumptions.
@@ -213,7 +206,7 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
 - The per-device PowerShell script (single round trip): existence probe (`Get-Command winget`),
   `winget list --upgrade-available --accept-source-agreements --disable-interactivity`, a strict regex
   per table line (name / dotted id / version / available / source), skip-if-ignored (case-insensitive id
-  match), `winget upgrade --id <id> --exact --silent --accept-package-agreements --accept-source-agreements
+  match), `(& $wg) upgrade --id <id> --exact --silent --accept-package-agreements --accept-source-agreements
   --disable-interactivity` per remaining package, best-effort `winget pin add --id <id> --installed --exact`
   for ignore entries (pinSync), and ONE answer line `@@INVWUP@@{json}`. `ConvertTo-Json` unwraps
   single-element arrays - the parser rewraps them. Anything unparsable is recorded as an error, never as
@@ -229,8 +222,8 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   meshcore.js breaks WITHOUT a runcommands reply in that case) are mirrored into winget-update.log.
   `wg_status` devices[] carry `pending:{since}` while a script awaits its answer.
   Every script self-logs on the client: Start/Stop-Transcript around the run, file
-  next to the agent binary (parent-process probe, fallback to C:\\ProgramData; rotates once at 5MB) -
-  the only witness when a reply never arrives.
+  next to the agent binary (Get-CimInstance Win32_Process parent id - PS 5.1 has no .Parent; fallback
+  C:\\ProgramData; rotates once at 5MB) - the only witness when a reply never arrives.
   `hook_agentCoreIsStable` additionally queues the device through `wgQueueNode` (stagger-delayed, so the
   collector settles first; disabled/excluded/not-due devices short-circuit without any agent traffic).
 - Batching: queue with 2 devices in parallel (`WINGET_MAX_PARALLEL`), 2 h watchdog per device, results in

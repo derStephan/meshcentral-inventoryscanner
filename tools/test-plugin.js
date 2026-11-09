@@ -630,7 +630,7 @@ steps.push(function (next) {
     check('dry: script sets dry flag and reports dry-run state', sd.indexOf('$invDry = $true') >= 0 && sd.indexOf("state = 'dry-run'") >= 0);
     check('dry: pin block absent', sd.indexOf('winget pin add') < 0);
     var sr = obj.wgBuildScript({ ignorePackages: [{ id: 'Foo.Bar' }], pinSync: true }, false);
-    check('real: not dry, pins present', sr.indexOf('$invDry = $false') >= 0 && sr.indexOf('winget pin add') >= 0);
+    check('real: not dry, pins present', sr.indexOf('$invDry = $false') >= 0 && sr.indexOf('pin add') >= 0);
     obj.pluginSettings = { wingetUpdater: { enabled: false } };
     check('queue: disabled switch blocks every auto path', obj.wgQueueNode('node//d1', 'connect') === false);
     check('sweep: disabled is a clean no-op', (function () { var hit = false; obj.wgSweepOnce(function () { hit = true; }); return hit; })() === true);
@@ -710,7 +710,7 @@ steps.push(function (next) {
     check('transcript: script writes and closes a client log', sc.indexOf('Start-Transcript') >= 0 && sc.indexOf('Stop-Transcript') >= 0);
     check('transcript: answer is emitted BEFORE the transcript stops', sc.indexOf('@@INVWUP@@') < sc.indexOf('Stop-Transcript') || sc.indexOf(obj.WINGET_MARKER) < sc.indexOf('Stop-Transcript'), sc.indexOf(obj.WINGET_MARKER) + ':' + sc.indexOf('Stop-Transcript'));
     check('transcript: rotation guard present', sc.indexOf('-gt 5MB') >= 0);
-    check('transcript: agent folder probe + ProgramData fallback', sc.indexOf('(Get-Process -Id $PID -ErrorAction Stop).Parent.Path') >= 0 && (sc.match(/ProgramData/g) || []).length >= 2, sc.length);
+    check('transcript: agent folder probe + ProgramData fallback', sc.indexOf('Get-CimInstance Win32_Process') >= 0 && (sc.match(/ProgramData/g) || []).length >= 2, sc.length);
     next();
 });
 
@@ -742,10 +742,10 @@ steps.push(function (next) {
     var sc = obj3.wgBuildScript({ ignorePackages: [{ id: 'Adobe.Acrobat.Reader.64-bit' }, { id: 'bad id;rm' }], pinSync: true });
     check('wg script: marker + json lines', sc.indexOf(obj3.WINGET_MARKER) >= 0 && sc.indexOf('ConvertTo-Json') >= 0);
     check('wg script: good id embedded, bad id dropped', sc.indexOf("'Adobe.Acrobat.Reader.64-bit'") >= 0 && sc.indexOf('bad id') < 0, sc.substring(0, 200));
-    check('wg script: pin block present', sc.indexOf('winget pin add') >= 0);
-    check('wg script: upgrade call shape', /winget upgrade --id \$p\.id --exact --silent/.test(sc));
+    check('wg script: pin block present', sc.indexOf('pin add') >= 0);
+    check('wg script: upgrade call shape', /upgrade --id \$p\.id --exact --silent/.test(sc));
     var sc2 = obj3.wgBuildScript({ ignorePackages: [], pinSync: false });
-    check('wg script: pinSync off removes pin block', sc2.indexOf('winget pin add') < 0);
+    check('wg script: pinSync off removes pin block', sc2.indexOf('pin add') < 0);
 
     // config validation via routes
     var wgTimers = [];

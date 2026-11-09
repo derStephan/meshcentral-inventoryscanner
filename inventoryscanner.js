@@ -17,7 +17,7 @@
  * NVD feed is downloaded.
  *
  * @author derStephan
- * @version 2.1.5
+ * @version 2.1.6
  *
  * Transparency: This plugin was created with the assistance of Qwen 3.6 27B and Qwen 3.8 Flash Next.
  * Security audit (2026-11-06) performed by NVIDIA Nemotron 3 550B A55B via opencode.
@@ -600,20 +600,23 @@ module.exports.inventoryscanner = function (parent) {
         }
         var psList = ids.map(function (x) { return "'" + x.replace(/'/g, "''") + "'"; }).join(', ');
         var pinLines = (!dry && wcfg.pinSync && ids.length > 0) ? [
-            "foreach ($pn in $invIgnore) { try { $null = (winget pin add --id $pn --installed --exact --accept-source-agreements --disable-interactivity 2>&1) } catch { } }"
+            "foreach ($pn in $invIgnore) { try { $null = (& $wg pin add --id $pn --installed --exact --accept-source-agreements --disable-interactivity 2>&1) } catch { } }"
         ] : [];
         return [
             "$ProgressPreference = 'SilentlyContinue'",
             "$invDry = " + (dry ? '$true' : '$false'),
             "$invTDir = $env:ProgramData",
-            "try { $invPP = (Get-Process -Id $PID -ErrorAction Stop).Parent.Path; if ($invPP) { $invTDir = Split-Path $invPP } } catch { }",
+            "try { $invPP = (Get-CimInstance Win32_Process -Filter ('ProcessId={0}' -f $PID) -ErrorAction Stop).ParentProcessId; if ($invPP) { $invTDir = (Get-Process -Id $invPP -ErrorAction SilentlyContinue).Path } } catch { }",
+            "if (-not $invTDir) { $invTDir = $env:ProgramData }",
             "$invT = Join-Path $invTDir 'invscanner-winget.log'",
             "if (Test-Path $invT) { try { if ((Get-Item $invT).Length -gt 5MB) { Move-Item $invT ($invT + '.old') -Force } } catch { } }",
             "try { Start-Transcript -Path $invT -Append | Out-Null } catch { $invT = Join-Path $env:ProgramData 'invscanner-winget.log'; try { Start-Transcript -Path $invT -Append | Out-Null } catch { } }",
-            'if (-not (Get-Command winget -ErrorAction SilentlyContinue)) { Write-Output \'' + obj.WINGET_MARKER + '{"winget":false}\'; exit }',
+            '$wg = $null',
+            'foreach ($wc in @((Get-Command winget -ErrorAction SilentlyContinue), (Get-ChildItem ($env:ProgramFiles + "\WindowsApps\Microsoft.DesktopAppInstaller_*\winget.exe") -ErrorAction SilentlyContinue | Select-Object -First 1))) { if ($wc -ne $null -and $wc.FullName) { $wg = $wc.FullName; break } }',
+            'if ($wg -eq $null) { Write-Output \'' + obj.WINGET_MARKER + '{"winget":false}\'; exit }',
             '$invIgnore = @(' + psList + ')',
             "$raw = ''",
-            'try { $raw = ((winget list --upgrade-available --accept-source-agreements --disable-interactivity) 2>&1) -join [Environment]::NewLine } catch { }',
+            'try { $raw = ((& $wg list --upgrade-available --accept-source-agreements --disable-interactivity) 2>&1) -join [Environment]::NewLine } catch { }',
             '$rows = @()',
             'foreach ($line in ($raw -split "`r?`n")) {',
             "  if ($line -match '^(.+?)\\s{2,}([A-Za-z0-9._+-]+\\.[A-Za-z0-9._+-]+)\\s{2,}(\\S+)\\s{2,}(\\S+)\\s{2,}(\\S+)\\s*$') {",
@@ -627,7 +630,7 @@ module.exports.inventoryscanner = function (parent) {
             "  if ($skip) { $results += @{ id = $p.id; name = $p.name; from = $p.from; to = $p.to; state = 'skipped-ignored' }; continue }",
             "  if ($p.to -ieq 'Unknown' -or $p.to -eq $p.from) { $results += @{ id = $p.id; name = $p.name; from = $p.from; to = $p.to; state = 'skipped-noversion' }; continue }",
             "  if ($invDry) { $results += @{ id = $p.id; name = $p.name; from = $p.from; to = $p.to; state = 'dry-run' }; continue }",
-            '  $o = (winget upgrade --id $p.id --exact --silent --accept-package-agreements --accept-source-agreements --disable-interactivity) 2>&1',
+            '  $o = (& $wg upgrade --id $p.id --exact --silent --accept-package-agreements --accept-source-agreements --disable-interactivity) 2>&1',
             '  $code = $LASTEXITCODE',
             "  $tail = (($o | Select-Object -Last 3) -join ' ')",
             '  if ($tail -isnot [string]) { $tail = [string]$tail }',
@@ -1585,8 +1588,9 @@ module.exports.inventoryscanner = function (parent) {
             }
             return false; // still route to browsers (may be a UI-triggered request)
         } else if ((command.action === 'msg') && (command.type === 'runcommands')) {
-            // Answer to one of our update sessions (identified by sessionid prefix).
-            if ((typeof command.sessionid === 'string') && (command.sessionid.indexOf('invscanner-wg-') === 0)) {
+            // Answer to one of our update sessions (agent builds differ on whether the
+            // reply carries sessionid, responseid or both - accept any prefix hit).
+            if (((typeof command.sessionid === 'string') && (command.sessionid.indexOf('invscanner-wg-') === 0)) || ((typeof command.responseid === 'string') && (command.responseid.indexOf('invscanner-wg-') === 0))) {
                 obj.wgHandleResponse(nodeid, command);
                 return true; // consumed - the marker JSON is plugin-internal
             }
