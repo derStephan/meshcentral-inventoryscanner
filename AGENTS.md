@@ -105,7 +105,7 @@ GET `pluginadmin.ashx?pin=inventoryscanner`:
 
 | `action` | Handler | Result |
 |---|---|---|
-| `show` | `showAssessmentPanel` | renders `assessment` with `{shortName, meshList, lastUpdate, lastScan, scanIntervalHours, totalCves}` |
+| `show` | `showAssessmentPanel` | renders `assessment` with `{shortName, meshList, lastUpdate, lastScan, scanIntervalHours, totalCves, version}` (version from the manifest beside the plugin file) |
 | `scan` | `assessmentScan` | JSON via `scanMultiMeshCves(meshIds)`; `?mesh=<id>,<id>,...` (comma-separated) |
 | `report` | `vulnerabilityReport` | renders `report` with `{shortName, report: buildOverallReport(), totalCves, lastUpdate}` |
 | `deviceReport` | `deviceReport` | renders `deviceReport`, same data |
@@ -122,8 +122,8 @@ POST body `action=`:
 | `delete_cpe_table` | `match`,`vendor`,`product` | custom entries only (built-ins can be shadowed, not deleted) |
 | `add_cpe` | `match`,`vendor`,`product` | regex validated via `new RegExp`; custom wins over built-in |
 | `wg_get_config` | — | effective wingetUpdater config + per-key sources + queue state |
-| `wg_save_config` | enabled, intervalHours, updateMeshes(csv), excludeNodes(csv), ignorePackages(JSON), pinSync | validates EVERYTHING, writes overlay, `rescheduleAll()` |
-| `wg_run` | — | starts a manual batch over all non-excluded nodes; {busy} while one runs |
+| `wg_save_config` | enabled, updateMeshes(csv), excludeNodes(csv), ignorePackages(JSON), pinSync (intervalHours accepted but ignored) | validates EVERYTHING, writes overlay, `rescheduleAll()` |
+| `wg_run` | optional `nodeIds`(csv; overrides scope+exclusions), `dry`('true') | manual batch; per-device or dry test runs; {busy} while one runs |
 | `wg_status` | — | devices table (host, group, online, excluded, last-run summary) + queue state |
 | `get_log` | `type` = nvd\|winget | whitelisted log tail (last 300 lines) |
 | `update_nvd` | — | starts `runNvdUpdate(true)` (background) and answers {started:true} / {alreadyRunning:true}; concurrent runs skip via the `nvdUpdateRunning` flag |
@@ -184,6 +184,14 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   Save posts the full field set, "Reset all" posts `reset=true`. The group table is filled client-side from
   `get_locations`; all-checked or none-checked is sent as an empty list = "all groups".
 
+## Software-list pruning (verified)
+
+- `obj.getStoredSoftware` returns `pruneSuperseded(list)`: rows are grouped by resolved vendor|product
+  (curated table -> auto matcher, else version/arch/locale-stripped name token + publisher-vendor map,
+  needs no NVD index) and by version group: default the WHOLE product is one group (newest wins -
+  fixes Firefox-2008-CVE noise from registry leftovers); `jre/jdk/java/net_framework/dotnet/vc++` key
+  on major, `python` on major.minor (real side-by-side installs). Unversioned rows never supersede.
+
 ## Winget auto-update engine (verified contracts)
 
 - Transport (verified in MeshCentral `agents/meshcore.js`): the server sends
@@ -200,6 +208,13 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   for ignore entries (pinSync), and ONE answer line `@@INVWUP@@{json}`. `ConvertTo-Json` unwraps
   single-element arrays - the parser rewraps them. Anything unparsable is recorded as an error, never as
   a silent success.
+- Automatic scheduling is two-stage, no interval: `wgNodeDue` = never ran OR last run on an earlier
+  calendar day OR >=24 h old; the agent-connect hook queues a due single device (after `staggerDelay`),
+  `wgSweepOnce` (hourly, gen-guarded) catches devices whose connection outlived the day boundary.
+  Per-device manual/dry runs pass explicit ids to `wgStartBatch(reason, done, nodeids, dry)`.
+  Package states: `ok`/`failed`/`skipped-ignored`/`skipped-noversion`/`dry-run` (dry JSON carries `dry:true`).
+  `hook_agentCoreIsStable` additionally queues the device through `wgQueueNode` (stagger-delayed, so the
+  collector settles first; disabled/excluded/not-due devices short-circuit without any agent traffic).
 - Batching: queue with 2 devices in parallel (`WINGET_MAX_PARALLEL`), 2 h watchdog per device, results in
   `winget-results.json`, log `winget-update.log` (rotates ~5 MB). Scheduled batches require explicit
   `updateMeshes`; manual "Run Now" covers every non-excluded desktop node. No reboots are ever triggered
@@ -255,7 +270,7 @@ never touches config.json). The config.json keys below remain the fallback/seed:
   `notifyUnratedRepeat`, `notify` (per-group), `updateHours`, `anyCveMaxAgeYears` (suppresses ancient version-less
   `kind:"any"` CVE matches).
 - `inventoryScanner` (note: one letter less than the section above): `collectIntervalMinutes`, `collectOnAgentConnect`.
-- `wingetUpdater` (sibling section, own Updates-tab form): `enabled` (default **false**), `intervalHours` (168),
+- `wingetUpdater` (sibling section, own Updates-tab form): `enabled` (default **false**), `intervalHours` (deprecated, ignored),
   `updateMeshes` (array; scheduled batches ONLY run on these - empty means NOTHING runs on purpose),
   `excludeNodes` (node ids), `ignorePackages` ([{id,note}] - never upgraded, additionally `winget pin add
   --installed` on the clients when `pinSync` true), `pinSync` (true). All ids validated against
@@ -274,7 +289,7 @@ npm test           # = tools/check.js && tools/test-plugin.js && tools/test-view
 
 - `tools/check.js`: `node --check` on the plugin, inline-script syntax/`{{`-hazard check, JSON validity of
   config files, and view-name↔render-name consistency. Must run anywhere (no dependencies).
-- `tools/test-plugin.js`: 137 behavioral assertions against the real module (mocked MeshCentral DB/webserver):
+- `tools/test-plugin.js`: 152 behavioral assertions against the real module (mocked MeshCentral DB/webserver):
   locations grouping & counting, manual-rating severity override, FP exclusion, host-name preference, coverage
   numbers, multi-mesh scan/`mixed` logic, all POST handlers incl. validation/rejections, routes, admin gating
   (401), CPE table add/delete, vulns CSV header/content, toolbar button injection (simulated browser DOM), remote CPE table apply/cache/fetch/settings, NVD download-log tailing, manual NVD update trigger + concurrency guard, unknown-version matching rules, winget updater (builder/parser/queue/routes), `longTimeout` chunking, restart-proof schedule delays,

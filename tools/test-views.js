@@ -50,7 +50,7 @@ const data = {
     }
 };
 const empty = {
-    shortName: 'inventoryscanner', meshList: [], lastUpdate: '', lastScan: '', scanIntervalHours: 0, totalCves: 0,
+    shortName: 'inventoryscanner', meshList: [], lastUpdate: '', lastScan: '', scanIntervalHours: 0, totalCves: 0, version: '9.9.9', version: '9.9.9',
     report: { generated: 'x', totalSystems: 0, totalPrograms: 0, assessablePrograms: 0, notAssessablePrograms: 0,
         coveragePercent: 0, totalCves: 0, falsePositiveCves: 0,
         severityCounts: { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, UNKNOWN: 0 }, uniqueCves: 0,

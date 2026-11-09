@@ -610,6 +610,35 @@ steps.push(function (next) {
     });
 });
 
+// ---- v2.1.0: superseded pruning, two-stage due policy, dry-run, queue gate ----
+steps.push(function (next) {
+    var l1 = [{ name: 'Mozilla Firefox 3.6.24 (x86 de-DE)', version: '3.6.24', publisher: 'Mozilla' }, { name: 'Firefox 121.0.1 (x86 de-DE)', version: '121.0.1', publisher: 'Mozilla' }];
+    var p1 = obj.pruneSuperseded(l1);
+    check('prune: stale firefox row dropped', p1.length === 1 && String(p1[0].name).indexOf('121') > 0, p1);
+    var p2 = obj.pruneSuperseded([{ name: 'Java 8 Update 202 (64-bit)', version: '8.202.1', publisher: 'Oracle' }, { name: 'Java 8 Update 351 (64-bit)', version: '8.351.0', publisher: 'Oracle' }, { name: 'Java SE Development Kit 17.0.2', version: '17.0.2.8', publisher: 'Oracle' }]);
+    check('prune: same-major java dedup, other major kept', p2.length === 2, p2);
+    var p3 = obj.pruneSuperseded([{ name: 'Python 3.11.9 (64-bit)', version: '3.11.9', publisher: 'Python Software Foundation' }, { name: 'Python 3.12.4 (64-bit)', version: '3.12.4', publisher: 'Python Software Foundation' }]);
+    check('prune: python minors coexist', p3.length === 2, p3);
+    var p4 = obj.pruneSuperseded([{ name: 'Acme Tool', version: '', publisher: 'Acme' }, { name: 'Acme Tool', version: '2.0', publisher: 'Acme' }]);
+    check('prune: unversioned row is never superseded', p4.length === 2, p4);
+    var now = Date.now();
+    var iso = function (msAgo) { return new Date(now - msAgo).toISOString(); };
+    check('due: never ran', obj.wgNodeDue('node//x', {}, now) === true);
+    check('due: ran 2h ago today', obj.wgNodeDue('node//x', { 'node//x': { time: iso(2 * 3600 * 1000) } }, now) === false);
+    check('due: ran yesterday', obj.wgNodeDue('node//x', { 'node//x': { time: iso(25 * 3600 * 1000) } }, now) === true);
+    var sd = obj.wgBuildScript({ ignorePackages: [{ id: 'Foo.Bar' }], pinSync: true }, true);
+    check('dry: script sets dry flag and reports dry-run state', sd.indexOf('$invDry = $true') >= 0 && sd.indexOf("state = 'dry-run'") >= 0);
+    check('dry: pin block absent', sd.indexOf('winget pin add') < 0);
+    var sr = obj.wgBuildScript({ ignorePackages: [{ id: 'Foo.Bar' }], pinSync: true }, false);
+    check('real: not dry, pins present', sr.indexOf('$invDry = $false') >= 0 && sr.indexOf('winget pin add') >= 0);
+    obj.pluginSettings = { wingetUpdater: { enabled: false } };
+    check('queue: disabled switch blocks every auto path', obj.wgQueueNode('node//d1', 'connect') === false);
+    check('sweep: disabled is a clean no-op', (function () { var hit = false; obj.wgSweepOnce(function () { hit = true; }); return hit; })() === true);
+    obj.pluginSettings = {};
+    next();
+});
+
+
 (function run(i) {
     if (i >= steps.length) {
         console.log(failures === 0 ? '\ntest-plugin: ALL PASSED' : '\ntest-plugin: ' + failures + ' FAILURE(S)');
@@ -619,6 +648,11 @@ steps.push(function (next) {
 })(0);
 
 // ---- winget updater: script builder, queue, parser, config, status ----
+steps.push(function (next) {
+    check('version: manifest beside the plugin parses', /^[0-9]+.[0-9]+.[0-9]+/.test(obj.PLUGIN_VERSION), obj.PLUGIN_VERSION);
+    next();
+});
+
 steps.push(function (next) {
     var dp3 = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-wg-'));
     var ws3 = { meshes: { 'mesh//grp1': { name: 'HQ' }, 'mesh//grp2': { name: 'Branch' } }, wsagents: {} };
@@ -642,14 +676,14 @@ steps.push(function (next) {
     var wgTimers = [];
     obj3.longTimeout = function (cb, ms) { wgTimers.push(ms); };
     var post = function (body, cb) { obj3.handleAdminPostReq({ body: body }, mockRes(cb), user); };
-    post({ action: 'wg_save_config', enabled: 'true', intervalHours: 'abc', updateMeshes: '', excludeNodes: '', ignorePackages: '[]', pinSync: 'true' }, function (d) {
-        check('wg cfg: rejects bad interval', !!d.error, d);
+    post({ action: 'wg_save_config', enabled: 'true', updateMeshes: '', excludeNodes: '', ignorePackages: '[]', pinSync: 'true' }, function (d) {
+        check('wg cfg: save works without any interval field', !d.error && typeof d.config.scheduling === 'string', d);
         post({ action: 'wg_save_config', enabled: 'true', intervalHours: '48', updateMeshes: 'mesh//grp1', excludeNodes: 'node//d3', ignorePackages: JSON.stringify([{ id: 'OpenJS.NodeJS.18', note: 'lts license' }, { id: 'DROP TABLE' }]), pinSync: 'false' }, function (dBad) {
             check('wg cfg: invalid id rejected explicitly', !!dBad.error && /ignore/i.test(dBad.error), dBad);
             post({ action: 'wg_save_config', enabled: 'true', intervalHours: '48', updateMeshes: 'mesh//grp1', excludeNodes: 'node//d3', ignorePackages: JSON.stringify([{ id: 'OpenJS.NodeJS.18', note: 'lts license' }]), pinSync: 'false' }, function (d2) {
             check('wg cfg: save ok with valid id', !d2.error && d2.config.ignorePackages.length === 1 && d2.config.ignorePackages[0].id === 'OpenJS.NodeJS.18', d2.config);
             var w3 = obj3.wingetConfig();
-            check('wg cfg: effective after save', w3.enabled === true && w3.intervalHours === 48 && w3.meshes.length === 1 && w3.excludeNodes[0] === 'node//d3' && w3.pinSync === false, w3);
+            check('wg cfg: effective after save', w3.enabled === true && w3.meshes.length === 1 && w3.excludeNodes[0] === 'node//d3' && w3.pinSync === false, w3);
 
             // batch: d1,d2 in scope (grp1), d3 excluded, d4 in grp2 not in meshes
             obj3.WINGET_MAX_PARALLEL = 2;
@@ -675,7 +709,13 @@ steps.push(function (next) {
                 var d1 = st.devices.filter(function (x) { return x.id === 'node//d1'; })[0];
                 var d3 = st.devices.filter(function (x) { return x.id === 'node//d3'; })[0];
                 check('wg status: device table joined', st.devices.length === 4 && d1.last.ok === 1 && d3.excluded === true, st.devices);
-                check('wg timer: save re-armed the batch timer', wgTimers.indexOf(48 * 3600 * 1000) >= 0, wgTimers);
+                obj3.wgResults['node//d1'] = { time: new Date().toISOString(), winget: true, dry: true, results: [{ id: 'Foo.Bar', name: 'Foo', from: '1', to: '2', state: 'dry-run' }] };
+                post({ action: 'wg_status' }, function (st2) {
+                    var dd = st2.devices.filter(function (x) { return x.id === 'node//d1'; })[0];
+                    check('wg status: dry run counted as would-update', dd.last.dry === true && dd.last.would === 1 && dd.last.failed === 0, dd.last);
+                    obj3.pluginSettings.wingetUpdater = { enabled: false };
+                check('wg timer: hourly due-check sweep armed', wgTimers.indexOf(obj3.WINGET_SWEEP_MS) >= 0, wgTimers);
+                });
                 next();
             });
             });

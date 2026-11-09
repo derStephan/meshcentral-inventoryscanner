@@ -17,7 +17,7 @@
  * NVD feed is downloaded.
  *
  * @author derStephan
- * @version 2.0.0
+ * @version 2.1.0
  *
  * Transparency: This plugin was created with the assistance of Qwen 3.6 27B and Qwen 3.8 Flash Next.
  * Security audit (2026-11-06) performed by NVIDIA Nemotron 3 550B A55B via opencode.
@@ -52,6 +52,10 @@ module.exports.inventoryscanner = function (parent) {
     obj.debug = obj.meshServer.debug;
     /** @type {string} Plugin short name used in the pluginadmin.ashx?pin= URL. */
     obj.shortName = 'inventoryscanner';
+    /** @type {string} Version from the manifest beside this file - shown in the panel so stale
+     *  deploys (new view, old server code) are visible at a glance. */
+    obj.PLUGIN_VERSION = 'unknown';
+    try { obj.PLUGIN_VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8')).version || 'unknown'; } catch (ex) { }
 
     /**
      * @brief Functions exported to the web UI (serialized into /pluginHandler.js).
@@ -587,18 +591,19 @@ module.exports.inventoryscanner = function (parent) {
      * @param {object} wcfg - wingetConfig() result.
      * @returns {string} PowerShell script.
      */
-    obj.wgBuildScript = function (wcfg) {
+    obj.wgBuildScript = function (wcfg, dry) {
         var ids = [];
         for (var i = 0; i < wcfg.ignorePackages.length; i++) {
             var id = wcfg.ignorePackages[i].id;
             if (obj.WINGET_ID_RE.test(id) && (ids.indexOf(id) < 0)) { ids.push(id); }
         }
         var psList = ids.map(function (x) { return "'" + x.replace(/'/g, "''") + "'"; }).join(', ');
-        var pinLines = (wcfg.pinSync && ids.length > 0) ? [
+        var pinLines = (!dry && wcfg.pinSync && ids.length > 0) ? [
             "foreach ($pn in $invIgnore) { try { $null = (winget pin add --id $pn --installed --exact --accept-source-agreements --disable-interactivity 2>&1) } catch { } }"
         ] : [];
         return [
             "$ProgressPreference = 'SilentlyContinue'",
+            "$invDry = " + (dry ? '$true' : '$false'),
             'if (-not (Get-Command winget -ErrorAction SilentlyContinue)) { Write-Output \'' + obj.WINGET_MARKER + '{"winget":false}\'; exit }',
             '$invIgnore = @(' + psList + ')',
             "$raw = ''",
@@ -615,6 +620,7 @@ module.exports.inventoryscanner = function (parent) {
             '  foreach ($ig in $invIgnore) { if ($p.id -ieq $ig) { $skip = $true; break } }',
             "  if ($skip) { $results += @{ id = $p.id; name = $p.name; from = $p.from; to = $p.to; state = 'skipped-ignored' }; continue }",
             "  if ($p.to -ieq 'Unknown' -or $p.to -eq $p.from) { $results += @{ id = $p.id; name = $p.name; from = $p.from; to = $p.to; state = 'skipped-noversion' }; continue }",
+            "  if ($invDry) { $results += @{ id = $p.id; name = $p.name; from = $p.from; to = $p.to; state = 'dry-run' }; continue }",
             '  $o = (winget upgrade --id $p.id --exact --silent --accept-package-agreements --accept-source-agreements --disable-interactivity) 2>&1',
             '  $code = $LASTEXITCODE',
             "  $tail = (($o | Select-Object -Last 3) -join ' ')",
@@ -626,7 +632,7 @@ module.exports.inventoryscanner = function (parent) {
             '}'
         ].concat(pinLines, [
             'if ($null -eq $results) { $results = @() }',
-            '@{ winget = $true; results = @($results) } | ConvertTo-Json -Compress -Depth 5 | ForEach-Object { Write-Output (\'' + obj.WINGET_MARKER + '\' + $_) }'
+            '@{ winget = $true; dry = $invDry; results = @($results) } | ConvertTo-Json -Compress -Depth 5 | ForEach-Object { Write-Output (\'' + obj.WINGET_MARKER + '\' + $_) }'
         ]).join(String.fromCharCode(10));
     };
 
@@ -693,20 +699,34 @@ module.exports.inventoryscanner = function (parent) {
      * @param {function} [done] - optional callback when the batch queue drained.
      * @returns {object} { started, nodes, busy? }
      */
-    obj.wgStartBatch = function (reason, done) {
+    /**
+     * @brief Start a batch of winget updates.
+     * @param {string} reason - 'scheduled' | 'sweep' | 'connect' | 'dry-run' | 'manual'.
+     * @param {function} [done] - optional callback when the batch queue drained.
+     * @param {Array<string>} [nodeids] - explicit device list (skips the scope
+     *   filter; used by per-device runs and the dry-run test button).
+     * @param {boolean} [dry] - report only: nothing is installed or pinned.
+     * @returns {object} { started, nodes, busy? }
+     */
+    obj.wgStartBatch = function (reason, done, nodeids, dry) {
         if (obj.wgBatchRunning) { return { started: false, busy: true, nodes: 0 }; }
         var wcfg = obj.wingetConfig();
-        obj.wgTargetNodes(reason === 'scheduled', function (nodeids) {
-            if (nodeids.length === 0) {
+        var launch = function (ids) {
+            if (ids.length === 0) {
                 obj.wgLog('update batch (' + reason + ') - no target devices');
                 if (done) done();
                 return;
             }
             obj.wgBatchRunning = true;
-            obj.wgLog('update batch (' + reason + ') starting for ' + nodeids.length + ' device(s)');
-            obj.wgQueue = nodeids.slice();
+            obj.wgBatchDry = dry === true;
+            obj.wgLog((dry === true ? 'DRY-RUN' : 'update batch') + ' (' + reason + ') starting for ' + ids.length + ' device(s)');
+            obj.wgQueue = ids.slice();
             obj.wgBatchDone = done || null;
             obj.wgPump();
+        };
+        if (Array.isArray(nodeids) && nodeids.length > 0) { launch(nodeids.slice(0, obj.WINGET_MAX_DEVICES)); return { started: true, nodes: 0 }; }
+        obj.wgTargetNodes(reason === 'scheduled' || reason === 'sweep', function (ids) {
+            launch(ids);
         });
         return { started: true, nodes: 0 };
     };
@@ -730,7 +750,7 @@ module.exports.inventoryscanner = function (parent) {
                 obj.wgPending[nodeid] = entry;
                 obj.wgActive++;
                 try {
-                    agent.send(JSON.stringify({ action: 'runcommands', type: 2, cmds: obj.wgBuildScript(obj.wingetConfig()), runAsUser: 0, reply: true, sessionid: sid, responseid: sid }));
+                    agent.send(JSON.stringify({ action: 'runcommands', type: 2, cmds: obj.wgBuildScript(obj.wingetConfig(), obj.wgBatchDry === true), runAsUser: 0, reply: true, sessionid: sid, responseid: sid }));
                     obj.wgLog(nodeid + ' - update script sent');
                 } catch (ex) {
                     clearTimeout(entry.timer); delete obj.wgPending[nodeid]; obj.wgActive--;
@@ -740,6 +760,8 @@ module.exports.inventoryscanner = function (parent) {
             }
             if ((obj.wgActive === 0) && (obj.wgQueue.length === 0) && obj.wgBatchRunning) {
                 obj.wgBatchRunning = false;
+        obj.wgBatchDry = false;
+            obj.wgBatchDry = false;
                 obj.wgSaveResults();
                 obj.wgLog('update batch finished');
                 var d = obj.wgBatchDone; obj.wgBatchDone = null;
@@ -772,7 +794,7 @@ module.exports.inventoryscanner = function (parent) {
         delete obj.wgPending[nodeid];
         obj.wgActive--;
         var text = (typeof command.result === 'string') ? command.result : JSON.stringify(command.result || '');
-        var rec = { time: new Date().toISOString(), winget: false, results: [] };
+        var rec = { time: new Date().toISOString(), winget: false, dry: obj.wgBatchDry === true, results: [] };
         var idx = text.lastIndexOf(obj.WINGET_MARKER);
         if (idx >= 0) {
             var payload = text.substring(idx + obj.WINGET_MARKER.length).trim();
@@ -787,19 +809,171 @@ module.exports.inventoryscanner = function (parent) {
             } catch (e) { rec.error = 'unparsable payload'; }
         } else { rec.error = 'no marker in output'; }
         obj.wgResults[nodeid] = rec;
-        var okN = 0, skipN = 0, failN = 0;
+        var okN = 0, skipN = 0, failN = 0, wouldN = 0;
         for (var i = 0; i < rec.results.length; i++) {
             var s = rec.results[i].state;
-            if (s === 'ok') okN++; else if (s.indexOf('skipped') === 0) skipN++; else failN++;
+            if (s === 'ok') okN++; else if (s === 'dry-run') wouldN++; else if (s.indexOf('skipped') === 0) skipN++; else failN++;
         }
-        obj.wgLog(nodeid + ' - ' + (rec.error || (rec.winget ? ('done: ' + okN + ' updated, ' + skipN + ' skipped, ' + failN + ' failed') : 'winget not available')));
+        obj.wgLog(nodeid + ' - ' + (rec.dry ? '[dry-run] ' : '') + (rec.error || (rec.winget ? (rec.dry ? ('would update ' + wouldN + ', ' + skipN + ' skipped, ' + failN + ' failed') : ('done: ' + okN + ' updated, ' + skipN + ' skipped, ' + failN + ' failed')) : 'winget not available')));
         obj.wgSaveResults();
         obj.wgPump();
     };
 
     /**
-     * @brief Chain the recurring winget batch (only when enabled).
-     * Same restart-proof timerGen/longTimeout pattern as the other schedulers.
+     * @brief Superseded-row pruning for the software list. Two registry rows
+     * that resolve to the SAME CPE product and the SAME major version are one
+     * program with a leftover uninstall entry (classic: "Mozilla Firefox
+     * 3.6.24 (x86 de-DE)" still listed next to "Firefox 121.0.1", or a chain
+     * of "Java 8 Update NNN" rows). Scanning the stale row would report
+     * fifteen-year-old CVEs against a patched product. The newest version of
+     * each (product, major) group survives. Python / .NET-style products key
+     * on major.minor because they genuinely install side by side. Rows with an
+     * unknown version are never treated as superseded.
+     * @param {Array<object>} softwareList - raw rows ({ name, version, publisher }).
+     * @returns {Array<object>} pruned list; input is not modified.
+     */
+    /**
+     * @brief Version/arch/locale-stripped lowercase name token for the prune
+     *   grouping key when no CPE mapping resolves; needs no NVD index.
+     * @param {string} name - Display name.
+     * @returns {string} The token.
+     */
+    obj.pruneNameToken = function (name) {
+        return String(name).toLowerCase()
+            .replace(/\(.*?\)/g, ' ')
+            .replace(/\b\d+(?:[._-]\d+)*\b/g, ' ')
+            .replace(/\b(x86|x64|arm64?|arm|64[ -]?bit|32[ -]?bit|[a-z][a-z][-_][A-Za-z]{2,4}|update|edition|beta|rc)\b/gi, ' ')
+            .replace(/[^a-z0-9+.#]+/g, ' ')
+            .replace(/\s+/g, ' ').trim().toLowerCase();
+    };
+
+    obj.pruneSuperseded = function (softwareList) {
+        if (!Array.isArray(softwareList)) return [];
+        var SIDE_BY_SIDE = { jre: 1, jdk: 1, java: 1, net_framework: 1, dotnet: 1, python: 2, visual_c: 1, 'visual_c++_redistributable': 1, vcredist: 1 };
+        var best = {}, firstAt = {}, order = [];
+        for (var i = 0; i < softwareList.length; i++) {
+            var sw = softwareList[i];
+            if (sw == null) continue;
+            var name = String(sw.name || sw.Name || sw.displayName || sw.DisplayName || '');
+            var version = String(sw.version != null ? sw.version : (sw.Version != null ? sw.Version : ''));
+            var vm = version.trim().match(/^(?:0?v|v)?(\d+)(?:[._](\d+))?/);
+            var key = null;
+            if (name !== '' && vm != null) {
+                var pub = String(sw.publisher || sw.Publisher || '');
+                var mapped = null;
+                try { mapped = obj.deriveCpeProduct(pub, name); } catch (e) { }
+                var product, vendor;
+                if (mapped != null) { product = mapped.product; vendor = mapped.vendor; }
+                else {
+                    product = obj.pruneNameToken(name);
+                    vendor = null;
+                    try { vendor = obj.deriveVendorFromPublisher(pub); } catch (e2) { }
+                    if (vendor == null) { vendor = '?'; }
+                    else if (product.indexOf(vendor + ' ') === 0) { product = product.substring(vendor.length + 1); }
+                }
+                var mode = SIDE_BY_SIDE[String(product).toLowerCase()] || 0;var grp = mode === 1 ? vm[1] : (mode === 2 ? (vm[2] != null ? vm[1] + '.' + vm[2] : vm[1]) : 'all');
+                key = (vendor || '?') + '|' + String(product).toLowerCase() + '@' + grp;
+            }
+            if (key == null) { order.push({ uniq: 'raw:' + i, row: sw }); continue; }
+            order.push({ uniq: key, row: null });
+            var cur = best[key];
+            if (cur == null) { best[key] = { row: sw, version: version }; continue; }
+            try {
+                if (obj.compareCpeVersions(version, cur.version) > 0) { best[key] = { row: sw, version: version }; }
+            } catch (e) { }
+        }
+        var seen = {}, out = [];
+        for (var o = 0; o < order.length; o++) {
+            var e2 = order[o];
+            if (e2.row != null) { out.push(e2.row); continue; }
+            if (seen[e2.uniq] == null && best[e2.uniq] != null) { seen[e2.uniq] = 1; out.push(best[e2.uniq].row); }
+        }
+        return out;
+    };
+
+    /** @type {string} what the UI shows instead of the removed interval setting. */
+    obj.WINGET_SCHEDULING_DESC = 'daily - right after a device connects on a new calendar day, and at the latest 24 h after its previous automatic run';
+
+
+    /** @type {number} sweep cadence for the due check (ms); not a user setting. */
+    obj.WINGET_SWEEP_MS = 60 * 60 * 1000;
+    /** @type {number} force a refresh after this much continuous uptime (ms). */
+    obj.WINGET_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+    /**
+     * @brief Two-stage automatic-update policy (replaces the old interval):
+     * a device is due when it never ran, when its last run lies on an earlier
+     * calendar day, or when that run is 24h+ old (long-lived connection).
+     * @param {string} nodeid - Node id.
+     * @param {object} [results] - override map for testing.
+     * @param {number} [now] - override now (epoch ms).
+     * @returns {boolean} true when an automatic batch should cover the device.
+     */
+    obj.wgNodeDue = function (nodeid, results, now) {
+        var res = results || obj.wgResults || {};
+        var t = (res[nodeid] && res[nodeid].time) ? Date.parse(res[nodeid].time) : 0;
+        if (!t || isNaN(t)) return true;
+        var n = now || Date.now();
+        var d = new Date(t), e = new Date(n);
+        if (d.getFullYear() !== e.getFullYear() || d.getMonth() !== e.getMonth() || d.getDate() !== e.getDate()) return true;
+        return (n - t) >= obj.WINGET_MAX_AGE_MS;
+    };
+
+    /**
+     * @brief Agent-connect / sweep entry for ONE device: runs it when enabled,
+     * in scope, not excluded, due and no batch/pending run is in flight.
+     * @param {string} nodeid - Node id.
+     * @param {string} reason - 'connect' | 'sweep' (logged).
+     */
+    obj.wgQueueNode = function (nodeid, reason) {
+        try {
+            var wcfg = obj.wingetConfig();
+            if (!wcfg.enabled) return false;
+            if (wcfg.excludeNodes.indexOf(nodeid) >= 0) return false;
+            if (obj.wgBatchRunning || (obj.wgPending && obj.wgPending[nodeid] != null)) return false;
+            if (!obj.wgNodeDue(nodeid)) return false;
+            if (wcfg.meshes != null) {
+                obj.db.Get(nodeid, function (err, node) {
+                    try {
+                        if (err || (node == null) || node.deleted != null) return;
+                        if (wcfg.meshes.indexOf(node.meshid) < 0) return;
+                        if (obj.wgBatchRunning) return;
+                        obj.wgLog('auto-update (' + reason + ') for one device');
+                        obj.wgStartBatch(reason, null, [nodeid], false);
+                    } catch (e) { }
+                });
+                return true;
+            }
+            obj.wgLog('auto-update (' + reason + ') for one device');
+            obj.wgStartBatch(reason, null, [nodeid], false);
+            return true;
+        } catch (e) { return false; }
+    };
+
+    /**
+     * @brief One sweep pass over scheduled-scope devices: queue the ONLINE and
+     * due ones as a batch. Scheduled by scheduleWingetUpdates hourly.
+     */
+    obj.wgSweepOnce = function (done) {
+        var wcfg = obj.wingetConfig();
+        if (!wcfg.enabled) { if (done) done(); return; }
+        obj.wgTargetNodes(true, function (ids) {
+            var ws = obj.meshServer.webserver;
+            var due = [];
+            for (var i = 0; i < ids.length; i++) {
+                var online = (ws != null && ws.wsagents != null && ws.wsagents[ids[i]] != null);
+                if (online && obj.wgNodeDue(ids[i])) due.push(ids[i]);
+            }
+            if (due.length === 0) { if (done) done(); return; }
+            obj.wgLog('sweep: ' + due.length + ' due device(s)');
+            obj.wgStartBatch('sweep', done, due, false);
+        });
+    };
+
+    /**
+     * @brief Hourly sweep loop (restart-proof gen guard). Devices that
+     * reconnect are covered immediately by the agent-connect hook; this loop
+     * catches devices whose connection simply outlives the day boundary.
      */
     obj.scheduleWingetUpdates = function () {
         var wcfg = obj.wingetConfig();
@@ -807,8 +981,8 @@ module.exports.inventoryscanner = function (parent) {
         var gen = obj.timerGen;
         obj.longTimeout(function () {
             if (gen !== obj.timerGen) { return; }
-            obj.wgStartBatch('scheduled', function () { obj.scheduleWingetUpdates(); });
-        }, wcfg.intervalHours * 3600 * 1000);
+            obj.wgSweepOnce(function () { obj.scheduleWingetUpdates(); });
+        }, obj.WINGET_SWEEP_MS);
     };
 
 
@@ -857,12 +1031,12 @@ module.exports.inventoryscanner = function (parent) {
         };
         send({
             config: {
-                enabled: wcfg.enabled, intervalHours: wcfg.intervalHours,
+                enabled: wcfg.enabled, scheduling: obj.WINGET_SCHEDULING_DESC,
                 updateMeshes: wcfg.meshes || [], excludeNodes: wcfg.excludeNodes,
                 ignorePackages: wcfg.ignorePackages, pinSync: wcfg.pinSync
             },
             sources: {
-                enabled: srcOf('enabled'), intervalHours: srcOf('intervalHours'),
+                enabled: srcOf('enabled'),
                 updateMeshes: srcOf('updateMeshes'), excludeNodes: srcOf('excludeNodes'),
                 ignorePackages: srcOf('ignorePackages'), pinSync: srcOf('pinSync')
             },
@@ -874,8 +1048,6 @@ module.exports.inventoryscanner = function (parent) {
     obj.wgSaveConfigHandler = function (req, res, user) {
         var send = function (o) { res.type('json'); res.json(o); };
         var body = (req.body || {});
-        var intervalHours = parseInt(String(body.intervalHours), 10);
-        if (isNaN(intervalHours) || intervalHours < 1 || intervalHours > 87600) { return send({ error: 'Invalid interval (1..87600 hours).' }); }
         var meshes = parseMeshIds(body.updateMeshes);
         var excludes = [];
         if (typeof body.excludeNodes === 'string') {
@@ -899,7 +1071,6 @@ module.exports.inventoryscanner = function (parent) {
         }
         obj.pluginSettings.wingetUpdater = {
             enabled: boolSetting(body.enabled, false),
-            intervalHours: intervalHours,
             updateMeshes: meshes,
             excludeNodes: excludes,
             ignorePackages: ignore,
@@ -912,12 +1083,29 @@ module.exports.inventoryscanner = function (parent) {
         });
     };
 
-    /** @brief POST wg_run: start a manual batch immediately. */
+    /**
+     * @brief POST wg_run: manual batch; optional nodeIds (one or several
+     *   devices, bypasses scope filters) and dry=true (report only).
+     */
     obj.wgRunHandler = function (req, res, user) {
         var send = function (o) { res.type('json'); res.json(o); };
         if (obj.wgBatchRunning) { return send({ started: false, busy: true }); }
-        var r = obj.wgStartBatch('manual', null);
-        send({ started: !!r.started, busy: !!r.busy });
+        var body = (req.body || {});
+        var ids = null;
+        if (body.nodeIds != null) {
+            var arr = body.nodeIds;
+            if (typeof arr === 'string') { try { arr = JSON.parse(arr); } catch (e) { arr = arr.split(','); } }
+            if (!Array.isArray(arr)) arr = [arr];
+            ids = [];
+            for (var i = 0; i < arr.length && ids.length < 200; i++) {
+                var x = String(arr[i] == null ? '' : arr[i]).trim();
+                if (x !== '' && /^node\/[^:]{1,100}$/.test(x) && ids.indexOf(x) < 0) ids.push(x);
+            }
+            if (ids.length === 0) { return send({ error: 'Invalid nodeIds.' }); }
+        }
+        var dry = (body.dry === 'true' || body.dry === true);
+        var r = obj.wgStartBatch(dry ? 'dry-run' : 'manual', null, ids, dry);
+        send({ started: !!r.started, busy: !!r.busy, dry: dry, devices: ids == null ? -1 : ids.length });
     };
 
     /**
@@ -947,12 +1135,12 @@ module.exports.inventoryscanner = function (parent) {
                         var rec = obj.wgResults[n._id];
                         var sum = null;
                         if (rec != null) {
-                            var okN = 0, skN = 0, faN = 0;
+                            var okN = 0, skN = 0, faN = 0, wdN = 0;
                             for (var ri = 0; ri < rec.results.length; ri++) {
                                 var s = rec.results[ri].state || '';
-                                if (s === 'ok') okN++; else if (s.indexOf('skipped') === 0) skN++; else faN++;
+                                if (s === 'ok') okN++; else if (s === 'dry-run') wdN++; else if (s.indexOf('skipped') === 0) skN++; else faN++;
                             }
-                            sum = { time: rec.time, winget: rec.winget === true, ok: okN, skipped: skN, failed: faN, error: rec.error || '' };
+                            sum = { time: rec.time, winget: rec.winget === true, dry: rec.dry === true, ok: okN, would: wdN, skipped: skN, failed: faN, error: rec.error || '' };
                         }
                         devices.push({
                             id: n._id, host: obj.getHostName ? obj.getHostName(n) : (n.rname || n.name || n._id),
@@ -967,7 +1155,7 @@ module.exports.inventoryscanner = function (parent) {
                 devices.sort(function (a, b) { return (a.group === b.group) ? String(a.host).localeCompare(String(b.host)) : String(a.group).localeCompare(String(b.group)); });
                 send({
                     devices: devices, running: obj.wgBatchRunning, active: obj.wgActive, queued: obj.wgQueue.length,
-                    config: { enabled: wcfg.enabled, intervalHours: wcfg.intervalHours, updateMeshes: wcfg.meshes || [], excludeNodes: wcfg.excludeNodes, ignorePackages: wcfg.ignorePackages, pinSync: wcfg.pinSync }
+                    config: { enabled: wcfg.enabled, scheduling: obj.WINGET_SCHEDULING_DESC, updateMeshes: wcfg.meshes || [], excludeNodes: wcfg.excludeNodes, ignorePackages: wcfg.ignorePackages, pinSync: wcfg.pinSync }
                 });
             });
         });
@@ -1608,9 +1796,14 @@ module.exports.inventoryscanner = function (parent) {
      */
     obj.hook_agentCoreIsStable = function (agentObj, parent) {
         try {
+            if ((agentObj == null) || (agentObj.dbNodeKey == null)) return;
+            try {
+                var wgNode = agentObj.dbNodeKey;
+                setTimeout(function () { try { obj.wgQueueNode(wgNode, 'connect'); } catch (e) { } }, obj.staggerDelay ? obj.staggerDelay() : 60000);
+            } catch (e) { }
             var cfg = obj.collectorConfig();
             if (cfg.collectOnAgentConnect === false) return;
-            if ((agentObj == null) || (agentObj.dbNodeKey == null) || (typeof agentObj.send !== 'function')) return;
+            if (typeof agentObj.send !== 'function') return;
             // Let the agent fully settle, then spread the query over a random
             // window so a large fleet does not create a load spike on reconnect.
             setTimeout(function () {
@@ -2827,9 +3020,9 @@ obj.loadNvdFromAllFiles = function () {
     obj.getStoredSoftware = function (node, doc) {
         var key = safeNodeDir(node && node._id);
         var entry = obj.softwareInventory[key];
-        if (entry && Array.isArray(entry.apps) && entry.apps.length > 0) { return entry.apps; }
+        if (entry && Array.isArray(entry.apps) && entry.apps.length > 0) { return obj.pruneSuperseded(entry.apps); }
         var docApps = (doc != null) ? (doc.apps || doc.Apps || doc.software || doc.installedApps) : null;
-        if (Array.isArray(docApps)) { return docApps; }
+        if (Array.isArray(docApps)) { return obj.pruneSuperseded(docApps); }
         return [];
     };
 
@@ -2985,7 +3178,8 @@ obj.loadNvdFromAllFiles = function () {
                 lastUpdate: obj.lastUpdate || '',
                 lastScan: obj.lastScan || '',
                 scanIntervalHours: obj.scannerConfig().intervalHours,
-                totalCves: obj.allCves.length
+                totalCves: obj.allCves.length,
+                version: obj.PLUGIN_VERSION
             });
         });
     };

@@ -88,8 +88,8 @@ On a configurable interval (e.g. monthly) the server re-scans all groups, stores
 
 ### 6. Automatic software updates via winget (opt-in)
 
-The plugin can keep Windows endpoints patched through the official **winget** package manager - on a
-schedule or on demand from the panel's **Updates** tab. It is completely opt-in: nothing runs until you
+The plugin can keep Windows endpoints patched through the official **winget** package manager -
+automatically or on demand from the panel's **Updates** tab. It is completely opt-in: nothing runs until you
 enable it *and* tick at least one device group.
 
 * **Two-phase per device, package by package**: one script run lists everything with an available upgrade
@@ -100,10 +100,13 @@ enable it *and* tick at least one device group.
   skipped in every batch - and additionally pinned on the client with `winget pin add --installed`, so
   even a manual `winget upgrade --all` by a user leaves the licensed version in place. Remove an entry
   from the list to let updates flow again.
-* **Per-device exclusions**: tick "Excluded" next to any machine to keep it out of automatic *and* manual
-  batches (e.g. kiosk PCs, presentation laptops).
-* **Scheduling**: an interval in hours (default weekly); runs are queued with two devices in parallel to
-  spare the network; devices offline during a batch are skipped, not retried forever.
+* **Per-device control**: the device dropdown holds every machine (sorted by location, then name).
+  *Exclude* keeps a device out of every automatic and manual batch (kiosk PCs, presentation laptops),
+  *Include again* puts it back, *Update this device now* patches exactly that one machine.
+  A dry run shows what would happen first, without touching anything.
+* **Scheduling without intervals**: a device is updated as soon as it connects on a calendar day it has
+  not been updated on yet - and at the latest 24 h after its previous run if the connection never dropped.
+  Batches run two devices in parallel; offline devices are simply picked up at the next connect.
 * **Full audit trail**: every batch is logged line by line (`winget-update.log`, tailable in the UI), and
   the per-device result table shows which package went from which version to which - or why it failed
   (exit code + last installer output).
@@ -212,7 +215,6 @@ tab wins over these values until you revert it.
 | `collectIntervalMinutes` (*`inventoryScanner`* section) | `1440` | Collect inventory every N minutes (`0` = off) |
 | `collectOnAgentConnect` (*`inventoryScanner`* section) | `true` | "Collect when an agent connects" |
 | `enabled` (*`wingetUpdater`* section) | `false` | Automatic winget updates on/off (Updates tab) |
-| `intervalHours` (*`wingetUpdater`* section) | `168` | Batch interval (hours) |
 | `updateMeshes` (*`wingetUpdater`* section) | none | Device groups that receive automatic updates |
 | `excludeNodes` (*`wingetUpdater`* section) | none | Node ids permanently excluded from batches |
 | `ignorePackages` (*`wingetUpdater`* section) | none | `[{id, note}]` package ids never upgraded (also client-pinned) |
@@ -251,8 +253,14 @@ another plugin's buttons, ours are left out (no duplicates).
 * `vulnerabilityScanner` and `inventoryScanner` are **siblings of `plugins`** directly under `settings`. The two
   section names differ by one letter; a typo silently keeps defaults.
 * Settings-tab changes need **no restart**; `config.json` changes need a server restart (and Ctrl+F5, the
-  browser caches the UI scripts).* Ratings, comments, CPE mappings and UI settings live under `<datapath>/nvd/` and
+  browser caches the UI scripts).
+* Ratings, comments, CPE mappings and UI settings live under `<datapath>/nvd/` and
   `<datapath>/plugins/inventoryscanner/` - see [Data written](#data-written-by-the-plugin).
+* Stale registry duplicates: when the same program appears twice (upgrader leftovers like a
+  "Firefox 3.6.24" row next to "Firefox 121.0.1", or a chain of "Java 8 Update NNN" rows), only the
+  newest version per product is scanned - years-old CVEs are not reported against patched software.
+  Products that genuinely install side by side (Java major releases, Python/.NET minors, VC++
+  runtimes) are kept separate on purpose.
 
 ## URLs
 
