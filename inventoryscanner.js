@@ -17,7 +17,7 @@
  * NVD feed is downloaded.
  *
  * @author derStephan
- * @version 2.1.8
+ * @version 2.2.0
  *
  * Transparency: This plugin was created with the assistance of Qwen 3.6 27B and Qwen 3.8 Flash Next.
  * Security audit (2026-11-06) performed by NVIDIA Nemotron 3 550B A55B via opencode.
@@ -161,6 +161,30 @@ module.exports.inventoryscanner = function (parent) {
      * is present and schedules the weekly update.
      */
     obj.server_startup = function () {
+        // MeshCentral's installPlugin ends with a plain require() which returns the
+        // CACHED module after an upgrade - the old instance stays active and this hook
+        // runs on it. Detect the newer manifest beside the file and hot-swap a fresh
+        // instance into the pluginHandler (all dispatch is by reference, so one click
+        // is enough; no server restart needed).
+        try {
+            var diskVer = null;
+            try { diskVer = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8')).version; } catch (e0) { }
+            if (diskVer != null && obj.PLUGIN_VERSION !== 'unknown' && diskVer !== obj.PLUGIN_VERSION && obj.parent != null && obj.parent.plugins != null) {
+                var sname = obj.shortName;
+                obj.wgLog('upgrade detected on disk (' + obj.PLUGIN_VERSION + ' -> ' + diskVer + '), reloading without server restart');
+                try {
+                    Object.keys(require.cache).forEach(function (k) { if (k.indexOf(__dirname) === 0) { delete require.cache[k]; } });
+                    var fresh = require(path.join(__dirname, sname + '.js'))[sname](obj.parent);
+                    obj.parent.plugins[sname] = fresh;
+                    obj.parent.exports[sname] = fresh.exports;
+                    obj.timerGen++;
+                    obj.__superseded = true;
+                    try { fresh.server_startup(); } catch (e1) { }
+                    obj.wgLog('hot reload complete, version ' + fresh.PLUGIN_VERSION + ' active');
+                    return;
+                } catch (e2) { obj.wgLog('hot reload failed (' + e2.message + '); the next server restart applies the upgrade'); }
+            }
+        } catch (e) { }
         obj.debug('plugin:inventory_scanner', 'Starting inventory & vulnerability scanner plugin');
         try { fs.mkdirSync(obj.nvdDataPath, { recursive: true }); } catch (e) { }
         try { fs.mkdirSync(obj.inventoryDataPath, { recursive: true }); } catch (e) { }
@@ -1548,9 +1572,10 @@ module.exports.inventoryscanner = function (parent) {
             ws.routeAgentCommand = function (command, domainid, nodeid, meshid) {
                 try {
                     if ((command != null) && (typeof command === 'object')) {
-                        // If the plugin consumed this response (patch data), do not
-                        // forward it to browser clients (it can be large).
-                        if (self.onAgentResponse(command, domainid, nodeid, meshid) === true) { return; }
+                        // Dispatch to whichever instance currently owns the slot, so a
+                        // hot-swap during an upgrade keeps this hook alive on the new code.
+                        var inst = (self.parent != null && self.parent.plugins != null) ? (self.parent.plugins[self.shortName] || self) : self;
+                        if (inst.onAgentResponse(command, domainid, nodeid, meshid) === true) { return; }
                     }
                 } catch (e) { }
                 return original(command, domainid, nodeid, meshid);

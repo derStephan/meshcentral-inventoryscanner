@@ -748,6 +748,21 @@ steps.push(function (next) {
     next();
 });
 
+
+// ---- v2.2.0: one-click upgrade via in-plugin hot reload ----
+steps.push(function (next) {
+    var ph = { parent: meshServer, plugins: {}, exports: {} };
+    var inst = factory(ph);
+    inst.PLUGIN_VERSION = '0.0.1';
+    ph.plugins.inventoryscanner = inst;
+    inst.server_startup();
+    check('upgrade: stale instance replaced in place', ph.plugins.inventoryscanner !== inst && ph.plugins.inventoryscanner.PLUGIN_VERSION !== '0.0.1', ph.plugins.inventoryscanner && ph.plugins.inventoryscanner.PLUGIN_VERSION);
+    check('upgrade: exports point at the fresh instance', ph.exports.inventoryscanner === ph.plugins.inventoryscanner.exports);
+    check('upgrade: old timers disarmed', inst.__superseded === true);
+    ph.plugins.inventoryscanner.timerGen++;
+    next();
+});
+
 (function run(i) {
     if (i >= steps.length) {
         console.log(failures === 0 ? '\ntest-plugin: ALL PASSED' : '\ntest-plugin: ' + failures + ' FAILURE(S)');

@@ -164,6 +164,11 @@ this repository's config.json and push - every server checks that file and offer
 (the install always pulls the current downloadUrl ZIP). Git tags are not used; a "downgrade to a
 specific version" picker is deliberately not offered.
 
+One **Upgrade** click is enough: MeshCentral unpacks the new files and the plugin notices
+the version change on disk during its startup hook, then hot-swaps the fresh instance into the
+plugin loader (require-cache bust) - no server restart needed. Reopen the plugin tab once so the
+browser picks up the new UI; an already-open page keeps running its old inline script.
+
 ### Install & startup timings (what to expect)
 
 Installation and the first start are **asynchronous** - a freshly installed plugin can look "incomplete"

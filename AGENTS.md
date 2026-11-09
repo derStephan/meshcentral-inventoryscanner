@@ -195,6 +195,18 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   fixes Firefox-2008-CVE noise from registry leftovers); `jre/jdk/java/net_framework/dotnet/vc++` key
   on major, `python` on major.minor (real side-by-side installs). Unversioned rows never supersede.
 
+## Plugin upgrade path (verified against MeshCentral 1.3.1 pluginHandler/meshagent)
+
+- pluginHandler.installPlugin unzips then ends with a bare require(): after an UPGRADE Node
+  returns the CACHED old module - the running instance stays stale until a full restart (the
+  two-click symptom). Routes/hooks dispatch dynamically via obj.plugins[name][fn], therefore the
+  plugin self-heals: server_startup compares config.json vs the in-memory PLUGIN_VERSION and on
+  mismatch busts the require cache for __dirname, creates a fresh instance, swaps it into
+  parent.plugins/exports and disarms its own timer chain (timerGen++). One click, no restart.
+  The routeAgentCommand monkey-patch resolves the current instance per call (never a stale ref).
+  An already-open browser page keeps running old inline JS until reloaded - HTML/exports are
+  re-rendered fresh on every request, there is no server push channel to plugin pages.
+
 ## Winget auto-update engine (verified contracts)
 
 - Transport (verified in MeshCentral `agents/meshcore.js`): the server sends
@@ -310,7 +322,7 @@ npm test           # = tools/check.js && tools/test-plugin.js && tools/test-view
 
 - `tools/check.js`: `node --check` on the plugin, inline-script syntax/`{{`-hazard check, JSON validity of
   config files, and view-name↔render-name consistency. Must run anywhere (no dependencies).
-- `tools/test-plugin.js`: 177 behavioral assertions against the real module (mocked MeshCentral DB/webserver):
+- `tools/test-plugin.js`: 180 behavioral assertions against the real module (mocked MeshCentral DB/webserver):
   locations grouping & counting, manual-rating severity override, FP exclusion, host-name preference, coverage
   numbers, multi-mesh scan/`mixed` logic, all POST handlers incl. validation/rejections, routes, admin gating
   (401), CPE table add/delete, vulns CSV header/content, toolbar button injection (simulated browser DOM), remote CPE table apply/cache/fetch/settings, NVD download-log tailing, manual NVD update trigger + concurrency guard, unknown-version matching rules, winget updater (builder/parser/queue/routes), `longTimeout` chunking, restart-proof schedule delays,
