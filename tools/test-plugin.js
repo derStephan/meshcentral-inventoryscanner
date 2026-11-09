@@ -703,6 +703,17 @@ steps.push(function (next) {
     }), user);
 });
 
+
+// ---- v2.1.5: client transcript ----
+steps.push(function (next) {
+    var sc = obj.wgBuildScript({ ignorePackages: [{ id: 'Foo.Bar' }], pinSync: false }, true);
+    check('transcript: script writes and closes a client log', sc.indexOf('Start-Transcript') >= 0 && sc.indexOf('Stop-Transcript') >= 0);
+    check('transcript: answer is emitted BEFORE the transcript stops', sc.indexOf('@@INVWUP@@') < sc.indexOf('Stop-Transcript') || sc.indexOf(obj.WINGET_MARKER) < sc.indexOf('Stop-Transcript'), sc.indexOf(obj.WINGET_MARKER) + ':' + sc.indexOf('Stop-Transcript'));
+    check('transcript: rotation guard present', sc.indexOf('-gt 5MB') >= 0);
+    check('transcript: agent folder probe + ProgramData fallback', sc.indexOf('(Get-Process -Id $PID -ErrorAction Stop).Parent.Path') >= 0 && (sc.match(/ProgramData/g) || []).length >= 2, sc.length);
+    next();
+});
+
 (function run(i) {
     if (i >= steps.length) {
         console.log(failures === 0 ? '\ntest-plugin: ALL PASSED' : '\ntest-plugin: ' + failures + ' FAILURE(S)');

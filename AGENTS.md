@@ -1,4 +1,11 @@
-# AGENTS.md — MeshCentral Inventory & Vulnerability Scanner Plugin
+feat: 2.1.5 - client-side transcript next to the agent binary
+
+Every winget update/dry-run script wraps itself in Start/Stop-Transcript
+writing invscanner-winget.log into the Mesh Agent install folder (parent-
+process probe; falls back to C:\ProgramData when that path is not writable,
+rotates once at 5 MB). This is the witness when a run never answers the
+server. The reply is emitted before the transcript closes; the server log
+names the location. Tests added (169 total).# AGENTS.md — MeshCentral Inventory & Vulnerability Scanner Plugin
 
 Guide for AI agents working on this repository. Everything stated here was verified against the running code and
 the test suite in `tools/`; trust the code and these notes over assumptions.
@@ -221,6 +228,9 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   `msg/console` packets carrying an `invscanner-wg-` sessionid (e.g. the agent's 'already busy' note,
   meshcore.js breaks WITHOUT a runcommands reply in that case) are mirrored into winget-update.log.
   `wg_status` devices[] carry `pending:{since}` while a script awaits its answer.
+  Every script self-logs on the client: Start/Stop-Transcript around the run, file
+  next to the agent binary (parent-process probe, fallback to C:\\ProgramData; rotates once at 5MB) -
+  the only witness when a reply never arrives.
   `hook_agentCoreIsStable` additionally queues the device through `wgQueueNode` (stagger-delayed, so the
   collector settles first; disabled/excluded/not-due devices short-circuit without any agent traffic).
 - Batching: queue with 2 devices in parallel (`WINGET_MAX_PARALLEL`), 2 h watchdog per device, results in
@@ -297,7 +307,7 @@ npm test           # = tools/check.js && tools/test-plugin.js && tools/test-view
 
 - `tools/check.js`: `node --check` on the plugin, inline-script syntax/`{{`-hazard check, JSON validity of
   config files, and view-name↔render-name consistency. Must run anywhere (no dependencies).
-- `tools/test-plugin.js`: 165 behavioral assertions against the real module (mocked MeshCentral DB/webserver):
+- `tools/test-plugin.js`: 168 behavioral assertions against the real module (mocked MeshCentral DB/webserver):
   locations grouping & counting, manual-rating severity override, FP exclusion, host-name preference, coverage
   numbers, multi-mesh scan/`mixed` logic, all POST handlers incl. validation/rejections, routes, admin gating
   (401), CPE table add/delete, vulns CSV header/content, toolbar button injection (simulated browser DOM), remote CPE table apply/cache/fetch/settings, NVD download-log tailing, manual NVD update trigger + concurrency guard, unknown-version matching rules, winget updater (builder/parser/queue/routes), `longTimeout` chunking, restart-proof schedule delays,

@@ -17,7 +17,7 @@
  * NVD feed is downloaded.
  *
  * @author derStephan
- * @version 2.1.4
+ * @version 2.1.5
  *
  * Transparency: This plugin was created with the assistance of Qwen 3.6 27B and Qwen 3.8 Flash Next.
  * Security audit (2026-11-06) performed by NVIDIA Nemotron 3 550B A55B via opencode.
@@ -605,6 +605,11 @@ module.exports.inventoryscanner = function (parent) {
         return [
             "$ProgressPreference = 'SilentlyContinue'",
             "$invDry = " + (dry ? '$true' : '$false'),
+            "$invTDir = $env:ProgramData",
+            "try { $invPP = (Get-Process -Id $PID -ErrorAction Stop).Parent.Path; if ($invPP) { $invTDir = Split-Path $invPP } } catch { }",
+            "$invT = Join-Path $invTDir 'invscanner-winget.log'",
+            "if (Test-Path $invT) { try { if ((Get-Item $invT).Length -gt 5MB) { Move-Item $invT ($invT + '.old') -Force } } catch { } }",
+            "try { Start-Transcript -Path $invT -Append | Out-Null } catch { $invT = Join-Path $env:ProgramData 'invscanner-winget.log'; try { Start-Transcript -Path $invT -Append | Out-Null } catch { } }",
             'if (-not (Get-Command winget -ErrorAction SilentlyContinue)) { Write-Output \'' + obj.WINGET_MARKER + '{"winget":false}\'; exit }',
             '$invIgnore = @(' + psList + ')',
             "$raw = ''",
@@ -633,7 +638,8 @@ module.exports.inventoryscanner = function (parent) {
             '}'
         ].concat(pinLines, [
             'if ($null -eq $results) { $results = @() }',
-            '@{ winget = $true; dry = $invDry; results = @($results) } | ConvertTo-Json -Compress -Depth 5 | ForEach-Object { Write-Output (\'' + obj.WINGET_MARKER + '\' + $_) }'
+            '@{ winget = $true; dry = $invDry; results = @($results) } | ConvertTo-Json -Compress -Depth 5 | ForEach-Object { Write-Output (\'' + obj.WINGET_MARKER + '\' + $_) }',
+            "try { Stop-Transcript | Out-Null } catch { }"
         ]).join(String.fromCharCode(10));
     };
 
@@ -766,7 +772,7 @@ module.exports.inventoryscanner = function (parent) {
                 obj.wgActive++;
                 try {
                     agent.send(JSON.stringify({ action: 'runcommands', type: 2, cmds: obj.wgBuildScript(obj.wingetConfig(), obj.wgBatchDry === true), runAsUser: 0, reply: true, sessionid: sid, responseid: sid }));
-                    obj.wgLog(nodeid + ' - update script sent');
+                    obj.wgLog(nodeid + ' - update script sent (client transcript: invscanner-winget.log in the agent folder)');
                 } catch (ex) {
                     clearTimeout(entry.timer); delete obj.wgPending[nodeid]; obj.wgActive--;
                     obj.wgResults[nodeid] = { time: new Date().toISOString(), error: 'send-failed: ' + ex.message, results: [] };
