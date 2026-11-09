@@ -217,6 +217,10 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   Per-device manual/dry runs pass explicit ids to `wgStartBatch(reason, done, nodeids, dry)`.
   `wgTargetNodes` applies the same Windows rule (no agent traffic to phones/Linux ever).
   Package states: `ok`/`failed`/`skipped-ignored`/`skipped-noversion`/`dry-run` (dry JSON carries `dry:true`).
+  Watchdogs: 2h real batches, 10min dry runs (`WINGET_DRY_TIMEOUT_MS`, chosen via `wgBatchDry`).
+  `msg/console` packets carrying an `invscanner-wg-` sessionid (e.g. the agent's 'already busy' note,
+  meshcore.js breaks WITHOUT a runcommands reply in that case) are mirrored into winget-update.log.
+  `wg_status` devices[] carry `pending:{since}` while a script awaits its answer.
   `hook_agentCoreIsStable` additionally queues the device through `wgQueueNode` (stagger-delayed, so the
   collector settles first; disabled/excluded/not-due devices short-circuit without any agent traffic).
 - Batching: queue with 2 devices in parallel (`WINGET_MAX_PARALLEL`), 2 h watchdog per device, results in
@@ -293,7 +297,7 @@ npm test           # = tools/check.js && tools/test-plugin.js && tools/test-view
 
 - `tools/check.js`: `node --check` on the plugin, inline-script syntax/`{{`-hazard check, JSON validity of
   config files, and view-name↔render-name consistency. Must run anywhere (no dependencies).
-- `tools/test-plugin.js`: 161 behavioral assertions against the real module (mocked MeshCentral DB/webserver):
+- `tools/test-plugin.js`: 165 behavioral assertions against the real module (mocked MeshCentral DB/webserver):
   locations grouping & counting, manual-rating severity override, FP exclusion, host-name preference, coverage
   numbers, multi-mesh scan/`mixed` logic, all POST handlers incl. validation/rejections, routes, admin gating
   (401), CPE table add/delete, vulns CSV header/content, toolbar button injection (simulated browser DOM), remote CPE table apply/cache/fetch/settings, NVD download-log tailing, manual NVD update trigger + concurrency guard, unknown-version matching rules, winget updater (builder/parser/queue/routes), `longTimeout` chunking, restart-proof schedule delays,

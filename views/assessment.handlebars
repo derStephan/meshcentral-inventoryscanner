@@ -528,7 +528,8 @@
             for (var i2 = 0; i2 < devs.length; i2++) {
                 var d2 = devs[i2];
                 var last = '-';
-                if (d2.last) {
+                if (d2.pending) { last = 'waiting for answer since ' + new Date(d2.pending.since || Date.now()).toLocaleTimeString(); }
+                else if (d2.last) {
                     last = esc(d2.last.time || '') + ' - ';
                     if (d2.last.error) { last += esc(d2.last.error); }
                     else if (!d2.last.winget) { last += 'winget not available'; }

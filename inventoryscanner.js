@@ -17,7 +17,7 @@
  * NVD feed is downloaded.
  *
  * @author derStephan
- * @version 2.1.3
+ * @version 2.1.4
  *
  * Transparency: This plugin was created with the assistance of Qwen 3.6 27B and Qwen 3.8 Flash Next.
  * Security audit (2026-11-06) performed by NVIDIA Nemotron 3 550B A55B via opencode.
@@ -556,6 +556,7 @@ module.exports.inventoryscanner = function (parent) {
 
     obj.WINGET_MAX_PARALLEL = 2;
     obj.WINGET_RUN_TIMEOUT_MS = 2 * 60 * 60 * 1000;
+    obj.WINGET_DRY_TIMEOUT_MS = 10 * 60 * 1000;
     obj.WINGET_MARKER = '@@INVWUP@@';
     obj.WINGET_ID_RE = /^[A-Za-z0-9._+-]{1,128}$/;
 
@@ -759,8 +760,8 @@ module.exports.inventoryscanner = function (parent) {
                     continue;
                 }
                 var sid = 'invscanner-wg-' + safeNodeDir(nodeid);
-                var entry = { nodeid: nodeid, sid: sid };
-                entry.timer = setTimeout(function () { obj.wgTimeout(entry); }, obj.WINGET_RUN_TIMEOUT_MS);
+                var entry = { nodeid: nodeid, sid: sid, since: Date.now() };
+                entry.timer = setTimeout(function () { obj.wgTimeout(entry); }, obj.wgBatchDry === true ? obj.WINGET_DRY_TIMEOUT_MS : obj.WINGET_RUN_TIMEOUT_MS);
                 obj.wgPending[nodeid] = entry;
                 obj.wgActive++;
                 try {
@@ -1164,7 +1165,7 @@ module.exports.inventoryscanner = function (parent) {
                             online: (ws != null && ws.wsagents != null && ws.wsagents[n._id] != null),
                             excluded: wcfg.excludeNodes.indexOf(n._id) >= 0,
                             inScope: (wcfg.meshes == null) ? false : (wcfg.meshes.indexOf(n.meshid) >= 0),
-                            last: sum
+                            last: sum, pending: (obj.wgPending != null && obj.wgPending[n._id] != null) ? { since: (obj.wgPending[n._id].since || 0) } : null
                         });
                     }
                 }
@@ -1588,6 +1589,10 @@ module.exports.inventoryscanner = function (parent) {
             // Windows-update status responses come back as console text. They are
             // identified by the plugin's own sessionid prefix; when captured we
             // consume them and do NOT forward them to browser clients.
+            if ((command.sessionid != null) && (typeof command.sessionid === 'string') && (command.sessionid.indexOf('invscanner-wg-') === 0)) {
+                var ctext = String(command.value || '').substring(0, 200).replace(/[\r\n]+/g, ' ');
+                if (ctext !== '') { obj.wgLog(nodeid + ' - agent console: ' + ctext); }
+            }
             if ((command.sessionid != null) && (typeof command.sessionid === 'string') && (command.sessionid.indexOf('invscanner-') === 0)) {
                 if (obj.pendingWinUpdates[nodeid] === true && obj.looksLikeWindowsUpdatesResponse(command.value)) {
                     obj.handleWindowsUpdatesResponse(nodeid, command.value);

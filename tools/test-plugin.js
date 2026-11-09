@@ -680,6 +680,29 @@ steps.push(function (next) {
     }), user);
 });
 
+
+// ---- v2.1.4: dry watchdog, agent-console diagnostics, pending visibility ----
+steps.push(function (next) {
+    check('timeout: dry runs use the fast watchdog', obj.WINGET_DRY_TIMEOUT_MS === 10 * 60 * 1000 &&
+        /wgBatchDry === true \? obj\.WINGET_DRY_TIMEOUT_MS/.test(fs.readFileSync(require('path').join(__dirname, '..', 'inventoryscanner.js'), 'utf8')));
+    obj.wgBatchDry = true;
+    obj.wgPending['node//dryt'] = { nodeid: 'node//dryt', sid: 'invscanner-wg-node_dryt', since: Date.now() - 11 * 60 * 1000 };
+    obj.wgTimeout(obj.wgPending['node//dryt']);
+    check('timeout: fired record marked and logged', obj.wgResults['node//dryt'].error === 'timeout' && fs.readFileSync(obj.wingetLogPath, 'utf8').indexOf('no answer') >= 0, obj.wgResults['node//dryt']);
+    delete obj.wgResults['node//dryt'];
+    obj.wgActive = 0;
+    obj.wgBatchDry = false;
+    obj.onAgentResponse({ action: 'msg', type: 'console', sessionid: 'invscanner-wg-node_x', value: "Run commands can't execute, already busy." }, '', 'node//x');
+    check('console: agent messages on wg sessions reach the log', fs.readFileSync(obj.wingetLogPath, 'utf8').indexOf('agent console: Run commands') >= 0);
+    obj.wgPending['node//d1'] = { nodeid: 'node//d1', sid: 'invscanner-wg-node_d1', since: Date.now() };
+    obj.handleAdminPostReq({ body: { action: 'wg_status' } }, mockRes(function (d) {
+        var dd = d.devices.filter(function (x) { return x.id === 'node//d1'; })[0];
+        check('status: running device exposes pending.since', dd.pending != null && dd.pending.since > 0, dd.pending);
+        delete obj.wgPending['node//d1'];
+        next();
+    }), user);
+});
+
 (function run(i) {
     if (i >= steps.length) {
         console.log(failures === 0 ? '\ntest-plugin: ALL PASSED' : '\ntest-plugin: ' + failures + ' FAILURE(S)');

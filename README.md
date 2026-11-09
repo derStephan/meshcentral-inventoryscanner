@@ -308,6 +308,11 @@ another plugin's buttons, ours are left out (no duplicates).
   all-version, age-filtered findings. Ordinary DEB versions (epochs and '-1ubuntu2' suffixes)
   are parsed down to their numeric core. For snap apps run 'snap list' on the box if you need the exact release.
 * **Offline devices** show their last collected state; check the inventory age before trusting a device row.
+* **A batch or dry run that never completes**: the agent answers a runcommands script only when the
+  PowerShell process exits. While the device is running any other command session (MeshCentral
+  terminal, another script), the agent reports 'already busy' only on its console - the plugin mirrors
+  such agent console lines into `winget-update.log`, and the device row shows 'waiting for answer'
+  until the watchdog (10 min dry runs, 2 h batches) closes the session.
 * The toast notification is ephemeral — if no admin is logged in at scan time, read it in **My Server → Events**
   (event retention applies, default ~30 days).
 
