@@ -763,6 +763,22 @@ steps.push(function (next) {
     next();
 });
 
+
+// ---- v2.2.1: base64 scriptblock transport ----
+steps.push(function (next) {
+    var script = obj.wgBuildScript({ ignorePackages: [{ id: 'A.B' }], pinSync: false }, true);
+    var line = obj.wgTransport(script);
+    check('transport: single line, no newlines', line.indexOf(String.fromCharCode(10)) < 0 && line.indexOf(String.fromCharCode(13)) < 0);
+    var m = line.match(/FromBase64String\('([A-Za-z0-9+/=]+)'\)/);
+    check('transport: pure base64 payload', m != null);
+    if (m != null) {
+        var decoded = Buffer.from(m[1], 'base64').toString('utf16le');
+        check('transport: decodes back to the script', decoded.indexOf(obj.WINGET_MARKER) >= 0 && decoded.indexOf('$invDry = $true') >= 0 && decoded === script, decoded.length + ':' + script.length);
+    }
+    check('transport: fits the pipe (no cmd ceiling involved)', line.length > 100 && line.length < 60000, line.length);
+    next();
+});
+
 (function run(i) {
     if (i >= steps.length) {
         console.log(failures === 0 ? '\ntest-plugin: ALL PASSED' : '\ntest-plugin: ' + failures + ' FAILURE(S)');

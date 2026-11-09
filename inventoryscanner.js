@@ -17,7 +17,7 @@
  * NVD feed is downloaded.
  *
  * @author derStephan
- * @version 2.2.0
+ * @version 2.2.1
  *
  * Transparency: This plugin was created with the assistance of Qwen 3.6 27B and Qwen 3.8 Flash Next.
  * Security audit (2026-11-06) performed by NVIDIA Nemotron 3 550B A55B via opencode.
@@ -768,6 +768,18 @@ module.exports.inventoryscanner = function (parent) {
         return { started: true, nodes: 0 };
     };
 
+    /**
+     * @brief Wrap the builder script for the agent's line-interactive PowerShell stdin:
+     * ONE line carrying the whole script base64(UTF-16LE) as a ScriptBlock - pipes have no
+     * length ceiling, PSReadLine continuation issues and quoting cannot occur, exit works.
+     * @param {string} script - The raw PowerShell text from wgBuildScript.
+     * @returns {string} The single-line command.
+     */
+    obj.wgTransport = function (script) {
+        var b64 = Buffer.from(String(script), 'utf16le').toString('base64');
+        return "$ErrorActionPreference='Continue'; & ([scriptblock]::Create([Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('" + b64 + "'))))";
+    };
+
     /** @brief Feed the queue up to WINGET_MAX_PARALLEL devices. */
     obj.wgPump = function () {
         try {
@@ -788,7 +800,7 @@ module.exports.inventoryscanner = function (parent) {
                 obj.wgPending[nodeid] = entry;
                 obj.wgActive++;
                 try {
-                    agent.send(JSON.stringify({ action: 'runcommands', type: 2, cmds: obj.wgBuildScript(obj.wingetConfig(), obj.wgBatchDry === true), runAsUser: 0, reply: true, sessionid: sid, responseid: sid }));
+                    agent.send(JSON.stringify({ action: 'runcommands', type: 2, cmds: obj.wgTransport(obj.wgBuildScript(obj.wingetConfig(), obj.wgBatchDry === true)), runAsUser: 0, reply: true, sessionid: sid, responseid: sid }));
                     obj.wgLog(nodeid + ' - update script sent (client transcript: invscanner-winget.log in the agent folder)');
                 } catch (ex) {
                     clearTimeout(entry.timer); delete obj.wgPending[nodeid]; obj.wgActive--;
