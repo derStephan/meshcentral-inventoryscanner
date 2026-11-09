@@ -501,6 +501,18 @@
             $('wgIgBody').innerHTML = html;
         }
 
+        function fmtLocal(s) {
+            if (!s) { return ''; }
+            var dt = new Date(s);
+            return isNaN(dt.getTime()) ? String(s) : dt.toLocaleString();
+        }
+
+        function localizeLog(lines) {
+            return (lines || []).map(function (l) {
+                return String(l).replace(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)/, function (m) { var dt = new Date(m); return isNaN(dt.getTime()) ? m : dt.toLocaleString(); });
+            });
+        }
+
         function renderWgDevices() {
             if (!wgApp.status) { return; }
             var devs = wgApp.status.devices || [];
@@ -520,7 +532,7 @@
             for (var e = 0; e < exl.length; e++) {
                 var dd = null;
                 for (var k = 0; k < devs.length; k++) { if (devs[k].id === exl[e]) { dd = devs[k]; break; } }
-                ehtml += '<tr><td>' + esc(dd ? ((dd.group ? dd.group + ' - ' : '') + dd.host) : exl[e]) + '</td><td>' + esc(dd && dd.last ? dd.last.time : 'never') + '</td></tr>';
+                ehtml += '<tr><td>' + esc(dd ? ((dd.group ? dd.group + ' - ' : '') + dd.host) : exl[e]) + '</td><td>' + esc(dd && dd.last ? fmtLocal(dd.last.time) : 'never') + '</td></tr>';
             }
             if (ehtml === '') { ehtml = '<tr><td colspan="2" style="color:#888">none - every device is in scope</td></tr>'; }
             $('wgExclBody').innerHTML = ehtml;
@@ -530,7 +542,7 @@
                 var last = '-';
                 if (d2.pending) { last = 'waiting for answer since ' + new Date(d2.pending.since || Date.now()).toLocaleTimeString(); }
                 else if (d2.last) {
-                    last = esc(d2.last.time || '') + ' - ';
+                    last = fmtLocal(d2.last.time) + ' - ';
                     if (d2.last.error) { last += esc(d2.last.error); }
                     else if (!d2.last.winget) { last += 'winget not available'; }
                     else if (d2.last.dry) { last += (d2.last.would || 0) + ' would update, ' + (d2.last.skipped || 0) + ' skipped'; }
@@ -593,7 +605,7 @@
         function loadWgLog() {
             post('get_log', { type: 'winget' }).then(function (data) {
                 if (data.error) { $('wgLog').textContent = data.error; return; }
-                $('wgLog').textContent = (data.lines && data.lines.length) ? data.lines.join(String.fromCharCode(10)) : '(empty)';
+                $('wgLog').textContent = (data.lines && data.lines.length) ? localizeLog(data.lines).join(String.fromCharCode(10)) : '(empty)';
                 $('wgLogInfo').textContent = data.note || ((data.lines || []).length + ' lines · ' + (data.file || ''));
             }).catch(function (ex) { $('wgLog').textContent = 'Failed: ' + ex.message; });
         }
@@ -1244,7 +1256,7 @@
         function loadNvdLog() {
             post('get_nvdlog', {}).then(function (data) {
                 if (data.error) { $('nvdLog').textContent = data.error; return; }
-                $('nvdLog').textContent = (data.lines && data.lines.length) ? data.lines.join(String.fromCharCode(10)) : (data.note || '(empty)');
+                $('nvdLog').textContent = (data.lines && data.lines.length) ? localizeLog(data.lines).join(String.fromCharCode(10)) : (data.note || '(empty)');
                 $('nvdLogInfo').textContent = (data.note) ? data.note : (data.lines.length + ' of ' + data.size + ' bytes shown (last 200 lines) · ' + data.file);
             }).catch(function (e) { $('nvdLog').textContent = 'Failed to load the log: ' + e.message; });
         }

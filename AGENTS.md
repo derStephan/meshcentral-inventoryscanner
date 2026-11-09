@@ -220,10 +220,14 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   Watchdogs: 2h real batches, 10min dry runs (`WINGET_DRY_TIMEOUT_MS`, chosen via `wgBatchDry`).
   `msg/console` packets carrying an `invscanner-wg-` sessionid (e.g. the agent's 'already busy' note,
   meshcore.js breaks WITHOUT a runcommands reply in that case) are mirrored into winget-update.log.
+  Answers that carry NEITHER sessionid NOR responseid (some agent builds) are still consumed when a
+  wgPending entry exists for that node; marker text on the console channel is captured the same way.
+  installRouteHook self-retries every 2s until routeAgentCommand exists, wgPump calls it defensively.
   `wg_status` devices[] carry `pending:{since}` while a script awaits its answer.
   Every script self-logs on the client: Start/Stop-Transcript around the run, file
-  next to the agent binary (Get-CimInstance Win32_Process parent id - PS 5.1 has no .Parent; fallback
-  C:\\ProgramData; rotates once at 5MB) - the only witness when a reply never arrives.
+  next to the agent binary (Get-CimInstance Win32_Process parent id - PS 5.1 has no .Parent). Candidates
+  agent-folder -> ProgramData -> TEMP are chosen by an Out-File -Append write probe, because
+  Start-Transcript on a blocked file reports success while writing NOTHING (rotates once at 5MB).
   `hook_agentCoreIsStable` additionally queues the device through `wgQueueNode` (stagger-delayed, so the
   collector settles first; disabled/excluded/not-due devices short-circuit without any agent traffic).
 - Batching: queue with 2 devices in parallel (`WINGET_MAX_PARALLEL`), 2 h watchdog per device, results in
@@ -300,7 +304,7 @@ npm test           # = tools/check.js && tools/test-plugin.js && tools/test-view
 
 - `tools/check.js`: `node --check` on the plugin, inline-script syntax/`{{`-hazard check, JSON validity of
   config files, and view-name↔render-name consistency. Must run anywhere (no dependencies).
-- `tools/test-plugin.js`: 168 behavioral assertions against the real module (mocked MeshCentral DB/webserver):
+- `tools/test-plugin.js`: 174 behavioral assertions against the real module (mocked MeshCentral DB/webserver):
   locations grouping & counting, manual-rating severity override, FP exclusion, host-name preference, coverage
   numbers, multi-mesh scan/`mixed` logic, all POST handlers incl. validation/rejections, routes, admin gating
   (401), CPE table add/delete, vulns CSV header/content, toolbar button injection (simulated browser DOM), remote CPE table apply/cache/fetch/settings, NVD download-log tailing, manual NVD update trigger + concurrency guard, unknown-version matching rules, winget updater (builder/parser/queue/routes), `longTimeout` chunking, restart-proof schedule delays,

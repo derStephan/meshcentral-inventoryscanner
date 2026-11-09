@@ -714,6 +714,29 @@ steps.push(function (next) {
     next();
 });
 
+
+// ---- v2.1.7: agent-build tolerant routing + transcript write probe ----
+steps.push(function (next) {
+    var sc = obj.wgBuildScript({ ignorePackages: [], pinSync: false }, true);
+    check('transcript: Split-Path + Out-File probe', sc.indexOf('Split-Path $invPX') >= 0 && sc.indexOf('Out-File') >= 0);
+    check('transcript: three-tier writable probe chain', (sc.match(/Out-File/g) || []).length === 2 && sc.indexOf('$env:TEMP') >= 0);
+    check('transcript: no silent bad path', sc.indexOf("if (-not $invTDir)") < 0);
+    // runcommands answer WITHOUT any session field is still consumed while pending
+    obj.wgPending['node//orphan'] = { nodeid: 'node//orphan', sid: 'invscanner-wg-node_orphan' };
+    obj.wgActive = (obj.wgActive || 0) + 1;
+    var consumed = obj.onAgentResponse({ action: 'msg', type: 'runcommands', result: obj.WINGET_MARKER + '{"winget":true,"dry":true,"results":[]}' }, '', 'node//orphan');
+    check('route: session-less runcommands consumed via pending', consumed === true && obj.wgResults['node//orphan'] != null, consumed);
+    delete obj.wgResults['node//orphan'];
+    // console-channel answer captured for pending node
+    obj.wgPending['node//cons'] = { nodeid: 'node//cons', sid: 'invscanner-wg-node_cons' };
+    obj.wgActive = (obj.wgActive || 0) + 1;
+    var c2 = obj.onAgentResponse({ action: 'msg', type: 'console', value: 'junk' + obj.WINGET_MARKER + '{"winget":true,"results":[{"id":"A.B","state":"ok"}]}' }, '', 'node//cons');
+    check('route: console-channel marker captured', c2 === true && obj.wgResults['node//cons'].results[0].state === 'ok', c2);
+    delete obj.wgResults['node//cons'];
+    obj.wgActive = 0;
+    next();
+});
+
 (function run(i) {
     if (i >= steps.length) {
         console.log(failures === 0 ? '\ntest-plugin: ALL PASSED' : '\ntest-plugin: ' + failures + ' FAILURE(S)');

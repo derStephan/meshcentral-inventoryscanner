@@ -313,7 +313,10 @@ another plugin's buttons, ours are left out (no duplicates).
   all-version, age-filtered findings. Ordinary DEB versions (epochs and '-1ubuntu2' suffixes)
   are parsed down to their numeric core. For snap apps run 'snap list' on the box if you need the exact release.
 * **Offline devices** show their last collected state; check the inventory age before trusting a device row.
-* **A batch or dry run that never completes**: the agent answers a runcommands script only when the
+* **A batch or dry run that never completes**: check the client transcript first - it is written to the
+  agent folder, or ProgramData/TEMP if that path is locked. The plugin also consumes answers that
+  arrive without session ids and console-channel output, so with current builds every run ends in a
+  result or an explicit timeout. The agent answers a runcommands script only when the
   PowerShell process exits. While the device is running any other command session (MeshCentral
   terminal, another script), the agent reports 'already busy' only on its console - the plugin mirrors
   such agent console lines into `winget-update.log`, and the device row shows 'waiting for answer'

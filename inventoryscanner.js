@@ -17,7 +17,7 @@
  * NVD feed is downloaded.
  *
  * @author derStephan
- * @version 2.1.6
+ * @version 2.1.7
  *
  * Transparency: This plugin was created with the assistance of Qwen 3.6 27B and Qwen 3.8 Flash Next.
  * Security audit (2026-11-06) performed by NVIDIA Nemotron 3 550B A55B via opencode.
@@ -606,13 +606,13 @@ module.exports.inventoryscanner = function (parent) {
             "$ProgressPreference = 'SilentlyContinue'",
             "$invDry = " + (dry ? '$true' : '$false'),
             "$invTDir = $env:ProgramData",
-            "try { $invPP = (Get-CimInstance Win32_Process -Filter ('ProcessId={0}' -f $PID) -ErrorAction Stop).ParentProcessId; if ($invPP) { $invTDir = (Get-Process -Id $invPP -ErrorAction SilentlyContinue).Path } } catch { }",
-            "if (-not $invTDir) { $invTDir = $env:ProgramData }",
+            "try { $invPP = (Get-CimInstance Win32_Process -Filter ('ProcessId={0}' -f $PID) -ErrorAction Stop).ParentProcessId; if ($invPP) { $invPX = (Get-Process -Id $invPP -ErrorAction Stop).Path; if ($invPX) { $invTDir = Split-Path $invPX } } } catch { }",
             "$invT = Join-Path $invTDir 'invscanner-winget.log'",
             "if (Test-Path $invT) { try { if ((Get-Item $invT).Length -gt 5MB) { Move-Item $invT ($invT + '.old') -Force } } catch { } }",
-            "try { Start-Transcript -Path $invT -Append | Out-Null } catch { $invT = Join-Path $env:ProgramData 'invscanner-winget.log'; try { Start-Transcript -Path $invT -Append | Out-Null } catch { } }",
+            "try { '' | Out-File -FilePath $invT -Append -Encoding utf8 -ErrorAction Stop } catch { $invT = Join-Path $env:ProgramData 'invscanner-winget.log'; try { '' | Out-File -FilePath $invT -Append -Encoding utf8 -ErrorAction Stop } catch { $invT = Join-Path $env:TEMP 'invscanner-winget.log' } }",
+            "try { Start-Transcript -Path $invT -Append | Out-Null } catch { }",
             '$wg = $null',
-            'foreach ($wc in @((Get-Command winget -ErrorAction SilentlyContinue), (Get-ChildItem ($env:ProgramFiles + "\WindowsApps\Microsoft.DesktopAppInstaller_*\winget.exe") -ErrorAction SilentlyContinue | Select-Object -First 1))) { if ($wc -ne $null -and $wc.FullName) { $wg = $wc.FullName; break } }',
+            'foreach ($wc in @((Get-Command winget -ErrorAction SilentlyContinue), (Get-ChildItem ($env:ProgramFiles + "\\WindowsApps\\Microsoft.DesktopAppInstaller_*\\winget.exe") -ErrorAction SilentlyContinue | Select-Object -First 1))) { if ($wc -ne $null -and $wc.FullName) { $wg = $wc.FullName; break } }',
             'if ($wg -eq $null) { Write-Output \'' + obj.WINGET_MARKER + '{"winget":false}\'; exit }',
             '$invIgnore = @(' + psList + ')',
             "$raw = ''",
@@ -762,6 +762,7 @@ module.exports.inventoryscanner = function (parent) {
                 var nodeid = obj.wgQueue.shift();
                 if (obj.wgPending[nodeid] != null) continue; // already running there
                 var ws = obj.meshServer.webserver;
+                if (!obj.routeHookInstalled) { try { obj.installRouteHook(); } catch (e) { } }
                 var agent = (ws != null && ws.wsagents != null) ? ws.wsagents[nodeid] : null;
                 if ((agent == null) || (typeof agent.send !== 'function')) {
                     obj.wgResults[nodeid] = { time: new Date().toISOString(), error: 'offline', results: [] };
@@ -1545,7 +1546,13 @@ module.exports.inventoryscanner = function (parent) {
     obj.installRouteHook = function () {
         try {
             var ws = obj.meshServer.webserver;
-            if ((ws == null) || (typeof ws.routeAgentCommand !== 'function')) return;
+            if ((ws == null) || (typeof ws.routeAgentCommand !== 'function')) {
+                if (!obj.routeHookRetryPending) {
+                    obj.routeHookRetryPending = true;
+                    setTimeout(function () { obj.routeHookRetryPending = false; try { obj.installRouteHook(); } catch (e) { } }, 2000);
+                }
+                return;
+            }
             if (ws.__inventoryscannerHookInstalled === true) { obj.routeHookInstalled = true; return; }
             var self = obj;
             var original = ws.routeAgentCommand.bind(ws);
@@ -1590,12 +1597,22 @@ module.exports.inventoryscanner = function (parent) {
         } else if ((command.action === 'msg') && (command.type === 'runcommands')) {
             // Answer to one of our update sessions (agent builds differ on whether the
             // reply carries sessionid, responseid or both - accept any prefix hit).
-            if (((typeof command.sessionid === 'string') && (command.sessionid.indexOf('invscanner-wg-') === 0)) || ((typeof command.responseid === 'string') && (command.responseid.indexOf('invscanner-wg-') === 0))) {
+            var ours = (((typeof command.sessionid === 'string') && (command.sessionid.indexOf('invscanner-wg-') === 0)) || ((typeof command.responseid === 'string') && (command.responseid.indexOf('invscanner-wg-') === 0)));
+            if (!ours && (obj.wgPending != null) && (obj.wgPending[nodeid] != null)) { ours = true; } // some agent builds answer without any session field
+            if (ours) {
                 obj.wgHandleResponse(nodeid, command);
                 return true; // consumed - the marker JSON is plugin-internal
             }
             return false;
         } else if ((command.action === 'msg') && (command.type === 'console')) {
+            // Winget answers arriving on the console channel (some agent builds emit
+            // runcommands output as console text): capture when a wg session is pending.
+            if ((typeof command.value === 'string') && (command.value.indexOf(obj.WINGET_MARKER) >= 0) &&
+                (obj.wgPending != null) && (obj.wgPending[nodeid] != null)) {
+                obj.wgLog(nodeid + ' - answer captured via console channel');
+                obj.wgHandleResponse(nodeid, { result: command.value });
+                return true;
+            }
             // Windows-update status responses come back as console text. They are
             // identified by the plugin's own sessionid prefix; when captured we
             // consume them and do NOT forward them to browser clients.
