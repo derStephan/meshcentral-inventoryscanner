@@ -67,7 +67,8 @@ Open `https://<server>/pluginadmin.ashx?pin=inventoryscanner&action=show`:
   repository (`cpe-table.json`, auto-refreshed) or its built-in fallback, plus your custom entries (always
   checked first). Improving a mapping is a one-line repository change - no plugin release, no server edit.
 * **Updates tab** - winget auto-update control: groups, ignore list, Windows device dropdown (given names first),
-  per-device exclusion, single-device runs and dry runs, results table and full log.
+  per-device exclusion, single-device runs and dry runs (with an update-ready candidate list that feeds the
+  ignore list with one click), results table and full log.
 * **Settings tab** - configure everything from the UI: scan interval, which groups are scanned, notification threshold (global + per group), notify mode, feed refresh and inventory collection. Saved to `scanner-settings.json`, effective **immediately without a restart**, and these values **override the same keys in config.json** — the plugin never writes config.json, it only reads it as fallback.
 
 ### 4. Printable audit reports (HTML, Print/Save-as-PDF)
@@ -106,6 +107,9 @@ runs works with the switch off - only actual upgrades require it.
   *Exclude* keeps a device out of every automatic and manual batch (kiosk PCs, presentation laptops),
   *Include again* puts it back, *Update this device now* patches exactly that one machine.
   A dry run shows what would happen first, without touching anything.
+* **Update-ready list after a dry run**: the device row gets a *list* button - it opens every package that
+  was update-ready (id, installed → available version). *+ ignore* moves one of them straight onto the
+  ignore list (persist with *Save Configuration*; from the next run on it is skipped as `skipped-ignored`).
 * **Per-device actions**: every row of the device table carries its own *Dry run*, *Update now* and
   *Exclude/Include* buttons - no separate selector needed.
 * **Device events**: finished runs (also dry runs, timeouts and offline skips) appear on the

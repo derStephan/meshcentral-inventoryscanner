@@ -17,7 +17,7 @@
  * NVD feed is downloaded.
  *
  * @author derStephan
- * @version 2.5.2
+ * @version 2.6.0
  *
  * Transparency: This plugin was created with the assistance of Qwen 3.6 27B and Qwen 3.8 Flash Next.
  * Security audit (2026-11-06) performed by NVIDIA Nemotron 3 550B A55B via opencode.
@@ -1253,12 +1253,22 @@ module.exports.inventoryscanner = function (parent) {
                         var sum = null;
                         if (rec != null) {
                             var okN = 0, skN = 0, faN = 0, wdN = 0;
+                            var dryList = [];
                             var rl = Array.isArray(rec.results) ? rec.results : [];
                             for (var ri = 0; ri < rl.length; ri++) {
                                 var s = (rl[ri] && rl[ri].state) ? rl[ri].state : '';
-                                if (s === 'ok') okN++; else if (s === 'dry-run') wdN++; else if (s.indexOf('skipped') === 0) skN++; else faN++;
+                                // Update-ready packages of a dry run go into dryList so the panel can
+                                // list them per device and offer one-click moves onto the ignore list.
+                                if (s === 'ok') okN++;
+                                else if (s === 'dry-run') {
+                                    wdN++;
+                                    if (dryList.length < 200) {
+                                        dryList.push({ id: String(rl[ri].id || '').substring(0, 128), name: String(rl[ri].name || '').substring(0, 200), from: String(rl[ri].from || '').substring(0, 60), to: String(rl[ri].to || '').substring(0, 60) });
+                                    }
+                                }
+                                else if (s.indexOf('skipped') === 0) skN++; else faN++;
                             }
-                            sum = { time: rec.time, winget: rec.winget === true, dry: rec.dry === true, ok: okN, would: wdN, skipped: skN, failed: faN, error: rec.error || '' };
+                            sum = { time: rec.time, winget: rec.winget === true, dry: rec.dry === true, ok: okN, would: wdN, skipped: skN, failed: faN, error: rec.error || '', dryList: (rec.dry === true) ? dryList : [] };
                         }
                         devices.push({
                             id: n._id, host: obj.getHostName ? obj.getHostName(n) : (n.rname || n.name || n._id),

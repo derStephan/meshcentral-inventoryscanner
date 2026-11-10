@@ -124,7 +124,7 @@ POST body `action=`:
 | `wg_get_config` | — | effective wingetUpdater config + per-key sources + queue state |
 | `wg_save_config` | enabled, updateMeshes(csv), excludeNodes(csv), ignorePackages(JSON), pinSync (intervalHours accepted but ignored) | validates EVERYTHING, writes overlay, `rescheduleAll()` |
 | `wg_run` | optional `nodeIds`(csv; overrides scope+exclusions), `dry`('true') | manual batch; per-device or dry test runs; {busy} while one runs |
-| `wg_status` | — | every non-deleted WINDOWS node (`wgIsWindowsNode`: reported `osdesc` must contain 'windows'; no osdesc yet = kept; phones/Linux hidden). Each row: `host` (rname-first) + `given` (admin name, used for labels/sort); malformed records tolerated |
+| `wg_status` | — | every non-deleted WINDOWS node (`wgIsWindowsNode`: reported `osdesc` must contain 'windows'; no osdesc yet = kept; phones/Linux hidden). Each row: `host` (rname-first) + `given` (admin name, used for labels/sort); malformed records tolerated. `last.dryList:[{id,name,from,to}]` = the `dry-run`-state packages of the last DRY run (≤200, empty for real runs) - the panel's row expander lists them and "+ ignore" pushes one onto `ignorePackages` (persisted via wg_save_config; state shown as 'skipped-ignored' after the next run) |
 | `get_log` | `type` = nvd\|winget | whitelisted log tail (last 300 lines) |
 | `update_nvd` | — | starts `runNvdUpdate(true)` (background) and answers {started:true} / {alreadyRunning:true}; concurrent runs skip via the `nvdUpdateRunning` flag |
 | `get_nvdlog` | — | `{lines:[...last 200 of nvd-download.log], size, file}`; `note` if file missing |
@@ -356,6 +356,21 @@ npm test           # = tools/check.js && tools/test-plugin.js && tools/test-view
 - `tools/test-views.js`: compiles all three views and renders them with mock data **and empty data**.
 
 If you change data shapes, UPDATE these tests — they are the contract.
+
+## Commit messages (= the changelog)
+
+EVERY version gets a commit message, written in this established style (since v2.5.2) - commit messages ARE
+the changelog (changelogUrl points at the commits page), so a user must understand each release from the
+message alone, without the diff:
+
+- Subject: `v<MAJOR.MINOR.PATCH>: <short imperative summary>` - the version the commit sets; after the
+  colon lowercase, one line, says what the release does.
+- Blank line, then one `-` bullet per logical change (fix / hardening / behavior / tests / docs): WHAT
+  changed and WHY, self-contained English prose of 2-4 lines, naming the involved functions/markers.
+- Always include a `Tests:` bullet (assertion count + covered areas) and a closing `Version bumped`
+  bullet (config.json + file header).
+- Repo-maintenance-only edits (docs/AGENTS.md/tooling without plugin behavior change) do NOT get a
+  version bump, but still follow the bullet style with the actual version in the subject.
 
 ## Maintenance pitfalls
 

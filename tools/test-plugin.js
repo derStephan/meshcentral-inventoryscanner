@@ -837,6 +837,33 @@ steps.push(function (next) {
     next();
 });
 
+
+// ---- v2.6.0: wg_status carries the per-device update-ready dryList ----
+steps.push(function (next) {
+    var many = [];
+    for (var mi = 0; mi < 250; mi++) { many.push({ id: 'Pkg.Num' + mi, name: 'P' + mi, from: '1', to: '2', state: 'dry-run' }); }
+    obj.wgResults['node//d1'] = { time: new Date().toISOString(), winget: true, dry: true, results: [
+        { id: 'Foo.Bar', name: 'Foo', from: '1.0', to: '2.0', state: 'dry-run' },
+        { id: 'Baz.Qux', name: 'Baz', from: '3', to: '4', state: 'skipped-ignored' },
+        { id: 'Cap.Test9', name: 'Cap', from: '1', to: '2', state: 'dry-run' }
+    ] };
+    obj.wgResults['node//d2'] = { time: new Date().toISOString(), winget: true, dry: true, results: many };
+    obj.wgResults['node//d4'] = { time: new Date().toISOString(), winget: true, dry: false, results: [{ id: 'Real.One', name: 'Real', from: '1', to: '2', state: 'ok' }] };
+    obj.handleAdminPostReq({ body: { action: 'wg_status' } }, mockRes(function (d) {
+        var a = d.devices.filter(function (x) { return x.id === 'node//d1'; })[0];
+        var b = d.devices.filter(function (x) { return x.id === 'node//d2'; })[0];
+        var c = d.devices.filter(function (x) { return x.id === 'node//d4'; })[0];
+        check('status: dry run lists update-ready packages with versions',
+            a.last.dryList.length === 2 && a.last.dryList[0].id === 'Foo.Bar' && a.last.dryList[0].to === '2.0' && a.last.dryList[1].id === 'Cap.Test9', a.last);
+        check('status: candidate list is capped at 200 rows', b.last.dryList.length === 200, b.last.dryList.length);
+        check('status: a real (non-dry) run carries an empty candidate list', c.last.dryList.length === 0, c.last);
+        delete obj.wgResults['node//d1'];
+        delete obj.wgResults['node//d2'];
+        delete obj.wgResults['node//d4'];
+        next();
+    }), user);
+});
+
 (function run(i) {
     if (i >= steps.length) {
         console.log(failures === 0 ? '\ntest-plugin: ALL PASSED' : '\ntest-plugin: ' + failures + ' FAILURE(S)');
