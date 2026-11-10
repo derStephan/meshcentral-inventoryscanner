@@ -308,7 +308,8 @@
                 <button id="wgRunBtn" class="green">Run Now</button>
                 <span id="wgRunState" class="hint"></span>
             </div>
-            <div class="hint">"Save Configuration" stores everything on this tab: switches, groups, ignore list and device exclusions.</div>
+            <div class="hint">Every change on this tab (switches, groups, ignore list, exclusions, "+ ignore" buttons) is
+            saved immediately; the "Save Configuration" button re-applies the whole form explicitly.</div>
 
             <h3>Device groups to update automatically</h3>
             <div class="table-container"><table>
@@ -331,8 +332,9 @@
             <h3>Devices</h3>
             <div class="hint">Every Windows device with its winget actions. Excluded machines stay out of all
             automatic batches; "Update now" on a row intentionally still works for them (it targets one device).
-            Dry run shows what would happen without touching the machine - afterwards "list" on the row opens the
-            packages that were update-ready, and "+ ignore" moves one of them onto the ignore list below.</div>
+            Dry run shows what would happen without touching the machine. After any run, "list" on the row opens
+            every package with its outcome (failed ones show the exit code and winget's message), and "+ ignore"
+            moves a package onto the ignore list - saved immediately, honoured by every later run.</div>
             <div class="table-container"><table>
                 <thead><tr><th>Device</th><th>Group</th><th style="width:70px;">Online</th><th style="width:90px;">Excluded</th><th style="width:250px;">Last run</th><th style="width:270px;">Actions</th></tr></thead>
                 <tbody id="wgDevBody"><tr><td colspan="6" style="color:#888">Loading...</td></tr></tbody>
@@ -376,6 +378,8 @@
         }
 
         function $(id) { return document.getElementById(id); }
+
+        function wgHexExit(n) { return ((n | 0) >>> 0).toString(16).toUpperCase(); }
 
         function post(action, data) {
             var body = 'action=' + encodeURIComponent(action);
@@ -517,7 +521,7 @@
             wgApp.cfg.config.ignorePackages = list;
             renderWgIgnore();
             renderWgDevices();
-            showMsg('wgMsg', id + ' added to the ignore list - press "Save Configuration" to persist.', true);
+            saveWgConfig(id + ' added to the ignore list.');
             return true;
         }
 
@@ -542,17 +546,15 @@
             for (var i2 = 0; i2 < devs.length; i2++) {
                 var d2 = devs[i2];
                 var last = '-';
-                var cand = (d2.last && d2.last.dry === true && !d2.pending) ? (d2.last.dryList || []) : [];
+                var rows2 = (d2.last && !d2.pending && Array.isArray(d2.last.rows)) ? d2.last.rows : [];
                 if (d2.pending) { last = 'waiting for answer since ' + new Date(d2.pending.since || Date.now()).toLocaleTimeString(); }
                 else if (d2.last) {
                     last = fmtLocal(d2.last.time) + ' - ';
                     if (d2.last.error) { last += esc(d2.last.error); }
                     else if (!d2.last.winget) { last += 'winget not available'; }
-                    else if (d2.last.dry) {
-                        last += (d2.last.would || 0) + ' would update, ' + (d2.last.skipped || 0) + ' skipped';
-                        if (cand.length > 0) { last += ' <button class="small" data-wgact="tgl" data-wgid="' + esc(d2.id) + '">' + (wgApp.openDry[d2.id] === true ? 'hide' : 'list') + '</button>'; }
-                    }
+                    else if (d2.last.dry) { last += (d2.last.would || 0) + ' would update, ' + (d2.last.skipped || 0) + ' skipped, ' + (d2.last.failed || 0) + ' failed'; }
                     else { last += (d2.last.ok || 0) + ' ok, ' + (d2.last.skipped || 0) + ' skipped, ' + (d2.last.failed || 0) + ' failed'; }
+                    if (rows2.length > 0) { last += ' <button class="small" data-wgact="tgl" data-wgid="' + esc(d2.id) + '">' + (wgApp.openDry[d2.id] === true ? 'hide' : 'list') + '</button>'; }
                 }
                 html += '<tr><td>' + esc(d2.given || d2.host) + '</td><td>' + esc(d2.group) + '</td>';
                 html += '<td>' + (d2.online ? 'yes' : '<span style="color:#a33">offline</span>') + '</td>';
@@ -563,15 +565,27 @@
                 html += '<button class="small green" data-wgact="run" data-wgid="' + esc(d2.id) + '">Update now</button> ';
                 html += '<button class="small' + (d2.excluded ? '' : ' red') + '" data-wgact="' + (d2.excluded ? 'incl' : 'excl') + '" data-wgid="' + esc(d2.id) + '">' + (d2.excluded ? 'Include' : 'Exclude') + '</button>';
                 html += '</td></tr>';
-                if (cand.length > 0) {
+                if (rows2.length > 0) {
                     var igIds = (((wgApp.cfg && wgApp.cfg.config.ignorePackages) || []).map(function (x) { return String(x.id).toLowerCase(); }));
                     html += '<tr style="display:' + (wgApp.openDry[d2.id] === true ? 'table-row' : 'none') + '"><td colspan="6" style="background:#f6f8fb">';
-                    html += '<div class="hint" style="margin:2px 0 4px 0">Packages that were update-ready in this dry run - "+ ignore" moves one onto the ignore list (persist with "Save Configuration").</div>';
-                    html += '<table style="margin:0"><thead><tr><th style="width:280px;">Package</th><th style="width:300px;">Id</th><th style="width:100px;">Installed</th><th style="width:100px;">Available</th><th style="width:110px;"></th></tr></thead><tbody>';
-                    for (var c2 = 0; c2 < cand.length; c2++) {
-                        var pk = cand[c2];
-                        html += '<tr><td>' + esc(pk.name) + '</td><td><code>' + esc(pk.id) + '</code></td><td>' + esc(pk.from) + '</td><td>' + esc(pk.to) + '</td><td>';
-                        html += (igIds.indexOf(String(pk.id).toLowerCase()) >= 0) ? '<span class="hint">on ignore list</span>' : '<button class="small" data-wgact="ign" data-pkgid="' + esc(pk.id) + '">+ ignore</button>';
+                    html += '<div class="hint" style="margin:2px 0 4px 0">Every package of this run with its outcome - failed rows carry the exit code and winget\'s message. "+ ignore" puts a package on the ignore list and saves the configuration immediately.</div>';
+                    html += '<table style="margin:0"><thead><tr><th style="width:240px;">Package</th><th style="width:260px;">Id</th><th style="width:90px;">Installed</th><th style="width:90px;">Available</th><th>Outcome</th><th style="width:110px;"></th></tr></thead><tbody>';
+                    for (var c2 = 0; c2 < rows2.length; c2++) {
+                        var pk = rows2[c2];
+                        var st = String(pk.state || '');
+                        var out = '';
+                        if (st === 'dry-run') { out = '<span style="color:#06c">would update</span>'; }
+                        else if (st === 'ok') { out = '<span style="color:#1d7a3a">updated</span>'; }
+                        else if (st === 'failed') {
+                            out = '<span style="color:#a33">failed</span> (exit ' + esc(pk.exit == null ? '?' : pk.exit) + (pk.exit == null ? '' : ', 0x' + esc(wgHexExit(pk.exit))) + ')';
+                            if (pk.log) { out += '<div style="font-size:11px;color:#556">' + esc(pk.log) + '</div>'; }
+                        }
+                        else if (st === 'skipped-ignored') { out = 'skipped (on ignore list)'; }
+                        else if (st === 'skipped-noversion') { out = 'skipped (version unknown)'; }
+                        else { out = esc(st || '?'); }
+                        html += '<tr><td>' + esc(pk.name) + '</td><td><code>' + esc(pk.id) + '</code></td><td>' + esc(pk.from) + '</td><td>' + esc(pk.to) + '</td><td>' + out + '</td><td>';
+                        var onList = igIds.indexOf(String(pk.id).toLowerCase()) >= 0;
+                        html += onList ? '<span class="hint">on ignore list</span>' : '<button class="small" data-wgact="ign" data-pkgid="' + esc(pk.id) + '">+ ignore</button>';
                         html += '</td></tr>';
                     }
                     html += '</tbody></table></td></tr>';
@@ -591,7 +605,7 @@
             var s = wgApp.status && wgApp.status.devices;
             if (s) { for (var q = 0; q < s.length; q++) { if (s[q].id === id) { s[q].excluded = wantExcluded; } } }
             renderWgDevices();
-            showMsg('wgMsg', 'Exclusion changed - press "Save Configuration" to persist.', true);
+            saveWgConfig();
         }
 
         function wgRunOne(id, dry) {
@@ -616,7 +630,7 @@
             else if (act === 'excl') { wgToggleExclude(id, true); }
             else if (act === 'incl') { wgToggleExclude(id, false); }
             else if (act === 'tgl') { wgApp.openDry[id] = !(wgApp.openDry[id] === true); renderWgDevices(); }
-            else if (act === 'ign') { wgIgnoreAdd(b.getAttribute('data-pkgid'), 'update candidate (dry run)'); }
+            else if (act === 'ign') { wgIgnoreAdd(b.getAttribute('data-pkgid'), 'added from the device table'); }
         });
 
         function loadWgLog() {
@@ -646,7 +660,7 @@
             }).catch(function (ex) { showMsg('wgMsg', 'Failed to load update state: ' + ex.message, false); });
         }
 
-        function saveWgConfig() {
+        function saveWgConfig(prefixMsg) {
             var body = {
                 enabled: $('wgEnabled').checked ? 'true' : 'false',
                 pinSync: $('wgPinSync').checked ? 'true' : 'false',
@@ -658,7 +672,7 @@
             post('wg_save_config', body).then(function (d) {
                 if (d.error) { showMsg('wgMsg', d.error, false); return; }
                 wgApp.cfg = d;
-                showMsg('wgMsg', 'Configuration saved and scheduled immediately (the batch timer was re-armed).', true);
+                showMsg('wgMsg', (prefixMsg ? prefixMsg + ' ' : '') + 'Configuration saved and applied immediately (the batch timer was re-armed).', true);
                 renderWgGroups();
             }).catch(function (ex) { showMsg('wgMsg', 'Save failed: ' + ex.message, false); });
         }
@@ -675,7 +689,13 @@
             }
         }
 
-        $('wgSaveBtn').addEventListener('click', saveWgConfig);
+        $('wgSaveBtn').addEventListener('click', function () { saveWgConfig(); });
+        // Everything on this tab persists the moment it changes - no silent "remember to save" state.
+        $('wgEnabled').addEventListener('change', function () { saveWgConfig(); });
+        $('wgPinSync').addEventListener('change', function () { saveWgConfig(); });
+        $('wgGroupBody').addEventListener('change', function (e) {
+            if (e.target && e.target.classList && e.target.classList.contains('wgGrp')) { saveWgConfig(); }
+        });
         $('wgRunBtn').addEventListener('click', function () {
             if (!window.confirm('Run the winget update batch now on all in-scope, non-excluded devices?')) { return; }
             post('wg_run', {}).then(function (d) {
@@ -696,7 +716,7 @@
             if (!el || !el.classList || !el.classList.contains('wgIgDel')) { return; }
             var idx = parseInt(el.getAttribute('data-idx'), 10);
             var list = (wgApp.cfg && wgApp.cfg.config.ignorePackages) || [];
-            if (!isNaN(idx) && idx >= 0 && idx < list.length) { list.splice(idx, 1); renderWgIgnore(); showMsg('wgMsg', 'Removed - press "Save Configuration" to persist.', true); }
+            if (!isNaN(idx) && idx >= 0 && idx < list.length) { list.splice(idx, 1); renderWgIgnore(); saveWgConfig('Removed from the ignore list.'); }
         });
         $('refreshWgLogBtn').addEventListener('click', function () { loadWgLog(); });
 

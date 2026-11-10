@@ -67,8 +67,9 @@ Open `https://<server>/pluginadmin.ashx?pin=inventoryscanner&action=show`:
   repository (`cpe-table.json`, auto-refreshed) or its built-in fallback, plus your custom entries (always
   checked first). Improving a mapping is a one-line repository change - no plugin release, no server edit.
 * **Updates tab** - winget auto-update control: groups, ignore list, Windows device dropdown (given names first),
-  per-device exclusion, single-device runs and dry runs (with an update-ready candidate list that feeds the
-  ignore list with one click), results table and full log.
+  per-device exclusion, single-device runs and dry runs, a per-device results table listing **every package
+  with its outcome** (failures show exit code and reason; one-click move to the ignore list) and the full log.
+  Every change on the tab persists immediately.
 * **Settings tab** - configure everything from the UI: scan interval, which groups are scanned, notification threshold (global + per group), notify mode, feed refresh and inventory collection. Saved to `scanner-settings.json`, effective **immediately without a restart**, and these values **override the same keys in config.json** — the plugin never writes config.json, it only reads it as fallback.
 
 ### 4. Printable audit reports (HTML, Print/Save-as-PDF)
@@ -102,14 +103,19 @@ runs works with the switch off - only actual upgrades require it.
 * **Ignore list (license protection)**: package ids you add (e.g. `Adobe.Acrobat.Reader.64-bit`) are
   skipped in every batch - and additionally pinned on the client with `winget pin add --installed`, so
   even a manual `winget upgrade --all` by a user leaves the licensed version in place. Remove an entry
-  from the list to let updates flow again.
+  from the list to let updates flow again. Use the exact ids from the device lists - if an upgrade still
+  touches an ignored or nearly-ignored id, `winget-update.log` shows a `WARNING` line about it.
 * **Per-device control**: the device dropdown holds every machine (sorted by location, then name).
   *Exclude* keeps a device out of every automatic and manual batch (kiosk PCs, presentation laptops),
   *Include again* puts it back, *Update this device now* patches exactly that one machine.
   A dry run shows what would happen first, without touching anything.
-* **Update-ready list after a dry run**: the device row gets a *list* button - it opens every package that
-  was update-ready (id, installed → available version). *+ ignore* moves one of them straight onto the
-  ignore list (persist with *Save Configuration*; from the next run on it is skipped as `skipped-ignored`).
+* **Per-package outcome after every run (dry or real)**: the device row's *list* button opens all packages
+  (id, installed → available, state) - failed rows show the exit code (decimal + hex) and winget's own
+  message inline, and the same line is written to the server-side `winget-update.log` as `FAILED <id> ...`,
+  so the client transcript is never needed to answer "which one failed and why". *+ ignore* puts a package
+  on the ignore list **and saves immediately**; from the next run on it is skipped as `skipped-ignored`.
+* **Everything saves immediately**: switches, group ticks, exclusions and ignore changes on the Updates tab
+  persist the moment you change them - the *Save Configuration* button just re-applies the whole form.
 * **Per-device actions**: every row of the device table carries its own *Dry run*, *Update now* and
   *Exclude/Include* buttons - no separate selector needed.
 * **Device events**: finished runs (also dry runs, timeouts and offline skips) appear on the

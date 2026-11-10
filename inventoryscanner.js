@@ -17,7 +17,7 @@
  * NVD feed is downloaded.
  *
  * @author derStephan
- * @version 2.6.0
+ * @version 2.7.0
  *
  * Transparency: This plugin was created with the assistance of Qwen 3.6 27B and Qwen 3.8 Flash Next.
  * Security audit (2026-11-06) performed by NVIDIA Nemotron 3 550B A55B via opencode.
@@ -604,6 +604,11 @@ module.exports.inventoryscanner = function (parent) {
     obj.WINGET_MARKER = '@@INVWUP@@';
     obj.WINGET_ID_RE = /^[A-Za-z0-9._+-]{1,128}$/;
 
+    /** @brief Unsigned hex of a signed win32 exit code (winget documents its codes in hex). */
+    obj.wgExitHex = function (n) {
+        try { return ((n | 0) >>> 0).toString(16).toUpperCase(); } catch (e) { return ''; }
+    };
+
     /**
      * @brief Effective winget updater configuration (scanner-settings.json
      * overlay first, config.json settings.wingetUpdater second, defaults last).
@@ -662,7 +667,7 @@ module.exports.inventoryscanner = function (parent) {
             "try { '' | Out-File -FilePath $invT -Append -Encoding utf8 -ErrorAction Stop } catch { $invT = Join-Path $env:ProgramData 'invscanner-winget.log'; try { '' | Out-File -FilePath $invT -Append -Encoding utf8 -ErrorAction Stop } catch { $invT = Join-Path $env:TEMP 'invscanner-winget.log' } }",
             "try { Start-Transcript -Path $invT -Append | Out-Null } catch { }",
             "$wg = $null",
-            "$invAP = $null; try { $invAP = (Get-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\winget.exe' -ErrorAction Stop).'(default)' } catch { }; if ($invAP -and (Test-Path $invAP)) { $wg = $invAP }",
+            "$invAP = $null; if (Test-Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\winget.exe') { $invAP = (Get-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\winget.exe' -ErrorAction SilentlyContinue).'(default)' }; if ($invAP -and (Test-Path $invAP)) { $wg = $invAP }",
             "if (-not $wg) { foreach ($wc in @((Get-Command winget -ErrorAction SilentlyContinue), (Get-ChildItem ($env:ProgramFiles + \"\\WindowsApps\\Microsoft.DesktopAppInstaller_*\\winget.exe\") -ErrorAction SilentlyContinue | Select-Object -First 1))) { if ($wc -ne $null -and $wc.FullName) { $wg = $wc.FullName; break } } }",
             "if ($wg -eq $null) { Write-Output '" + obj.WINGET_MARKER + "{\"winget\":false}'; Stop-Transcript -ErrorAction SilentlyContinue | Out-Null; exit }",
             "$invIgnore = @(" + psList + ")",
@@ -931,7 +936,36 @@ module.exports.inventoryscanner = function (parent) {
             if (s === 'ok') okN++; else if (s === 'dry-run') wouldN++; else if (s.indexOf('skipped') === 0) skipN++; else failN++;
         }
         obj.wgLog(nodeid + ' - ' + (rec.dry ? '[dry-run] ' : '') + (rec.error || (rec.winget ? (rec.dry ? ('would update ' + wouldN + ', ' + skipN + ' skipped, ' + failN + ' failed') : ('done: ' + okN + ' updated, ' + skipN + ' skipped, ' + failN + ' failed')) : 'winget not available')));
-        obj.wgRaiseNodeEvent(nodeid, 'Winget updater: ' + (rec.error ? rec.error : (rec.winget === false ? 'winget is not available on this device' : (rec.dry ? ('dry run - ' + wouldN + ' package(s) would be updated') : (okN + ' package(s) updated, ' + failN + ' failed')))));
+        // Per-package detail lines so failures never require opening the client transcript:
+        // one FAILED line with exit code + winget's own (system) message per failed package,
+        // and a WARNING when the client upgraded a package that was on the ignore list.
+        var evMsg = 'Winget updater: ' + (rec.error || (rec.winget === false ? 'winget is not available on this device' : (rec.dry ? ('dry run - ' + wouldN + ' package(s) would be updated') : (okN + ' package(s) updated, ' + failN + ' failed'))));
+        if (rec.error == null) {
+            var ignIds = [];
+            try { var igl = obj.wingetConfig().ignorePackages; for (var zi = 0; zi < igl.length; zi++) { ignIds.push({ raw: String(igl[zi].id), lc: String(igl[zi].id).toLowerCase() }); } } catch (e) { }
+            var failIds = [];
+            for (var fi = 0; fi < rec.results.length; fi++) {
+                var fr = rec.results[fi];
+                if (fr.state === 'failed') {
+                    failIds.push(fr.id);
+                    obj.wgLog(nodeid + ' - FAILED ' + fr.id + ' [' + fr.from + ' -> ' + fr.to + '] exit ' + (fr.exit == null ? '?' : (fr.exit + ' (0x' + obj.wgExitHex(fr.exit) + ')')) + ': ' + String(fr.log || '').replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim());
+                } else if (fr.state === 'ok' && rec.dry !== true) {
+                    // An upgraded package that the ignore list should have covered is never silent:
+                    // exact hits mean the script ran without the current list, near misses mean the
+                    // stored id does not equal the id winget reports on this device.
+                    var fid = String(fr.id).toLowerCase(), exact = false, near = null;
+                    for (var qi = 0; qi < ignIds.length; qi++) {
+                        var gi = ignIds[qi].lc;
+                        if (gi === fid) { exact = true; break; }
+                        if (gi.length > 4 && fid.length > 4 && (fid.indexOf(gi) >= 0 || gi.indexOf(fid) >= 0)) { near = ignIds[qi].raw; }
+                    }
+                    if (exact) { obj.wgLog(nodeid + ' - WARNING ' + fr.id + ' is on the ignore list but was upgraded anyway (it was missing from the script that ran)'); }
+                    else if (near != null) { obj.wgLog(nodeid + ' - WARNING ' + fr.id + ' was upgraded although the similar ignore entry "' + near + '" exists - ids do not match exactly, fix it from the device list (+ ignore)'); }
+                }
+            }
+            if ((!rec.dry) && failIds.length > 0) { evMsg += ' (' + failIds.slice(0, 3).join(', ') + (failIds.length > 3 ? ', ...' : '') + ')'; }
+        }
+        obj.wgRaiseNodeEvent(nodeid, evMsg);
         obj.wgSaveResults();
         obj.wgPump();
     };
@@ -1253,22 +1287,21 @@ module.exports.inventoryscanner = function (parent) {
                         var sum = null;
                         if (rec != null) {
                             var okN = 0, skN = 0, faN = 0, wdN = 0;
-                            var dryList = [];
+                            var pkgRows = [];
                             var rl = Array.isArray(rec.results) ? rec.results : [];
                             for (var ri = 0; ri < rl.length; ri++) {
                                 var s = (rl[ri] && rl[ri].state) ? rl[ri].state : '';
-                                // Update-ready packages of a dry run go into dryList so the panel can
-                                // list them per device and offer one-click moves onto the ignore list.
+                                // Every package row of the last run (dry or real) goes into rows so the
+                                // panel can list outcome, exit code and winget's message per package -
+                                // nobody should need the client transcript to find out what failed.
                                 if (s === 'ok') okN++;
-                                else if (s === 'dry-run') {
-                                    wdN++;
-                                    if (dryList.length < 200) {
-                                        dryList.push({ id: String(rl[ri].id || '').substring(0, 128), name: String(rl[ri].name || '').substring(0, 200), from: String(rl[ri].from || '').substring(0, 60), to: String(rl[ri].to || '').substring(0, 60) });
-                                    }
-                                }
+                                else if (s === 'dry-run') wdN++;
                                 else if (s.indexOf('skipped') === 0) skN++; else faN++;
+                                if (rl[ri] != null && pkgRows.length < 200) {
+                                    pkgRows.push({ id: String(rl[ri].id || '').substring(0, 128), name: String(rl[ri].name || '').substring(0, 200), from: String(rl[ri].from || '').substring(0, 60), to: String(rl[ri].to || '').substring(0, 60), state: s || 'unknown', exit: (typeof rl[ri].exit === 'number') ? rl[ri].exit : null, log: String(rl[ri].log || '').substring(0, 500) });
+                                }
                             }
-                            sum = { time: rec.time, winget: rec.winget === true, dry: rec.dry === true, ok: okN, would: wdN, skipped: skN, failed: faN, error: rec.error || '', dryList: (rec.dry === true) ? dryList : [] };
+                            sum = { time: rec.time, winget: rec.winget === true, dry: rec.dry === true, ok: okN, would: wdN, skipped: skN, failed: faN, error: rec.error || '', rows: pkgRows };
                         }
                         devices.push({
                             id: n._id, host: obj.getHostName ? obj.getHostName(n) : (n.rname || n.name || n._id),

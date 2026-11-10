@@ -838,7 +838,7 @@ steps.push(function (next) {
 });
 
 
-// ---- v2.6.0: wg_status carries the per-device update-ready dryList ----
+// ---- v2.6.0 (dryList) -> v2.7.0: wg_status carries per-device package rows ----
 steps.push(function (next) {
     var many = [];
     for (var mi = 0; mi < 250; mi++) { many.push({ id: 'Pkg.Num' + mi, name: 'P' + mi, from: '1', to: '2', state: 'dry-run' }); }
@@ -853,15 +853,48 @@ steps.push(function (next) {
         var a = d.devices.filter(function (x) { return x.id === 'node//d1'; })[0];
         var b = d.devices.filter(function (x) { return x.id === 'node//d2'; })[0];
         var c = d.devices.filter(function (x) { return x.id === 'node//d4'; })[0];
-        check('status: dry run lists update-ready packages with versions',
-            a.last.dryList.length === 2 && a.last.dryList[0].id === 'Foo.Bar' && a.last.dryList[0].to === '2.0' && a.last.dryList[1].id === 'Cap.Test9', a.last);
-        check('status: candidate list is capped at 200 rows', b.last.dryList.length === 200, b.last.dryList.length);
-        check('status: a real (non-dry) run carries an empty candidate list', c.last.dryList.length === 0, c.last);
+        check('status: rows carry EVERY package of the last run with state and versions',
+            a.last.rows.length === 3 && a.last.rows[0].id === 'Foo.Bar' && a.last.rows[0].state === 'dry-run' && a.last.rows[1].state === 'skipped-ignored' && a.last.rows[0].to === '2.0', a.last);
+        check('status: rows are capped at 200 entries', b.last.rows.length === 200, b.last.rows.length);
+        check('status: real-run rows carry the ok state (exit null when absent)', c.last.rows.length === 1 && c.last.rows[0].state === 'ok' && c.last.rows[0].exit === null, c.last);
         delete obj.wgResults['node//d1'];
         delete obj.wgResults['node//d2'];
         delete obj.wgResults['node//d4'];
         next();
     }), user);
+});
+
+
+// ---- v2.7.0: per-package log detail lines + ignore-list contracts ----
+steps.push(function (next) {
+    // builder: the saved ignore list MUST reach the client script and gate every upgrade
+    var s7 = obj.wgBuildScript({ ignorePackages: [{ id: 'TrackerSoftware.PDF-XChangeEditor' }], pinSync: false }, false);
+    check('script: ignore ids embedded as PS array', s7.indexOf("$invIgnore = @('TrackerSoftware.PDF-XChangeEditor')") >= 0, s7.split(String.fromCharCode(10))[12]);
+    check('script: case-insensitive id check gates the upgrade call', /\$p\.id -ieq \$ig/.test(s7) && s7.indexOf("state = 'skipped-ignored'") >= 0);
+    check('script: App Paths probe uses Test-Path (no PS error noise in the transcript)', s7.indexOf("if (Test-Path 'HKLM:") >= 0 && s7.indexOf("-ErrorAction Stop).'(default)'") < 0);
+
+    // server log: FAILED lines with exit/reason, WARNING on ignore-list violations (exact + near-miss)
+    obj.pluginSettings = { wingetUpdater: { enabled: true, ignorePackages: [{ id: 'Ign.Exact' }, { id: 'Similar.Prefix' }] } };
+    obj.wgPending['node//detail'] = { nodeid: 'node//detail', sid: 'invscanner-wg-node_detail', since: Date.now() };
+    obj.wgActive = (obj.wgActive || 0) + 1;
+    var res7 = obj.WINGET_MARKER + JSON.stringify({ winget: true, dry: false, results: [
+        { id: 'Ign.Exact', name: 'Exact', from: '1', to: '2', state: 'ok', exit: 0 },
+        { id: 'Similar.Prefix.One', name: 'Near', from: '1', to: '2', state: 'ok', exit: 0 },
+        { id: 'OBSProject.OBSStudio', name: 'OBS', from: '32', to: '33', state: 'failed', exit: -1, log: 'Files in use.\r\nTry again.' }
+    ] });
+    obj.onAgentResponse({ action: 'msg', type: 'runcommands', sessionid: 'invscanner-wg-node_detail', result: res7 }, '', 'node//detail');
+    var lg7 = fs.readFileSync(obj.wingetLogPath, 'utf8');
+    check('log: one FAILED line per failed package with exit code and reason',
+        lg7.indexOf('node//detail - FAILED OBSProject.OBSStudio [32 -> 33] exit -1 (0xFFFFFFFF): Files in use. Try again.') >= 0, lg7.split(String.fromCharCode(10)).slice(-6));
+    check('log: exact ignore violation is called out', lg7.indexOf('WARNING Ign.Exact is on the ignore list but was upgraded anyway') >= 0);
+    check('log: near-miss ignore id is called out with the stored entry',
+        lg7.indexOf('WARNING Similar.Prefix.One was upgraded although the similar ignore entry "Similar.Prefix" exists') >= 0, lg7.split(String.fromCharCode(10)).slice(-6));
+    var rec7 = obj.wgResults['node//detail'];
+    check('results: failed package keeps exit and log', rec7.results[2].state === 'failed' && rec7.results[2].exit === -1 && /Files in use/.test(rec7.results[2].log), rec7.results[2]);
+    delete obj.wgResults['node//detail'];
+    obj.pluginSettings = {};
+    obj.wgActive = 0;
+    next();
 });
 
 (function run(i) {

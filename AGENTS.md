@@ -122,9 +122,13 @@ POST body `action=`:
 | `delete_cpe_table` | `match`,`vendor`,`product` | custom entries only (built-ins can be shadowed, not deleted) |
 | `add_cpe` | `match`,`vendor`,`product` | regex validated via `new RegExp`; custom wins over built-in |
 | `wg_get_config` | — | effective wingetUpdater config + per-key sources + queue state |
-| `wg_save_config` | enabled, updateMeshes(csv), excludeNodes(csv), ignorePackages(JSON), pinSync (intervalHours accepted but ignored) | validates EVERYTHING, writes overlay, `rescheduleAll()` |
+| `wg_save_config` | enabled, updateMeshes(csv), excludeNodes(csv), ignorePackages(JSON), pinSync (intervalHours accepted but ignored) | validates EVERYTHING, writes overlay, `rescheduleAll()`; the panel calls it automatically on EVERY Updates-tab change (switches, groups, ignore add/remove, exclusions, "+ ignore" buttons) - no manual-save footgun since v2.7.0 |
 | `wg_run` | optional `nodeIds`(csv; overrides scope+exclusions), `dry`('true') | manual batch; per-device or dry test runs; {busy} while one runs |
-| `wg_status` | — | every non-deleted WINDOWS node (`wgIsWindowsNode`: reported `osdesc` must contain 'windows'; no osdesc yet = kept; phones/Linux hidden). Each row: `host` (rname-first) + `given` (admin name, used for labels/sort); malformed records tolerated. `last.dryList:[{id,name,from,to}]` = the `dry-run`-state packages of the last DRY run (≤200, empty for real runs) - the panel's row expander lists them and "+ ignore" pushes one onto `ignorePackages` (persisted via wg_save_config; state shown as 'skipped-ignored' after the next run) |
+| `wg_status` | — | every non-deleted WINDOWS node (`wgIsWindowsNode`: reported `osdesc` must contain 'windows'; no osdesc yet = kept; phones/Linux hidden). Each row: `host` (rname-first) + `given` (admin name, used for labels/sort); malformed records tolerated. `last.rows:[{id,name,from,to,state,exit,log}]` = EVERY package of the last run
+    (dry or real, ≤200) - the panel's row expander shows them with the outcome (failed rows carry exit code
+    incl. hex + winget's own message), "+ ignore" pushes one onto `ignorePackages` and saves immediately;
+    failed packages additionally get one `FAILED` line per package in `winget-update.log`, and upgraded
+    packages that match (exactly or as substring) an ignore entry raise a `WARNING` line there |
 | `get_log` | `type` = nvd\|winget | whitelisted log tail (last 300 lines) |
 | `update_nvd` | — | starts `runNvdUpdate(true)` (background) and answers {started:true} / {alreadyRunning:true}; concurrent runs skip via the `nvdUpdateRunning` flag |
 | `get_nvdlog` | — | `{lines:[...last 200 of nvd-download.log], size, file}`; `note` if file missing |
