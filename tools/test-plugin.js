@@ -865,6 +865,15 @@ steps.push(function (next) {
 });
 
 
+// ---- v2.7.1: panel device labels are admin given names (reports keep host names) ----
+steps.push(function (next) {
+    obj.scanMultiMeshCves(['mesh//grp1'], function (err, result) {
+        var c1 = result.cves.filter(function (x) { return x.cve === 'CVE-2024-0001'; })[0];
+        check('scan: device labels prefer the admin given name', c1 && c1.locations[0].devices.join(',') === 'Given1,Given2', c1 && c1.locations[0].devices);
+        next();
+    });
+});
+
 // ---- v2.7.0: per-package log detail lines + ignore-list contracts ----
 steps.push(function (next) {
     // builder: the saved ignore list MUST reach the client script and gate every upgrade

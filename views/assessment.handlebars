@@ -608,13 +608,19 @@
             saveWgConfig();
         }
 
+        function wgDevLabel(id) {
+            var ds = (wgApp.status && wgApp.status.devices) || [];
+            for (var i = 0; i < ds.length; i++) { if (ds[i].id === id) { return ds[i].given || ds[i].host || id; } }
+            return id;
+        }
+
         function wgRunOne(id, dry) {
             if (!id) { return; }
             if (!dry && !confirm('Run winget updates on this ONE device now? Other devices are not touched.')) { return; }
             post('wg_run', { nodeIds: id, dry: dry ? 'true' : 'false' }).then(function (d) {
                 if (d.error) { showMsg('wgMsg', d.error, false); return; }
                 if (d.busy) { floatMsg('Another batch is still running - try again in a moment.', false); return; }
-                floatMsg(dry ? 'Dry run started for ' + id + ' - the answer appears in the table and the log.' : 'Update started for this device only.', true);
+                floatMsg(dry ? 'Dry run started for ' + wgDevLabel(id) + ' - the answer appears in the table and the log.' : 'Update started for ' + wgDevLabel(id) + ' (this device only).', true);
                 if (wgApp.status) { wgApp.status.running = true; }
                 wgPollState();
             }).catch(function (ex) { showMsg('wgMsg', 'Run failed: ' + ex.message, false); });
@@ -835,13 +841,10 @@
             { key: 'cve', label: 'CVE ID' },
             { key: 'severity', label: 'Severity' },
             { key: 'cvss', label: 'CVSS' },
-            { key: 'software', label: 'Software' },
-            { key: 'version', label: 'Version' },
+            { key: 'software', label: 'Software & Version' },
             { key: 'status', label: 'Status' },
             { key: 'locations', label: 'Affected Locations / Devices' },
-            { key: 'rating', label: 'Manual Rating' },
-            { key: 'comment', label: 'Comment' },
-            { key: 'actions', label: 'Actions', nosort: true }
+            { key: 'rating', label: 'Manual Rating & Comment' }
         ];
 
         var SEV_RANK = { 'CRITICAL': 5, 'HIGH': 4, 'MEDIUM': 3, 'LOW': 2, 'UNKNOWN': 1, 'false positive': 0 };
@@ -920,8 +923,7 @@
                 }
                 html += '<td><span class="sev sev-' + esc(sev.replace(/ /g, '-')) + '">' + esc(sev) + '</span></td>';
                 html += '<td>' + esc(r.cvss) + '</td>';
-                html += '<td>' + esc(r.software) + '</td>';
-                html += '<td>' + esc(r.version) + '</td>';
+                html += '<td>' + esc(r.software) + (r.version ? ' <span style="color:#556">' + esc(r.version) + '</span>' : '') + '</td>';
                 html += '<td>' + esc(status) + (r.mixed ? ' <span class="badge badge-mixed">mixed</span>' : '') + '</td>';
                 html += '<td class="devlist">';
                 for (var j = 0; j < r.locations.length; j++) {
@@ -929,7 +931,7 @@
                     html += '<div><b>' + esc(loc.name) + '</b>: ' + esc((loc.devices || []).join(', ')) + '</div>';
                 }
                 html += '</td>';
-                html += '<td><select class="rating-sel">' +
+                html += '<td style="min-width:230px"><select class="rating-sel">' +
                     '<option value=""' + (rating === '' ? ' selected' : '') + '>Unrated</option>' +
                     '<option value="CRITICAL"' + (rating === 'CRITICAL' ? ' selected' : '') + '>Critical</option>' +
                     '<option value="HIGH"' + (rating === 'HIGH' ? ' selected' : '') + '>High</option>' +
@@ -937,15 +939,15 @@
                     '<option value="LOW"' + (rating === 'LOW' ? ' selected' : '') + '>Low</option>' +
                     '<option value="UNKNOWN"' + (rating === 'UNKNOWN' ? ' selected' : '') + '>Unknown</option>' +
                     (r.mixed ? '<option value="MIXED" selected>Mixed</option>' : '') +
-                    '</select></td>';
-                html += '<td><input type="text" class="comment-inp" value="' + esc(comment) + '" placeholder="' + (r.mixed ? 'varies per location' : 'comment (required for rating)') + '"></td>';
-                html += '<td><button class="small save-btn">Save Rating</button> ';
+                    '</select>';
+                html += '<div style="margin-top:3px"><input type="text" class="comment-inp" style="width:150px" value="' + esc(comment) + '" placeholder="' + (r.mixed ? 'varies per location' : 'comment (required for rating)') + '"></div>';
+                html += '<div style="margin-top:3px"><button class="small save-btn">Save Rating</button>';
                 if (flagged || r.anyFlagged) {
-                    html += '<button class="small purple unfp-btn">Undo false positive</button>';
+                    html += ' <button class="small purple unfp-btn">Undo false positive</button>';
                 } else {
-                    html += '<button class="small red fp-btn">Mark as False Positive</button>';
+                    html += ' <button class="small red fp-btn">Mark as False Positive</button>';
                 }
-                html += '</td>';
+                html += '</div></td>';
                 html += '</tr>';
             }
             if (rows.length === 0) {

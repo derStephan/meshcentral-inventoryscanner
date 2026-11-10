@@ -62,7 +62,7 @@ Open `https://<server>/pluginadmin.ashx?pin=inventoryscanner&action=show`:
 * One aggregated, **sortable and filterable** table of all unique findings across the selected locations (click any column header to sort; text + severity + status filters).
 * Rate a CVE (Critical/High/Medium/Low/Unknown) **once** — the rating is saved for *every selected location where the finding occurs* (stored per location, because mitigations are a group decision). A comment is mandatory for ratings.
 * **Mark as false positive** (no comment required) — the finding stops counting everywhere (panel, reports, scheduled notifications, CSV shows `false positive`). Undo restores normal counting.
-* **Affected locations and devices (host names)** are shown per finding; a *mixed* badge marks findings whose locations carry different ratings.
+* **Affected locations and devices (admin-given names, falling back to host names)** are shown per finding; a *mixed* badge marks findings whose locations carry different ratings. The table keeps finding data tight: software and version share one column, and rating select + comment + buttons live in a single "Manual Rating & Comment" column. (Printable reports deliberately keep showing raw host names.)
 * **CPE Mapping tab** - the table actually in use is visible in the UI: the mapping table maintained in this
   repository (`cpe-table.json`, auto-refreshed) or its built-in fallback, plus your custom entries (always
   checked first). Improving a mapping is a one-line repository change - no plugin release, no server edit.

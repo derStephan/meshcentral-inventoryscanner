@@ -17,7 +17,7 @@
  * NVD feed is downloaded.
  *
  * @author derStephan
- * @version 2.7.0
+ * @version 2.7.1
  *
  * Transparency: This plugin was created with the assistance of Qwen 3.6 27B and Qwen 3.8 Flash Next.
  * Security audit (2026-11-06) performed by NVIDIA Nemotron 3 550B A55B via opencode.
@@ -3759,7 +3759,8 @@ obj.loadNvdFromAllFiles = function () {
      * Each CVE carries the mesh-wide assessment (if any).
      * @param {string} meshId - The mesh id to scan.
      * @param {function} callback - Called with <code>(err, cveList)</code> where
-     * each entry is <code>{ cve, severity, cvss, description, software, version, assessment, devices }</code>.
+     * each entry is <code>{ cve, severity, cvss, description, software, version, assessment, devices }</code>
+     * with <code>devices</code> = device labels (admin given name first, host name / id as fallback).
      */
     obj.scanMeshCves = function (meshId, callback) {
         obj.meshServer.db.GetAllType('node', function (err, nodes) {
@@ -3777,7 +3778,9 @@ obj.loadNvdFromAllFiles = function () {
             var pending = meshNodes.length;
 
             meshNodes.forEach(function (node) {
-                var deviceName = obj.getHostName(node) || node.name || node._id;
+                // Admin labels in the panel read the given (renamed-by-admin) name first - same
+                // rule as the wg_status table; printable reports intentionally keep host names.
+                var deviceName = (typeof node.name === 'string' && node.name.trim() !== '') ? node.name.trim() : (obj.getHostName(node) || node._id);
                 fetchSysinfo(node, function (err, sysinfoRecord) {
                     var doc = sysinfoRecord ? (sysinfoRecord.doc || sysinfoRecord) : {};
                     var windowsBuild = '';
@@ -3820,7 +3823,8 @@ obj.loadNvdFromAllFiles = function () {
 
     /**
      * @brief Aggregate the unique CVEs found across a set of locations (meshes).
-     * Each CVE carries the list of affected locations (with their affected host names) and
+     * Each CVE carries the list of affected locations (with their affected device labels -
+     * given names first, falling back to host name then id) and
      * the per-location assessments. When every affected location has the same assessment,
      * <code>assessment</code> holds it; otherwise <code>mixed</code> is true.
      * @param {Array<string>} meshIds - The mesh ids to scan.

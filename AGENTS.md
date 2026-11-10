@@ -152,7 +152,7 @@ UI-managed scanner settings in `<datapath>/plugins/inventoryscanner/scanner-sett
 
 **`scan` response shape** (drives the panel JS):
 `{ meshes:[{id,name}], cves:[{cve, severity, cvss, description, software, version,
-locations:[{meshId,name,devices:[hostnames]}], assessments:{meshId:rec|null}, assessment:rec|null,
+locations:[{meshId,name,devices:[device labels - admin given name first, rname/_id fallback]}], assessments:{meshId:rec|null}, assessment:rec|null,
 mixed:bool, anyFlagged:bool}], flaggedCount, totalCves, lastUpdate }`.
 **Unknown installed version:** version strings first pass `normalizeCveVersion`: Debian epochs stripped
   (`1:2.3.4-3ubuntu1` -> `2.3.4`), numeric cores without distro decoration (`22.04.0-1build1` -> `22.04.0`),
@@ -179,7 +179,10 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
 - Auto-scan on load; location selection = floating DIV (checkbox per mesh + "All locations"), persisted in
   `localStorage` key `invscanner_locations`; toggle button fixed top-right.
 - Sortable columns (`data-key`, click toggles asc/desc, default cvss desc) + filters (text, effective severity,
-  status: CVE/false positive/rated/unrated).
+  status: CVE/false positive/rated/unrated). Since v2.7.1 seven columns: CVE, Severity, CVSS, **Software & Version**
+  (merged), Status, Affected Locations/Devices (device labels = given name first), **Manual Rating & Comment**
+  (select + comment input + Save/False-positive buttons in one cell; sorted by the rating). The save/flag handlers
+  find their controls via `tr.querySelector('.rating-sel'/'.comment-inp')` - never by cell index.
 - Save/flag/unflag post the **meshIds of all affected selected locations** in one request; after success the row
   state is patched client-side (no rescan).
 - All dynamic values rendered via `esc()` (comments stored raw → escape at output; never double-escape).
