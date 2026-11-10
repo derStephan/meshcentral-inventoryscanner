@@ -1,5 +1,5 @@
 {
-  "updated": "2026-11-06",
+  "updated": "2026-11-10",
   "entries": [
     {
       "match": "mozilla firefox",
@@ -300,6 +300,51 @@
       "match": "pcvisit remotehost",
       "vendor": "pcvisit",
       "product": "pcvisit"
+    },
+    {
+      "match": "asp\\.net core",
+      "vendor": "microsoft",
+      "product": "asp.net_core"
+    },
+    {
+      "match": "\\.net framework",
+      "vendor": "microsoft",
+      "product": ".net_framework"
+    },
+    {
+      "match": "microsoft \\.net core",
+      "vendor": "microsoft",
+      "product": ".net_core"
+    },
+    {
+      "match": "microsoft \\.net (runtime|host|app host)",
+      "vendor": "microsoft",
+      "product": ".net"
+    },
+    {
+      "match": "windows desktop runtime",
+      "vendor": "microsoft",
+      "product": ".net"
+    },
+    {
+      "match": "microsoft visual c\\+\\+",
+      "vendor": "microsoft",
+      "product": "visual_c\\+\\+"
+    },
+    {
+      "match": "^dell supportassist",
+      "vendor": "dell",
+      "product": "supportassist"
+    },
+    {
+      "match": "dell command \\|? ?update",
+      "vendor": "dell",
+      "product": "command_update"
+    },
+    {
+      "match": "^docker(\\.io|-ce|-cli|-buildx-plugin|-compose-plugin)",
+      "vendor": "docker",
+      "product": "docker"
     }
   ]
 }

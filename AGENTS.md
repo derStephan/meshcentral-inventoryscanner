@@ -142,7 +142,8 @@ Assessments persist in `<datapath>/nvd/assessments.json`, key `"<meshId>:<cveId>
 `{meshId, cveId, assessment, comment, lastModified, assessedBy, assessedById, flagged?}`.
 Scheduled results in `<datapath>/nvd/scans.json` → `meshId -> {time, cves:[{cve, severity, ...}]}`.
 Remote CPE table: repo `cpe-table.json` → fetched when stale at startup and after every NVD download cycle, cached at
-`<datapath>/plugins/inventoryscanner/cpe-table.json`. `activeSoftwareTable()` = remote entries when a valid table was
+`<datapath>/plugins/inventoryscanner/cpe-table.json`. External mapping contributions come in as PRs that touch
+ONLY this file (process + validation rules: CONTRIBUTING.md) - a table edit needs NO plugin version bump. `activeSoftwareTable()` = remote entries when a valid table was
 applied, else `SOFTWARE_CPE_TABLE`; custom (UI) entries always first. Entry regexes compile with the `i` flag ONLY;
 bad JSON/regex → payload rejected, current table keeps running. Keys: `cpeTableEnabled`/`cpeTableUrl` (Settings tab).
 

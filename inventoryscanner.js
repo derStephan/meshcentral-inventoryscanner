@@ -17,7 +17,7 @@
  * NVD feed is downloaded.
  *
  * @author derStephan
- * @version 2.8.0
+ * @version 2.8.1
  *
  * Transparency: This plugin was created with the assistance of Qwen 3.6 27B and Qwen 3.8 Flash Next.
  * Security audit (2026-11-06) performed by NVIDIA Nemotron 3 550B A55B via opencode.
@@ -2660,7 +2660,19 @@ obj.loadNvdFromAllFiles = function () {
         { match: /sumatrapdf/i, vendor: 'sumrapdf', product: 'sumatrapdf' },
         // VPN / Remote
         { match: /securepoint (ssl vpn|vpn client)/i, vendor: 'securepoint', product: 'securepoint' },
-        { match: /pcvisit remotehost/i, vendor: 'pcvisit', product: 'pcvisit' }
+        { match: /pcvisit remotehost/i, vendor: 'pcvisit', product: 'pcvisit' },
+        // Microsoft runtimes (all vendor/product pairs verified against the live NVD API 2026-11-10;
+        // 'visual_c\+\+' is the exact token the feed criteria carry - the parser does not unescape)
+        { match: /asp\.net core/i, vendor: 'microsoft', product: 'asp.net_core' },
+        { match: /\.net framework/i, vendor: 'microsoft', product: '.net_framework' },
+        { match: /microsoft \.net core/i, vendor: 'microsoft', product: '.net_core' },
+        { match: /microsoft \.net (runtime|host|app host)/i, vendor: 'microsoft', product: '.net' },
+        { match: /windows desktop runtime/i, vendor: 'microsoft', product: '.net' },
+        { match: /microsoft visual c\+\+/i, vendor: 'microsoft', product: 'visual_c\\+\\+' },
+        // Dell client tooling + the Linux docker suite
+        { match: /^dell supportassist/i, vendor: 'dell', product: 'supportassist' },
+        { match: /dell command \|? ?update/i, vendor: 'dell', product: 'command_update' },
+        { match: /^docker(\.io|-ce|-cli|-buildx-plugin|-compose-plugin)/i, vendor: 'docker', product: 'docker' }
     ];
 
     /**
