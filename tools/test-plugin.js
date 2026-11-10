@@ -772,9 +772,11 @@ steps.push(function (next) {
     var m = line.match(/FromBase64String\('([A-Za-z0-9+/=]+)'\)/);
     check('transport: pure base64 payload', m != null);
     if (m != null) {
-        var decoded = Buffer.from(m[1], 'base64').toString('utf16le');
-        check('transport: decodes back to the script', decoded.indexOf(obj.WINGET_MARKER) >= 0 && decoded.indexOf('$invDry = $true') >= 0 && decoded === script, decoded.length + ':' + script.length);
+        var decoded = require('zlib').gunzipSync(Buffer.from(m[1], 'base64')).toString('utf8');
+        check('transport: gunzips back to the script', decoded.indexOf(obj.WINGET_MARKER) >= 0 && decoded.indexOf('$invDry = $true') >= 0 && decoded === script, decoded.length + ':' + script.length);
     }
+    check('transport: powershell -Command line via cmd', line.indexOf('powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command') === 0 && line.indexOf('Invoke-Expression') > 0);
+    check('transport: well under cmd line limit', line.length < 8000, line.length);
     check('transport: fits the pipe (no cmd ceiling involved)', line.length > 100 && line.length < 60000, line.length);
     next();
 });
@@ -855,7 +857,7 @@ steps.push(function (next) {
             check('wg batch: started and queued two (parallel cap)', obj3.wgBatchRunning === true && sent.length === 2, sent.length);
             if (sent.length < 2) { check('wg batch: two sends queued', false, sent.length); next(); return; }
             var msg0 = sent[0];
-            check('wg batch: runcommands message shape', msg0.action === 'runcommands' && msg0.type === 2 && msg0.runAsUser === 0 && msg0.reply === true && String(msg0.sessionid).indexOf('invscanner-wg-') === 0, msg0);
+            check('wg batch: runcommands message shape', msg0.action === 'runcommands' && msg0.type === 1 && msg0.runAsUser === 0 && msg0.reply === true && String(msg0.sessionid).indexOf('invscanner-wg-') === 0, msg0);
 
             // responses: d1 ok (single result -> PS unwraps object), d2 no winget
             obj3.onAgentResponse({ action: 'msg', type: 'runcommands', sessionid: msg0.sessionid, result: 'noise' + String.fromCharCode(10) + obj3.WINGET_MARKER + '{"winget":true,"results":{"id":"OpenJS.NodeJS.18","name":"Node.js","from":"18.19.0","to":"18.20.8","state":"ok","exit":0,"log":"done"}}' }, '', 'node//d1');

@@ -1,7 +1,7 @@
 {
   "name": "Inventory & Vulnerability Scanner",
   "shortName": "inventoryscanner",
-  "version": "2.5.0",
+  "version": "2.5.1",
   "author": "derStephan",
   "description": "Hardware/software inventory CSV exports, offline NVD vulnerability scanning with group ratings, scheduled notifications, printable reports and opt-in winget auto-updates (per-device dry runs, ignore lists with client-side pins).",
   "hasAdminPanel": true,

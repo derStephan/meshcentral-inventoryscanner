@@ -343,6 +343,8 @@
         </div>
     </div>
 
+    <div id="invFloat" style="display:none;position:fixed;top:18px;left:50%;transform:translateX(-50%);color:#fff;padding:10px 22px;border-radius:8px;z-index:9999;font-weight:600;box-shadow:0 4px 14px rgba(0,0,0,.35);transition:opacity .6s;max-width:80%;"></div>
+
     <div class="location-selector" id="locationPanel">
         <h4>Locations to assess</h4>
         <div id="locList">
@@ -400,6 +402,21 @@
                 }
             }
             return fetch(url, { credentials: 'same-origin' }).then(function (r) { return r.json(); });
+        }
+
+        function floatMsg(text, ok) {
+            var f = $('invFloat');
+            if (!f) { showMsg('wgMsg', text, ok); return; }
+            f.textContent = text;
+            f.style.background = ok ? '#1d7a3a' : '#a33228';
+            f.style.display = 'block';
+            f.style.opacity = '1';
+            if (window.__invFloatTimer) { clearTimeout(window.__invFloatTimer); }
+            if (window.__invFloatHide) { clearTimeout(window.__invFloatHide); }
+            window.__invFloatTimer = setTimeout(function () {
+                f.style.opacity = '0';
+                window.__invFloatHide = setTimeout(function () { f.style.display = 'none'; }, 700);
+            }, 6000);
         }
 
         function showMsg(id, text, ok) {
@@ -549,8 +566,8 @@
             if (!dry && !confirm('Run winget updates on this ONE device now? Other devices are not touched.')) { return; }
             post('wg_run', { nodeIds: id, dry: dry ? 'true' : 'false' }).then(function (d) {
                 if (d.error) { showMsg('wgMsg', d.error, false); return; }
-                if (d.busy) { showMsg('wgMsg', 'Another batch is still running.', false); return; }
-                showMsg('wgMsg', dry ? 'Dry run started for this device - results appear in the row and the log.' : 'Update started for this device only.', true);
+                if (d.busy) { floatMsg('Another batch is still running - try again in a moment.', false); return; }
+                floatMsg(dry ? 'Dry run started for ' + id + ' - the answer appears in the table and the log.' : 'Update started for this device only.', true);
                 if (wgApp.status) { wgApp.status.running = true; }
                 wgPollState();
             }).catch(function (ex) { showMsg('wgMsg', 'Run failed: ' + ex.message, false); });

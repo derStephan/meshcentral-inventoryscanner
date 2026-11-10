@@ -229,10 +229,11 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   `{action:'msg', type:'runcommands', result, sessionid, responseid}`, captured by the same
   `routeAgentCommand` hook as the inventory collector. Sessions are identified by the
   `invscanner-wg-<node>` sessionid prefix; foreign sessions are never consumed.
-- Transport (verified): the pump sends ONE stdin line `& ([scriptblock]::Create(Unicode.GetString
-  (FromBase64String(b64))))` via wgTransport - the agent feeds PowerShell line-interactive
-  (PSReadLine throws on continuations, exit inside blocks is unreliable), so the script must never
-  be streamed line by line. Pipes have no length ceiling; base64 payload charset is inert.
+- Transport (verified end-to-end on PS 5.1): runcommands TYPE 1 (cmd.exe) with ONE line:
+  `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$d=FromBase64String(
+  b64(gzip(script)));…GZipStream…;Invoke-Expression $s"` - cmd's stdin reader has no PSReadLine
+  trouble, PS gets the whole script atomically (exit/transcript reliable), gzip keeps the line at
+  ~2KB vs cmd's 8191 limit. PowerShell is NEVER fed line-interactive anymore.
   The builder still keeps one statement per line anyway (defense in depth, guarded by a test).
   winget is located via HKLM App Paths (readable by SYSTEM; the
   WindowsApps folder itself is NOT enumerable even as SYSTEM), then PATH, then wildcard.
@@ -339,7 +340,7 @@ npm test           # = tools/check.js && tools/test-plugin.js && tools/test-view
 
 - `tools/check.js`: `node --check` on the plugin, inline-script syntax/`{{`-hazard check, JSON validity of
   config files, and view-name↔render-name consistency. Must run anywhere (no dependencies).
-- `tools/test-plugin.js`: 186 behavioral assertions against the real module (mocked MeshCentral DB/webserver):
+- `tools/test-plugin.js`: 188 behavioral assertions against the real module (mocked MeshCentral DB/webserver):
   locations grouping & counting, manual-rating severity override, FP exclusion, host-name preference, coverage
   numbers, multi-mesh scan/`mixed` logic, all POST handlers incl. validation/rejections, routes, admin gating
   (401), CPE table add/delete, vulns CSV header/content, toolbar button injection (simulated browser DOM), remote CPE table apply/cache/fetch/settings, NVD download-log tailing, manual NVD update trigger + concurrency guard, unknown-version matching rules, winget updater (builder/parser/queue/routes), `longTimeout` chunking, restart-proof schedule delays,
