@@ -223,9 +223,9 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
 
 ## Winget auto-update engine (verified contracts)
 
-- Transport (verified in MeshCentral `agents/meshcore.js`): the server sends
-  `{action:'runcommands', type:2, cmds:<powershell>, runAsUser:0, reply:true, sessionid, responseid}`
-  (type 2 = PowerShell via stdin, runAsUser 0 = the agent's SYSTEM context); the agent answers
+- runcommands mechanics (verified in MeshCentral `agents/meshcore.js`): type 1 = cmd.exe line reader,
+  type 2 = PowerShell via stdin; runAsUser 0 = the agent's SYSTEM context; reply:true makes the agent
+  answer
   `{action:'msg', type:'runcommands', result, sessionid, responseid}`, captured by the same
   `routeAgentCommand` hook as the inventory collector. Sessions are identified by the
   `invscanner-wg-<node>` sessionid prefix; foreign sessions are never consumed.
@@ -257,11 +257,18 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   `msg/console` packets carrying an `invscanner-wg-` sessionid (e.g. the agent's 'already busy' note,
   meshcore.js breaks WITHOUT a runcommands reply in that case) are mirrored into winget-update.log.
   Answers that carry NEITHER sessionid NOR responseid (some agent builds) are still consumed when a
-  wgPending entry exists for that node; marker text on the console channel is captured the same way.
+  wgPending entry exists for that node; console-channel text accumulates on the pending entry (`.cbuf`,
+  capped) and is consumed ONLY once the marker payload actually parses — partial chunks must never end
+  a session (the runcommands reply or the watchdog finishes it). The payload is read up to the first
+  line break after the marker (ConvertTo-Json -Compress is one line), so trailing console text cannot
+  corrupt it; both Stop-Transcript calls pipe to `| Out-Null` because the cmd transport makes
+  Stop-Transcript print its notice AFTER the answer line (the v2.5.1 'unparsable payload' bug).
   installRouteHook self-retries every 2s until routeAgentCommand exists, wgPump calls it defensively.
   `wg_status` devices[] carry `pending:{since}` while a script awaits its answer.
-  Every script self-logs on the client: Start/Stop-Transcript around the run, file
-  next to the agent binary (Get-CimInstance Win32_Process parent id - PS 5.1 has no .Parent). Candidates
+  Every script self-logs on the client: Start/Stop-Transcript (both silenced via `| Out-Null`) around
+  the run. The agent folder is found by walking up to FOUR process ancestors (Get-CimInstance
+  Win32_Process - with the cmd transport the DIRECT parent is cmd.exe/System32, the agent is the
+  grandparent; matched by leaf name `meshagent|meshcentral...exe`), default C:\ProgramData. Candidates
   agent-folder -> ProgramData -> TEMP are chosen by an Out-File -Append write probe, because
   Start-Transcript on a blocked file reports success while writing NOTHING (rotates once at 5MB).
   `hook_agentCoreIsStable` additionally queues the device through `wgQueueNode` (stagger-delayed, so the

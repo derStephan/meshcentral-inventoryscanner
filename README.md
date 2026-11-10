@@ -331,10 +331,11 @@ another plugin's buttons, ours are left out (no duplicates).
   reported for it, and the row explains 'version not assessable'. For snap apps, 'snap list'
   on the device shows the real upstream release.
 * **Offline devices** show their last collected state; check the inventory age before trusting a device row.
-* **A batch or dry run that never completes**: check the client transcript first - it is written to the
-  agent folder, or ProgramData/TEMP if that path is locked. The plugin also consumes answers that
-  arrive without session ids and console-channel output, so with current builds every run ends in a
-  result or an explicit timeout. The agent answers a runcommands script only when the
+* **A batch or dry run that never completes**: check the client transcript first - it is written next to
+  `meshagent.exe` (falling back to `C:\ProgramData`, then TEMP if that path is locked). The plugin also
+  consumes answers that arrive without session ids and console-channel output (the console answer line
+  is only accepted once it fully parses, so split chunks never corrupt a result), so with current builds
+  every run ends in a result or an explicit timeout. The agent answers a runcommands script only when the
   PowerShell process exits. While the device is running any other command session (MeshCentral
   terminal, another script), the agent reports 'already busy' only on its console - the plugin mirrors
   such agent console lines into `winget-update.log`, and the device row shows 'waiting for answer'

@@ -17,7 +17,7 @@
  * NVD feed is downloaded.
  *
  * @author derStephan
- * @version 2.5.1
+ * @version 2.5.2
  *
  * Transparency: This plugin was created with the assistance of Qwen 3.6 27B and Qwen 3.8 Flash Next.
  * Security audit (2026-11-06) performed by NVIDIA Nemotron 3 550B A55B via opencode.
@@ -656,7 +656,7 @@ module.exports.inventoryscanner = function (parent) {
             "$ProgressPreference = 'SilentlyContinue'",
             "$invDry = " + (dry ? '$true' : '$false'),
             "$invTDir = $env:ProgramData",
-            "try { $invPP = (Get-CimInstance Win32_Process -Filter ('ProcessId={0}' -f $PID) -ErrorAction Stop).ParentProcessId; if ($invPP) { $invPX = (Get-Process -Id $invPP -ErrorAction Stop).Path; if ($invPX) { $invTDir = Split-Path $invPX } } } catch { }",
+            "try { $invQ = $PID; for ($invHop = 0; $invHop -lt 4; $invHop++) { $invPP = 0; try { $invPP = (Get-CimInstance Win32_Process -Filter ('ProcessId={0}' -f $invQ) -ErrorAction Stop).ParentProcessId } catch { break }; if (-not $invPP) { break }; $invPX = $null; try { $invPX = (Get-Process -Id $invPP -ErrorAction Stop).Path } catch { break }; if ($invPX -and ((Split-Path $invPX -Leaf) -imatch '^(meshagent|meshcentral)[a-z0-9_-]*\\.exe$')) { $invTDir = Split-Path $invPX; break }; $invQ = $invPP } } catch { }",
             "$invT = Join-Path $invTDir 'invscanner-winget.log'",
             "if (Test-Path $invT) { try { if ((Get-Item $invT).Length -gt 5MB) { Move-Item $invT ($invT + '.old') -Force } } catch { } }",
             "try { '' | Out-File -FilePath $invT -Append -Encoding utf8 -ErrorAction Stop } catch { $invT = Join-Path $env:ProgramData 'invscanner-winget.log'; try { '' | Out-File -FilePath $invT -Append -Encoding utf8 -ErrorAction Stop } catch { $invT = Join-Path $env:TEMP 'invscanner-winget.log' } }",
@@ -664,7 +664,7 @@ module.exports.inventoryscanner = function (parent) {
             "$wg = $null",
             "$invAP = $null; try { $invAP = (Get-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\winget.exe' -ErrorAction Stop).'(default)' } catch { }; if ($invAP -and (Test-Path $invAP)) { $wg = $invAP }",
             "if (-not $wg) { foreach ($wc in @((Get-Command winget -ErrorAction SilentlyContinue), (Get-ChildItem ($env:ProgramFiles + \"\\WindowsApps\\Microsoft.DesktopAppInstaller_*\\winget.exe\") -ErrorAction SilentlyContinue | Select-Object -First 1))) { if ($wc -ne $null -and $wc.FullName) { $wg = $wc.FullName; break } } }",
-            "if ($wg -eq $null) { Write-Output '" + obj.WINGET_MARKER + "{\"winget\":false}'; Stop-Transcript -ErrorAction SilentlyContinue; exit }",
+            "if ($wg -eq $null) { Write-Output '" + obj.WINGET_MARKER + "{\"winget\":false}'; Stop-Transcript -ErrorAction SilentlyContinue | Out-Null; exit }",
             "$invIgnore = @(" + psList + ")",
             "$raw = ''",
             "try { $raw = ((& $wg list --upgrade-available --accept-source-agreements --disable-interactivity) 2>&1) -join [Environment]::NewLine } catch { }",
@@ -675,7 +675,7 @@ module.exports.inventoryscanner = function (parent) {
         ].concat(pinLines, [
             "if ($null -eq $results) { $results = @() }",
             "@{ winget = $true; dry = $invDry; results = @($results) } | ConvertTo-Json -Compress -Depth 5 | ForEach-Object { Write-Output ('" + obj.WINGET_MARKER + "' + $_) }",
-            "Stop-Transcript -ErrorAction SilentlyContinue"
+            "Stop-Transcript -ErrorAction SilentlyContinue | Out-Null"
         ]).join(String.fromCharCode(10));
     };
 
@@ -845,7 +845,7 @@ module.exports.inventoryscanner = function (parent) {
                 obj.wgActive++;
                 try {
                     agent.send(JSON.stringify({ action: 'runcommands', type: 1, cmds: obj.wgTransport(obj.wgBuildScript(obj.wingetConfig(), obj.wgBatchDry === true)), runAsUser: 0, reply: true, sessionid: sid, responseid: sid }));
-                    obj.wgLog(nodeid + ' - update script sent (client transcript: invscanner-winget.log in the agent folder)');
+                    obj.wgLog(nodeid + ' - update script sent (client transcript: invscanner-winget.log next to meshagent.exe or in C:\\ProgramData)');
                 } catch (ex) {
                     clearTimeout(entry.timer); delete obj.wgPending[nodeid]; obj.wgActive--;
                     obj.wgResults[nodeid] = { time: new Date().toISOString(), error: 'send-failed: ' + ex.message, results: [] };
@@ -876,6 +876,29 @@ module.exports.inventoryscanner = function (parent) {
     };
 
     /**
+     * @brief Extract the marker payload from an output text. The answer is ONE
+     * ConvertTo-Json -Compress line, so the payload ends at the first line break
+     * after the marker - anything printed afterwards (e.g. a cmd banner or a
+     * transcript notice that was not silenced) cannot corrupt it, and anything
+     * before it is ignored. Chunks split across packets are handled by the
+     * caller feeding the accumulated buffer (wgPending entry .cbuf).
+     * @param {string} text - raw agent output.
+     * @returns {object|null} Parsed answer object, null when absent/unparsable.
+     */
+    obj.wgPayloadFromText = function (text) {
+        try {
+            var idx = String(text).lastIndexOf(obj.WINGET_MARKER);
+            if (idx < 0) return null;
+            var payload = String(text).substring(idx + obj.WINGET_MARKER.length);
+            var nl = payload.search(/[\r\n]/);
+            if (nl >= 0) payload = payload.substring(0, nl);
+            payload = payload.trim();
+            if (payload === '' || payload.charAt(0) !== '{') return null;
+            return JSON.parse(payload);
+        } catch (e) { return null; }
+    };
+
+    /**
      * @brief Handle a runcommands response for one of our update sessions.
      * Extracts the marker JSON, normalizes single-element array unrolling that
      * ConvertTo-Json does, stores results and advances the queue.
@@ -890,19 +913,17 @@ module.exports.inventoryscanner = function (parent) {
         obj.wgActive--;
         var text = (typeof command.result === 'string') ? command.result : JSON.stringify(command.result || '');
         var rec = { time: new Date().toISOString(), winget: false, dry: obj.wgBatchDry === true, results: [] };
-        var idx = text.lastIndexOf(obj.WINGET_MARKER);
-        if (idx >= 0) {
-            var payload = text.substring(idx + obj.WINGET_MARKER.length).trim();
-            try {
-                var data = JSON.parse(payload);
-                rec.winget = (data.winget === true);
-                var rr = data.results;
-                if (rr == null) { rr = []; } else if (!Array.isArray(rr)) { rr = [rr]; } // PS unwraps single-element arrays
-                rec.results = rr.filter(function (x) { return x && (typeof x.id === 'string'); }).map(function (x) {
-                    return { id: x.id, name: (typeof x.name === 'string') ? x.name.substring(0, 200) : '', from: String(x.from == null ? '' : x.from).substring(0, 60), to: String(x.to == null ? '' : x.to).substring(0, 60), state: String(x.state || 'unknown').substring(0, 40), exit: (typeof x.exit === 'number') ? x.exit : null, log: String(x.log || '').substring(0, 500) };
-                });
-            } catch (e) { rec.error = 'unparsable payload'; }
-        } else { rec.error = 'no marker in output'; }
+        var data = obj.wgPayloadFromText(text);
+        var hadMarker = (text.indexOf(obj.WINGET_MARKER) >= 0);
+        if ((data == null) && (typeof entry.cbuf === 'string') && (entry.cbuf !== '')) { data = obj.wgPayloadFromText(entry.cbuf); hadMarker = hadMarker || (entry.cbuf.indexOf(obj.WINGET_MARKER) >= 0); } // answer line was chunk-split on the console channel
+        if (data != null) {
+            rec.winget = (data.winget === true);
+            var rr = data.results;
+            if (rr == null) { rr = []; } else if (!Array.isArray(rr)) { rr = [rr]; } // PS unwraps single-element arrays
+            rec.results = rr.filter(function (x) { return x && (typeof x.id === 'string'); }).map(function (x) {
+                return { id: x.id, name: (typeof x.name === 'string') ? x.name.substring(0, 200) : '', from: String(x.from == null ? '' : x.from).substring(0, 60), to: String(x.to == null ? '' : x.to).substring(0, 60), state: String(x.state || 'unknown').substring(0, 40), exit: (typeof x.exit === 'number') ? x.exit : null, log: String(x.log || '').substring(0, 500) };
+            });
+        } else { rec.error = hadMarker ? 'unparsable payload' : 'no marker in output'; }
         obj.wgResults[nodeid] = rec;
         var okN = 0, skipN = 0, failN = 0, wouldN = 0;
         for (var i = 0; i < rec.results.length; i++) {
@@ -1679,11 +1700,19 @@ module.exports.inventoryscanner = function (parent) {
         } else if ((command.action === 'msg') && (command.type === 'console')) {
             // Winget answers arriving on the console channel (some agent builds emit
             // runcommands output as console text): capture when a wg session is pending.
-            if ((typeof command.value === 'string') && (command.value.indexOf(obj.WINGET_MARKER) >= 0) &&
-                (obj.wgPending != null) && (obj.wgPending[nodeid] != null)) {
-                obj.wgLog(nodeid + ' - answer captured via console channel');
-                obj.wgHandleResponse(nodeid, { result: command.value });
-                return true;
+            // Packets chunk the output, so the answer line can span several packets -
+            // text accumulates on the pending entry and is only consumed once the
+            // payload is complete and parses (otherwise the runcommands reply or the
+            // watchdog finishes the session).
+            var wge = (obj.wgPending != null) ? obj.wgPending[nodeid] : null;
+            if ((typeof command.value === 'string') && (wge != null)) {
+                wge.cbuf = (typeof wge.cbuf === 'string' ? wge.cbuf : '') + command.value;
+                if (wge.cbuf.length > 262144) wge.cbuf = wge.cbuf.substring(wge.cbuf.length - 131072);
+                if (obj.wgPayloadFromText(wge.cbuf) != null) {
+                    obj.wgLog(nodeid + ' - answer captured via console channel');
+                    obj.wgHandleResponse(nodeid, { result: wge.cbuf });
+                    return true;
+                }
             }
             // Windows-update status responses come back as console text. They are
             // identified by the plugin's own sessionid prefix; when captured we

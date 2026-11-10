@@ -805,6 +805,38 @@ steps.push(function (next) {
     next();
 });
 
+
+// ---- v2.5.2: dry-run 'unparsable payload' + transcript folder fixes ----
+steps.push(function (next) {
+    var sc = obj.wgBuildScript({ ignorePackages: [], pinSync: false }, true);
+    check('transcript: every Stop-Transcript silenced (no notice after the answer line)',
+        (sc.match(/Stop-Transcript/g) || []).length === 2 && (sc.match(/Stop-Transcript -ErrorAction SilentlyContinue \| Out-Null/g) || []).length === 2);
+    check('transcript: ancestor walk to meshagent, not the cmd.exe parent',
+        sc.indexOf('-imatch') >= 0 && sc.indexOf('meshagent') >= 0 && sc.indexOf('for ($invHop') >= 0, sc.split(String.fromCharCode(10))[3]);
+    // trailing console text after the marker line must not corrupt the payload
+    obj.wgPending['node//trail'] = { nodeid: 'node//trail', sid: 'invscanner-wg-node_trail' };
+    obj.wgActive = (obj.wgActive || 0) + 1;
+    obj.onAgentResponse({ action: 'msg', type: 'runcommands', result: obj.WINGET_MARKER + '{"winget":true,"dry":true,"results":[]}' + String.fromCharCode(13, 10) + 'Transcript stopped, output file is C:\\x\\invscanner-winget.log' }, '', 'node//trail');
+    check('parse: text after the answer line ignored', obj.wgResults['node//trail'].error === undefined && obj.wgResults['node//trail'].winget === true, obj.wgResults['node//trail']);
+    delete obj.wgResults['node//trail'];
+    // a console chunk splitting the answer line must NOT end the session
+    obj.wgPending['node//chunk'] = { nodeid: 'node//chunk', sid: 'invscanner-wg-node_chunk' };
+    obj.wgActive = (obj.wgActive || 0) + 1;
+    var a1 = obj.onAgentResponse({ action: 'msg', type: 'console', value: 'winget table...' + obj.WINGET_MARKER + '{"winget":true,"dry":true,"res' }, '', 'node//chunk');
+    check('console: partial answer chunk keeps the session pending', a1 === false && obj.wgPending['node//chunk'] != null, a1);
+    var a2 = obj.onAgentResponse({ action: 'msg', type: 'console', value: 'ults":[]}' + String.fromCharCode(13, 10) }, '', 'node//chunk');
+    check('console: completing chunk consumes the session', a2 === true && obj.wgResults['node//chunk'].winget === true && obj.wgResults['node//chunk'].error === undefined, obj.wgResults['node//chunk']);
+    delete obj.wgResults['node//chunk'];
+    // runcommands reply wins even when the buffered console text was incomplete
+    obj.wgPending['node//late'] = { nodeid: 'node//late', sid: 'invscanner-wg-node_late', cbuf: 'noise' + obj.WINGET_MARKER + '{"winget":tr' };
+    obj.wgActive = (obj.wgActive || 0) + 1;
+    obj.onAgentResponse({ action: 'msg', type: 'runcommands', sessionid: 'invscanner-wg-node_late', result: obj.WINGET_MARKER + '{"winget":true,"dry":true,"results":[{"id":"A.B","state":"dry-run"}]}' }, '', 'node//late');
+    check('route: reply parsed despite broken console buffer', obj.wgResults['node//late'].error === undefined && obj.wgResults['node//late'].results.length === 1 && obj.wgResults['node//late'].results[0].state === 'dry-run', obj.wgResults['node//late']);
+    delete obj.wgResults['node//late'];
+    obj.wgActive = 0;
+    next();
+});
+
 (function run(i) {
     if (i >= steps.length) {
         console.log(failures === 0 ? '\ntest-plugin: ALL PASSED' : '\ntest-plugin: ' + failures + ' FAILURE(S)');
