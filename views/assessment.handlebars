@@ -41,6 +41,7 @@
         .badge-builtin { background: #e0e7ef; color: #33455c; }
         .badge-custom { background: #d4edda; color: #155724; }
         .badge-mixed { background: #fff3cd; color: #856404; }
+        .badge-varies { background: #e8e2f4; color: #4c3a70; cursor: help; }
         .setgrid { display: grid; grid-template-columns: 280px 1fr; gap: 12px 16px; align-items: start; margin: 14px 0 22px 0; }
         .setgrid > label { font-weight: 600; font-size: 13px; padding-top: 6px; }
         .setgrid .hint { color: #66737f; font-size: 12px; margin-top: 4px; }
@@ -871,7 +872,7 @@
             for (var i = 0; i < state.rows.length; i++) {
                 var r = state.rows[i];
                 if (txt) {
-                    var hay = [r.cve, r.software, r.version, r.description].join(' ');
+                    var hay = [r.cve, r.software, r.version, r.description].concat(r.variedVersions || [], r.variedSoftware || []).join(' ');
                     for (var j = 0; j < r.locations.length; j++) {
                         hay += ' ' + r.locations[j].name + ' ' + (r.locations[j].devices || []).join(' ');
                     }
@@ -923,12 +924,22 @@
                 }
                 html += '<td><span class="sev sev-' + esc(sev.replace(/ /g, '-')) + '">' + esc(sev) + '</span></td>';
                 html += '<td>' + esc(r.cvss) + '</td>';
-                html += '<td>' + esc(r.software) + (r.version ? ' <span style="color:#556">' + esc(r.version) + '</span>' : '') + '</td>';
+                html += '<td>' + esc(r.software);
+                if (r.softwareVaried && r.variedSoftware) { html += ' <span class="badge badge-varies" title="' + esc(r.variedSoftware.join(' | ')) + '">+' + (r.variedSoftware.length - 1) + ' name(s)</span>'; }
+                if (r.versionVaried) { html += ' <span class="badge badge-varies" title="' + esc((r.variedVersions || []).map(function (x) { return x === '' ? 'unknown' : x; }).join(' | ')) + '">varies (' + r.variedVersions.length + ')</span>'; }
+                else if (r.version) { html += ' <span style="color:#556">' + esc(r.version) + '</span>'; }
+                html += '</td>';
                 html += '<td>' + esc(status) + (r.mixed ? ' <span class="badge badge-mixed">mixed</span>' : '') + '</td>';
                 html += '<td class="devlist">';
                 for (var j = 0; j < r.locations.length; j++) {
                     var loc = r.locations[j];
-                    html += '<div><b>' + esc(loc.name) + '</b>: ' + esc((loc.devices || []).join(', ')) + '</div>';
+                    var lbls = (loc.devices || []).slice();
+                    if (r.versionVaried) {
+                        var dvMap = {};
+                        (loc.deviceList || []).forEach(function (dl2) { dvMap[dl2.name] = dl2.version; });
+                        lbls = lbls.map(function (lb) { return (dvMap[lb] != null && dvMap[lb] !== '') ? lb + ' (' + dvMap[lb] + ')' : lb; });
+                    }
+                    html += '<div><b>' + esc(loc.name) + '</b>: ' + esc(lbls.join(', ')) + '</div>';
                 }
                 html += '</td>';
                 html += '<td style="min-width:230px"><select class="rating-sel">' +

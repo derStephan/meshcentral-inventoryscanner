@@ -865,6 +865,59 @@ steps.push(function (next) {
 });
 
 
+// ---- v2.8.0: honest CVE-row aggregation + coexistence-aware pruning ----
+steps.push(function (next) {
+    var pv1 = obj.pruneSuperseded([
+        { name: 'Microsoft Edge', version: '157.0.4341.42', publisher: 'Microsoft Corporation' },
+        { name: 'Microsoft Edge WebView2-Laufzeit', version: '157.0.4341.42', publisher: 'Microsoft Corporation' }
+    ]);
+    check('prune: edge and the webview2 runtime coexist (distinct products)', pv1.length === 2, pv1);
+    var pw = obj.matchKnownProduct('Microsoft Edge WebView2-Laufzeit');
+    check('table: webview2 maps to edge_webview2, never to edge', pw != null && pw.product === 'edge_webview2', pw);
+    var pv2 = obj.pruneSuperseded([
+        { name: 'Microsoft Visual C++ 2008 Redistributable - x64 9.0.30729.6161', version: '9.0.30729.6161', publisher: 'Microsoft Corporation' },
+        { name: 'Microsoft Visual C++ 2008 Redistributable - x86 9.0.30729.6161', version: '9.0.30729.6161', publisher: 'Microsoft Corporation' }
+    ]);
+    check('prune: x64 and x86 installs of one product coexist', pv2.length === 2, pv2);
+    var pv3 = obj.pruneSuperseded([
+        { name: 'Nextcloud Talk (Machine - MSI)', version: '2.3.3.0', publisher: 'Nextcloud GmbH' },
+        { name: 'Nextcloud Talk (Machine)', version: '2.3.3', publisher: 'Nextcloud GmbH' }
+    ]);
+    check('prune: same program, same name token -> newer version wins', pv3.length === 1 && String(pv3[0].name).indexOf('MSI') > 0, pv3);
+    var pv4 = obj.pruneSuperseded([{ name: 'Dup Tool', version: '1.0', publisher: 'Dup Inc' }, { name: 'Dup Tool', version: '1.0', publisher: 'Dup Inc' }]);
+    check('prune: exact duplicate rows collapse', pv4.length === 1, pv4);
+    var pv5 = obj.pruneSuperseded([{ name: 'Google Chrome 1.0', version: '1.0', publisher: 'Google LLC' }, { name: 'Chrome 2.0', version: '2.0', publisher: 'Google LLC' }]);
+    check('prune: mapped and unmapped name forms of one product still collapse (leftover fix stays)', pv5.length === 1 && String(pv5[0].version) === '2.0', pv5);
+    var pv6 = obj.pruneSuperseded([{ name: 'Zeta Backup 3.6 (x64)', version: '3.6', publisher: 'Zeta Corp' }, { name: 'Zeta Backup 12.1 (x64)', version: '12.1', publisher: 'Zeta Corp' }]);
+    check('prune: unknown-vendor leftovers collapse newest-wins', pv6.length === 1 && String(pv6[0].version) === '12.1', pv6);
+
+    // aggregation across devices with DIFFERENT installed versions of the same product:
+    var realScan = obj.scanDeviceSoftware;
+    var savedDoc = sysinfo['sinode//d2'].doc;
+    sysinfo['sinode//d2'].doc = { apps: [{ name: 'Nextcloud Talk (Machine)', version: '1.2.6.0', publisher: 'Nextcloud GmbH' }] };
+    obj.scanDeviceSoftware = function (swlist, cb) {
+        var out = [];
+        for (var s = 0; s < swlist.length; s++) {
+            out.push({ status: 'CVE', isCve: true, cve: 'CVE-2024-8888', severity: 'HIGH', cvss: 7.5, description: 'varies case', software: String(swlist[s].name || ''), version: String(swlist[s].version || ''), published: '', references: [] });
+        }
+        cb(out);
+    };
+    obj.scanMultiMeshCves(['mesh//grp1'], function (err, result) {
+        var row = result.cves.filter(function (x) { return x.cve === 'CVE-2024-8888'; })[0];
+        check('scan: varied per-device versions never collapse to the first device',
+            row != null && row.versionVaried === true && row.version === '' && (row.variedVersions || []).sort().join(',') === '1.0,1.2.6.0' && row.softwareVaried === true, row);
+        check('scan: deviceList keeps the exact per-device truth',
+            row.deviceList.length === 2 && row.deviceList[0].name === 'Given1' && row.deviceList[0].version === '1.0' && row.deviceList[1].name === 'Given2' && row.deviceList[1].version === '1.2.6.0', row.deviceList);
+        obj.buildOverallReport(function (e2, rep) {
+            var hqf = rep.locations.filter(function (x) { return x.name === 'HQ'; })[0].findings.filter(function (x) { return x.cve === 'CVE-2024-8888'; })[0];
+            check('report: findings carry the same honest version state', hqf.versionVaried === true && hqf.version === '' && hqf.deviceList.length === 2, hqf);
+            sysinfo['sinode//d2'].doc = savedDoc;
+            obj.scanDeviceSoftware = realScan;
+            next();
+        });
+    });
+});
+
 // ---- v2.7.1: panel device labels are admin given names (reports keep host names) ----
 steps.push(function (next) {
     obj.scanMultiMeshCves(['mesh//grp1'], function (err, result) {

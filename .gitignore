@@ -3,3 +3,6 @@ package-lock.json
 *.log
 *.html
 !tools/**/*.html
+# support/investigation dumps (CSV exports, browser outputs) - never publish:
+/*.txt
+/*.csv

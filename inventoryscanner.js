@@ -17,7 +17,7 @@
  * NVD feed is downloaded.
  *
  * @author derStephan
- * @version 2.7.1
+ * @version 2.8.0
  *
  * Transparency: This plugin was created with the assistance of Qwen 3.6 27B and Qwen 3.8 Flash Next.
  * Security audit (2026-11-06) performed by NVIDIA Nemotron 3 550B A55B via opencode.
@@ -972,17 +972,50 @@ module.exports.inventoryscanner = function (parent) {
 
     /**
      * @brief Superseded-row pruning for the software list. Two registry rows
-     * that resolve to the SAME CPE product and the SAME major version are one
-     * program with a leftover uninstall entry (classic: "Mozilla Firefox
-     * 3.6.24 (x86 de-DE)" still listed next to "Firefox 121.0.1", or a chain
-     * of "Java 8 Update NNN" rows). Scanning the stale row would report
-     * fifteen-year-old CVEs against a patched product. The newest version of
-     * each (product, major) group survives. Python / .NET-style products key
-     * on major.minor because they genuinely install side by side. Rows with an
-     * unknown version are never treated as superseded.
+     * that resolve to the SAME CPE product AND the SAME arch-aware display name
+     * are one program with a leftover uninstall entry (classic: "Mozilla Firefox
+     * 3.6.24 (x86 de-DE)" still listed next to "Firefox 121.0.1", or a chain of
+     * "Java 8 Update NNN" rows); the newer version wins. Rows that merely share
+     * a CPE product mapping but differ in display name or architecture are
+     * DISTINCT installs and always coexist (verified on a real fleet:
+     * "Microsoft Edge" vs "Microsoft Edge WebView2-Laufzeit", VC++ 2008 x64 vs
+     * x86 - silently merging them drops inventory rows the agent really
+     * reported and attributes CVEs to the wrong product). Python / .NET-style
+     * products key on major(.minor) because they genuinely install side by
+     * side. Rows with an unknown version are never treated as superseded.
      * @param {Array<object>} softwareList - raw rows ({ name, version, publisher }).
      * @returns {Array<object>} pruned list; input is not modified.
      */
+    /**
+     * @brief Architecture signature of a display name ('64' / '32' / '' when
+     *   not stated or both mentioned). Kept out of the name token on purpose:
+     *   the token strips arch noise, the sig restores the distinction for the
+     *   supersede check so x86 and x64 installs never merge.
+     * @param {string} name - Display name.
+     * @returns {string} The signature.
+     */
+    obj.pruneArchSig = function (name) {
+        var n = String(name).toLowerCase();
+        var b64 = /(x64|amd64|arm64|aarch64|64[ -]?bit)/.test(n);
+        var b32 = /(x86|i386|32[ -]?bit)/.test(n);
+        return (b64 && !b32) ? '64' : ((b32 && !b64) ? '32' : '');
+    };
+
+    /** @brief Name token with the vendor's own leading name word stripped, so the
+     *  same product labeled "Mozilla Firefox" / "Firefox" still compares equal. */
+    obj.pruneNameKey = function (name, vendor) {
+        var tok = obj.pruneNameToken(name);
+        var words = String(vendor || '').toLowerCase().replace(/[_+]+/g, ' ').split(' ');
+        var changed = true;
+        while (changed) {
+            changed = false;
+            for (var wi = 0; wi < words.length; wi++) {
+                var w = words[wi];
+                if (w !== '' && tok.indexOf(w + ' ') === 0) { tok = tok.substring(w.length + 1); changed = true; }
+            }
+        }
+        return tok;
+    };
     /**
      * @brief Version/arch/locale-stripped lowercase name token for the prune
      *   grouping key when no CPE mapping resolves; needs no NVD index.
@@ -1001,44 +1034,50 @@ module.exports.inventoryscanner = function (parent) {
     obj.pruneSuperseded = function (softwareList) {
         if (!Array.isArray(softwareList)) return [];
         var SIDE_BY_SIDE = { jre: 1, jdk: 1, java: 1, net_framework: 1, dotnet: 1, python: 2, visual_c: 1, 'visual_c++_redistributable': 1, vcredist: 1 };
-        var best = {}, firstAt = {}, order = [];
+        var groups = {}, drop = {};
         for (var i = 0; i < softwareList.length; i++) {
             var sw = softwareList[i];
-            if (sw == null) continue;
+            if (sw == null) { drop[i] = true; continue; }
             var name = String(sw.name || sw.Name || sw.displayName || sw.DisplayName || '');
             var version = String(sw.version != null ? sw.version : (sw.Version != null ? sw.Version : ''));
             var vm = String(obj.normalizeCveVersion(version) || version).trim().match(/^(?:0?v|v)?(\d+)(?:[._](\d+))?/);
-            var key = null;
+            var key = null, tok = '', arch = '';
             if (name !== '' && vm != null) {
                 var pub = String(sw.publisher || sw.Publisher || '');
                 var mapped = null;
                 try { mapped = obj.deriveCpeProduct(pub, name); } catch (e) { }
                 var product, vendor;
-                if (mapped != null) { product = mapped.product; vendor = mapped.vendor; }
+                if (mapped != null) { product = mapped.product; vendor = mapped.vendor; tok = obj.pruneNameKey(name, mapped.vendor); }
                 else {
                     product = obj.pruneNameToken(name);
                     vendor = null;
                     try { vendor = obj.deriveVendorFromPublisher(pub); } catch (e2) { }
                     if (vendor == null) { vendor = '?'; }
                     else if (product.indexOf(vendor + ' ') === 0) { product = product.substring(vendor.length + 1); }
+                    // "Mozilla Firefox 3.6" (unmapped form) vs "Firefox 121" is ONE program:
+                    // the coexistence token must ignore the vendor's own leading name word too.
+                    tok = obj.pruneNameKey(name, vendor);
                 }
-                var mode = SIDE_BY_SIDE[String(product).toLowerCase()] || 0;var grp = mode === 1 ? vm[1] : (mode === 2 ? (vm[2] != null ? vm[1] + '.' + vm[2] : vm[1]) : 'all');
+                var mode = SIDE_BY_SIDE[String(product).toLowerCase()] || 0;
+                var grp = mode === 1 ? vm[1] : (mode === 2 ? (vm[2] != null ? vm[1] + '.' + vm[2] : vm[1]) : 'all');
                 key = (vendor || '?') + '|' + String(product).toLowerCase() + '@' + grp;
+                arch = obj.pruneArchSig(name);
             }
-            if (key == null) { order.push({ uniq: 'raw:' + i, row: sw }); continue; }
-            order.push({ uniq: key, row: null });
-            var cur = best[key];
-            if (cur == null) { best[key] = { row: sw, version: version }; continue; }
-            try {
-                if (obj.compareCpeVersions(version, cur.version) > 0) { best[key] = { row: sw, version: version }; }
-            } catch (e) { }
+            if (key == null) continue; // unversioned / nameless rows are never treated as superseded
+            var g = groups[key] || (groups[key] = []);
+            var keep = true;
+            for (var gi = 0; gi < g.length; gi++) {
+                var e3 = g[gi];
+                if (e3.tok !== tok || e3.arch !== arch) continue; // different install variant - coexists
+                var cv = 0;
+                try { cv = obj.compareCpeVersions(version, e3.version); } catch (e4) { cv = 0; }
+                if (cv > 0) { drop[e3.i] = true; g.splice(gi, 1); gi--; } // newer leftover-free row wins
+                else { keep = false; break; } // an equal-or-newer row of the same program already survives
+            }
+            if (keep) { g.push({ i: i, version: version, tok: tok, arch: arch }); } else { drop[i] = true; }
         }
-        var seen = {}, out = [];
-        for (var o = 0; o < order.length; o++) {
-            var e2 = order[o];
-            if (e2.row != null) { out.push(e2.row); continue; }
-            if (seen[e2.uniq] == null && best[e2.uniq] != null) { seen[e2.uniq] = 1; out.push(best[e2.uniq].row); }
-        }
+        var out = [];
+        for (var oi = 0; oi < softwareList.length; oi++) { if (!drop[oi]) out.push(softwareList[oi]); }
         return out;
     };
 
@@ -2557,6 +2596,7 @@ obj.loadNvdFromAllFiles = function () {
         { match: /mozilla firefox/i, vendor: 'mozilla', product: 'firefox' },
         { match: /mozilla thunderbird/i, vendor: 'mozilla', product: 'thunderbird' },
         { match: /google chrome/i, vendor: 'google', product: 'chrome' },
+        { match: /webview2/i, vendor: 'microsoft', product: 'edge_webview2' }, // before 'microsoft edge' - distinct runtime, not the browser
         { match: /microsoft edge/i, vendor: 'microsoft', product: 'edge' },
         { match: /microsoft teams/i, vendor: 'microsoft', product: 'teams' },
         // Adobe
@@ -3755,12 +3795,42 @@ obj.loadNvdFromAllFiles = function () {
     };
 
     /**
+     * @brief Honest display values for a CVE row aggregated over devices.
+     * Software display name and installed version are PER-DEVICE attributes, so an
+     * aggregated row must never claim one arbitrary device's version as the truth
+     * for all of them (that made the panel disagree with the per-device CSV).
+     * Uniform values are kept; when they differ the row gets the flags
+     * <code>softwareVaried</code>/<code>versionVaried</code> + the variant lists,
+     * and <code>version</code> becomes '' (unknown-looking beats wrong-looking -
+     * the UI renders "varies" with the full per-device breakdown).
+     * @param {object} entry - CVE row with deviceList:[{name, software, version}].
+     * @returns {object} The same entry, annotated.
+     */
+    obj.summarizeDeviceSwVer = function (entry) {
+        var dl = Array.isArray(entry.deviceList) ? entry.deviceList : [];
+        if (dl.length === 0) { entry.softwareVaried = false; entry.versionVaried = false; return entry; }
+        var names = {}, vers = {}, nUn = 0, vUn = 0;
+        for (var i = 0; i < dl.length; i++) {
+            var nm = String(dl[i].software || ''), vr = String(dl[i].version || '');
+            if (!Object.prototype.hasOwnProperty.call(names, nm)) { names[nm] = 1; nUn++; }
+            if (!Object.prototype.hasOwnProperty.call(vers, vr)) { vers[vr] = 1; vUn++; }
+        }
+        entry.softwareVaried = nUn > 1;
+        entry.versionVaried = vUn > 1;
+        if (entry.softwareVaried) { entry.variedSoftware = Object.keys(names); entry.software = String(dl[0].software || ''); }
+        if (entry.versionVaried) { entry.variedVersions = Object.keys(vers); entry.version = ''; }
+        return entry;
+    };
+
+    /**
      * @brief Aggregate the unique CVEs found across all devices of a mesh.
      * Each CVE carries the mesh-wide assessment (if any).
      * @param {string} meshId - The mesh id to scan.
      * @param {function} callback - Called with <code>(err, cveList)</code> where
-     * each entry is <code>{ cve, severity, cvss, description, software, version, assessment, devices }</code>
-     * with <code>devices</code> = device labels (admin given name first, host name / id as fallback).
+     * each entry is <code>{ cve, severity, cvss, description, software, version, assessment,
+     * devices, deviceList }</code> - <code>devices</code> = device labels (admin given name
+     * first, host name / id as fallback), <code>deviceList</code> = per-device
+     * <code>{ name, software, version }</code> (the truth behind the aggregated display).
      */
     obj.scanMeshCves = function (meshId, callback) {
         obj.meshServer.db.GetAllType('node', function (err, nodes) {
@@ -3804,14 +3874,18 @@ obj.loadNvdFromAllFiles = function () {
                                     software: v.software,
                                     version: v.version,
                                     assessment: assessment,
-                                    devices: []
+                                    devices: [],
+                                    deviceList: []
                                 };
                             }
-                            if (found[v.cve].devices.indexOf(deviceName) < 0) { found[v.cve].devices.push(deviceName); }
+                            if (found[v.cve].devices.indexOf(deviceName) < 0) {
+                                found[v.cve].devices.push(deviceName);
+                                found[v.cve].deviceList.push({ name: deviceName, software: String(v.software || ''), version: String(v.version || '') });
+                            }
                         }
                         if (--pending === 0) {
                             var list = [];
-                            for (var c in found) { list.push(found[c]); }
+                            for (var c in found) { list.push(obj.summarizeDeviceSwVer(found[c])); }
                             list.sort(function (a, b) { return (b.cvss || 0) - (a.cvss || 0); });
                             if (callback) callback(null, list);
                         }
@@ -3864,10 +3938,12 @@ obj.loadNvdFromAllFiles = function () {
                                     software: e.software,
                                     version: e.version,
                                     locations: [],
-                                    assessments: {}
+                                    assessments: {},
+                                    deviceList: []
                                 };
                             }
-                            r.locations.push({ meshId: meshId, name: meshName, devices: e.devices || [] });
+                            r.locations.push({ meshId: meshId, name: meshName, devices: e.devices || [], deviceList: e.deviceList || [] });
+                            if (e.deviceList) { r.deviceList = r.deviceList.concat(e.deviceList); }
                             r.assessments[meshId] = e.assessment || null;
                         }
                     }
@@ -3890,6 +3966,9 @@ obj.loadNvdFromAllFiles = function () {
                             entry.mixed = any && !uniform;
                             entry.assessment = (any && uniform) ? firstA : null;
                             entry.anyFlagged = anyFlagged;
+                            // Recompute the software/version display from the FULL merged
+                            // device list (across all locations), not the first mesh's row.
+                            obj.summarizeDeviceSwVer(entry);
                             out.push(entry);
                         }
                         out.sort(function (a, b) { return (Number(b.cvss) || 0) - (Number(a.cvss) || 0) || String(a.cve).localeCompare(String(b.cve)); });
@@ -4070,10 +4149,14 @@ obj.loadNvdFromAllFiles = function () {
                                     comment: (assessment && assessment.comment) ? assessment.comment : '',
                                     flagged: !!(assessment && assessment.flagged),
                                     effectiveSeverity: (assessment && assessment.flagged) ? 'false positive' : effSev,
-                                    devices: []
+                                    devices: [],
+                                    deviceList: []
                                 };
                             }
-                            if (finding.devices.indexOf(hostName) < 0) { finding.devices.push(hostName); }
+                            if (finding.devices.indexOf(hostName) < 0) {
+                                finding.devices.push(hostName);
+                                finding.deviceList.push({ name: hostName, software: String(v.software || ''), version: String(v.version || '') });
+                            }
 
                             // A finding flagged as false positive is not counted as a vulnerability
                             // (excluded from total findings and the severity distribution).
@@ -4116,7 +4199,7 @@ obj.loadNvdFromAllFiles = function () {
                                 L.uniqueCves = Object.keys(L.uniqueCveIds).length;
                                 var fl = [];
                                 for (var c in L.findingsById) {
-                                    if (Object.prototype.hasOwnProperty.call(L.findingsById, c)) { fl.push(L.findingsById[c]); }
+                                    if (Object.prototype.hasOwnProperty.call(L.findingsById, c)) { fl.push(obj.summarizeDeviceSwVer(L.findingsById[c])); }
                                 }
                                 fl.sort(function (a, b) { return (Number(b.cvss) || 0) - (Number(a.cvss) || 0) || String(a.cve).localeCompare(String(b.cve)); });
                                 L.findings = fl;

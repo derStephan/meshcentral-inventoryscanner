@@ -180,8 +180,8 @@
                 <td>{{this.cve}}</td>
                 <td>{{#if this.flagged}}<span class="sev sev-false-positive">false positive</span>{{else}}<span class="sev sev-{{this.effectiveSeverity}}">{{this.effectiveSeverity}}</span>{{/if}}</td>
                 <td class="num">{{this.cvss}}</td>
-                <td>{{this.software}}</td>
-                <td>{{this.version}}</td>
+                <td>{{this.software}}{{#if this.softwareVaried}} <em>(names vary)</em>{{/if}}</td>
+                <td>{{#if this.versionVaried}}<em>varies - see CSV</em>{{else}}{{this.version}}{{/if}}</td>
                 <td>{{#if this.flagged}}false positive{{else}}CVE{{/if}}</td>
                 <td>{{#if this.assessment}}{{this.assessment}}{{else}}&mdash;{{/if}}</td>
                 <td>{{this.comment}}</td>

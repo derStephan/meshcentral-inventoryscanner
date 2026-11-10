@@ -17,6 +17,11 @@
       "product": "chrome"
     },
     {
+      "match": "webview2",
+      "vendor": "microsoft",
+      "product": "edge_webview2"
+    },
+    {
       "match": "microsoft edge",
       "vendor": "microsoft",
       "product": "edge"

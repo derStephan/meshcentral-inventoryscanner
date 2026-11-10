@@ -151,9 +151,13 @@ UI-managed scanner settings in `<datapath>/plugins/inventoryscanner/scanner-sett
 `obj.effectiveSectionConfig(section)` (file wins per key). **The plugin never writes config.json.**
 
 **`scan` response shape** (drives the panel JS):
-`{ meshes:[{id,name}], cves:[{cve, severity, cvss, description, software, version,
-locations:[{meshId,name,devices:[device labels - admin given name first, rname/_id fallback]}], assessments:{meshId:rec|null}, assessment:rec|null,
+`{ meshes:[{id,name}], cves:[{cve, severity, cvss, description, software, version, deviceList:[{name,software,version}],
+locations:[{meshId,name,devices:[device labels - admin given name first, rname/_id fallback], deviceList:[...]}], assessments:{meshId:rec|null}, assessment:rec|null,
 mixed:bool, anyFlagged:bool}], flaggedCount, totalCves, lastUpdate }`.
+**Honest aggregation (v2.8.0):** software/version are PER-DEVICE attributes - `obj.summarizeDeviceSwVer` runs
+over the merged `deviceList` (also inside `buildOverallReport` findings): uniform → single value shown;
+differing → `versionVaried`/`softwareVaried` + `variedVersions`/`variedSoftware` and `version` becomes '' -
+a row must NEVER show one arbitrary device's version as truth for all (the v2.7.1 "1.2.6.0 vs 2.3.3.0" bug).
 **Unknown installed version:** version strings first pass `normalizeCveVersion`: Debian epochs stripped
   (`1:2.3.4-3ubuntu1` -> `2.3.4`), numeric cores without distro decoration (`22.04.0-1build1` -> `22.04.0`),
   snap/DEB wrapper strings that contain no program version (`1:1snap1-0ubuntu5`) -> `''`. An empty version
@@ -212,9 +216,14 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
 
 - `obj.getStoredSoftware` returns `pruneSuperseded(list)`: rows are grouped by resolved vendor|product
   (curated table -> auto matcher, else version/arch/locale-stripped name token + publisher-vendor map,
-  needs no NVD index) and by version group: default the WHOLE product is one group (newest wins -
-  fixes Firefox-2008-CVE noise from registry leftovers); `jre/jdk/java/net_framework/dotnet/vc++` key
-  on major, `python` on major.minor (real side-by-side installs). Unversioned rows never supersede.
+  needs no NVD index) and by version group: default the WHOLE product is one group; `jre/jdk/java/
+  net_framework/dotnet/vc++` key on major, `python` on major.minor (real side-by-side installs).
+  **Within a group, a row only supersedes another with the SAME arch-aware name key**
+  (`pruneNameKey` = token with the vendor's own name word stripped + `pruneArchSig`): registry leftovers
+  ("Mozilla Firefox 3.6" vs "Firefox 121", "Java 8 Update NNN" chain, "(Machine)" vs "(Machine - MSI)")
+  collapse newest-wins, while DISTINCT installs that merely share a CPE mapping (Edge + Edge WebView2,
+  VC++ x86 + x64) always coexist - v2.7 and earlier silently dropped them (fleet case: the plugin list
+  was shorter than MeshCentral's own software tab). Unversioned rows never supersede.
 
 ## Plugin upgrade path (verified against MeshCentral 1.3.1 pluginHandler/meshagent)
 
@@ -352,6 +361,8 @@ npm install        # once (dev dependency: handlebars)
 npm test           # = tools/check.js && tools/test-plugin.js && tools/test-views.js
 ```
 
+Data dumps from support sessions (CSV exports, browser output TXTs) live OUTSIDE the repo (they sit in the
+MeshCentral install folder) and root `/*.txt` + `/*.csv` are gitignored as a guard - never copy them in.
 - `tools/check.js`: `node --check` on the plugin, inline-script syntax/`{{`-hazard check, JSON validity of
   config files, and view-name↔render-name consistency. Must run anywhere (no dependencies).
 - `tools/test-plugin.js`: 188 behavioral assertions against the real module (mocked MeshCentral DB/webserver):
