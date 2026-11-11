@@ -54,7 +54,7 @@ where the active table came from). No plugin version bump, no new release.
 
 ## Code contributions
 
-* Run `npm test` (requires `npm install` once; needs handlebars for the view tests). `tools/` is the
+* Run `npm test` (requires `npm ci` once; needs handlebars for the view tests). `tools/` is the
   verification suite for this repository - the plugin itself must keep working without it.
 * Never commit exported inventories, CSV/TXT dumps from support sessions or anything from a MeshCentral
   datapath - the repo root gitignores `/*.txt` and `/*.csv` as a guard; keep such files outside the tree.

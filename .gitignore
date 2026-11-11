@@ -1,8 +1,11 @@
+# Installed dev dependencies (handlebars for tools/test-views.js). Recreated by `npm ci`.
+# Must never be committed: the MeshCentral installer unpacks the WHOLE repository ZIP onto
+# every server, so anything committed here would be shipped into <datapath>/plugins/.
 node_modules/
-package-lock.json
-*.log
-*.html
-!tools/**/*.html
-# support/investigation dumps (CSV exports, browser outputs) - never publish:
+
+# npm debug output
+npm-debug.log*
+
+# Support/investigation dumps (CSV exports, browser outputs) - never publish:
 /*.txt
 /*.csv

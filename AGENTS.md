@@ -21,10 +21,14 @@ MUST stay at repository root (never re-nest them in a folder - that silently bre
 tools/                         self-contained verification for agents (no MeshCentral server needed)
   check.js                     node --check on JS, inline-script extraction check, JSON validity, render-name match
   test-plugin.js               behavioral tests against the real plugin module with mocked MeshCentral
-  test-views.js                compiles+renders all three views with Handlebars (needs `npm install`)
+  test-views.js                compiles+renders all three views with Handlebars (needs `npm ci`)
   coverage-benchmark.js        read-only mapping audit against the top NVD products by CVE count (run server-side with --nvd <datapath>/nvd)
 README.md                      user-facing documentation
 package.json                   repo metadata; `npm test` runs tools/check.js + tools/test-plugin.js + tools/test-views.js
+package-lock.json              committed on purpose: pins the dev dependency tree (handlebars) so `npm ci` gives every
+                               contributor the same, audited versions; the plugin itself has NO runtime dependencies
+.gitignore                     node_modules/ (would otherwise be shipped to every server by the ZIP installer),
+                               npm debug logs, root /*.txt and /*.csv support dumps
 ```
 
 ## What the plugin does
@@ -486,7 +490,7 @@ above, and a test assertion. Partial updates are a contract break the tests catc
 ## Testing before committing changes
 
 ```bash
-npm install        # once (dev dependency: handlebars)
+npm ci             # once (dev dependency: handlebars, pinned by package-lock.json)
 npm test           # = tools/check.js && tools/test-plugin.js && tools/test-views.js
 ```
 

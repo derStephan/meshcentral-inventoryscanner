@@ -190,7 +190,7 @@ which table is in force.
 ## Development
 
 ```bash
-npm install    # dev dependency: handlebars (for the view tests)
+npm ci         # dev dependency: handlebars (for the view tests), exact versions from package-lock.json
 npm test       # syntax/consistency checks + behavioral tests + view render tests
 ```
 
