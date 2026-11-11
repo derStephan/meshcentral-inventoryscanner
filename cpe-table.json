@@ -1,5 +1,5 @@
 {
-  "updated": "2026-11-10",
+  "updated": "2026-11-11",
   "entries": [
     {
       "match": "mozilla firefox",
@@ -109,7 +109,7 @@
     {
       "match": "notepad\\+\\+",
       "vendor": "notepad-plus-plus",
-      "product": "notepad++"
+      "product": "notepad\\+\\+"
     },
     {
       "match": "vlc media player",
@@ -173,7 +173,7 @@
     },
     {
       "match": "audacity",
-      "vendor": "audacity",
+      "vendor": "audacityteam",
       "product": "audacity"
     },
     {
@@ -188,7 +188,7 @@
     },
     {
       "match": "keepass(?!xc)",
-      "vendor": "sourceforge",
+      "vendor": "keepass",
       "product": "keepass"
     },
     {
@@ -217,9 +217,14 @@
       "product": "putty"
     },
     {
+      "match": "filezilla server",
+      "vendor": "filezilla-project",
+      "product": "filezilla_server"
+    },
+    {
       "match": "filezilla",
-      "vendor": "filezilla_project",
-      "product": "filezilla"
+      "vendor": "filezilla-project",
+      "product": "filezilla_client"
     },
     {
       "match": "wireshark",
@@ -252,11 +257,6 @@
       "product": "nextcloud"
     },
     {
-      "match": "chromium",
-      "vendor": "google",
-      "product": "chromium"
-    },
-    {
       "match": "^git(?!hub)",
       "vendor": "git",
       "product": "git"
@@ -273,13 +273,13 @@
     },
     {
       "match": "electron",
-      "vendor": "electron",
+      "vendor": "electronjs",
       "product": "electron"
     },
     {
-      "match": "power ?bi( |$|desktop)",
+      "match": "power bi report server",
       "vendor": "microsoft",
-      "product": "powerbi"
+      "product": "power_bi_report_server"
     },
     {
       "match": "globalprotect",
@@ -288,18 +288,13 @@
     },
     {
       "match": "sumatrapdf",
-      "vendor": "sumrapdf",
+      "vendor": "sumatrapdfreader",
       "product": "sumatrapdf"
     },
     {
       "match": "securepoint (ssl vpn|vpn client)",
       "vendor": "securepoint",
-      "product": "securepoint"
-    },
-    {
-      "match": "pcvisit remotehost",
-      "vendor": "pcvisit",
-      "product": "pcvisit"
+      "product": "openvpn-client"
     },
     {
       "match": "asp\\.net core",

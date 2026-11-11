@@ -1,6 +1,6 @@
 # MeshCentral Inventory & Vulnerability Scanner Plugin
 
-> **Transparency**: Created with **Qwen 3.6 27B** & **Qwen 3.8 Flash Next** • Audited by **NVIDIA Nemotron 3 550B A55B** (2026-11-06)
+> **Transparency**: Created with **Qwen 3.6 27B** & **Qwen 3.8 Flash Next** • Audited by **NVIDIA Nemotron 3 550B A55B** (2026-11-06) and **Claude Opus 5.5** (2026-11-11, v3.0.1) - see [AUDIT.md](AUDIT.md)
 
 Turns your MeshCentral server into a software inventory and vulnerability scanner that works **offline**: CSV
 exports for audits, an NVD-based CVE scan of everything your devices have installed, a shared assessment panel
@@ -17,8 +17,8 @@ without sending inventory data to anyone.
 
 * **Inventory exports** - hardware and software lists as Excel-safe CSV, for selected devices or for the whole
   fleet with one bookmarkable URL.
-* **Offline CVE scan** - matches installed software against the public NVD feeds stored on your server. Nothing
-  leaves the machine except the feed download itself.
+* **Offline CVE scan** - matches installed software against the public NVD feeds stored on your server. No
+  inventory data leaves the machine; the server only downloads the feeds and the mapping table.
 * **Honest coverage numbers** - every report says how much of the inventory could actually be checked, and names
   the two reasons it could not: no verified CPE mapping (*not assessable*) or out of scope by nature
   (**drivers and firmware** are patched by the hardware vendor and Windows Update, not by NVD application data -
@@ -34,8 +34,10 @@ without sending inventory data to anyone.
 ## Requirements
 
 * MeshCentral 1.x (Docker or bare metal).
-* You must be a **full site administrator** - every screen and endpoint is admin-only.
-* Outbound HTTPS to `nvd.nist.gov` for the feed download (then roughly weekly). All matching runs locally.
+* You must be a **full site administrator** of the default domain - every screen and endpoint is admin-only (on
+  multi-domain servers, administrators of sub-domains are refused because the plugin covers all devices).
+* Outbound HTTPS to `nvd.nist.gov` (feed download, then roughly weekly) and to `raw.githubusercontent.com` (the
+  maintained mapping table). All matching runs locally.
 * Several GB of free disk under `<datapath>/nvd/` for the feed data.
 * Agents that have been online at least once, so their software list can be collected.
 
@@ -60,8 +62,10 @@ without sending inventory data to anyone.
    tab, no shell needed).
 
 Updates need no ceremony: push a new version here and every server offers **Upgrade** on the Plugins page.
-Uninstall: remove the plugin on that page and delete `<datapath>/plugins/inventoryscanner/` plus `<datapath>/nvd/`
-if you want the collected data gone too.
+Uninstall: remove the plugin on that page - MeshCentral deletes `<datapath>/plugins/inventoryscanner/` including the
+collected inventory, settings and update results. The NVD feeds, ratings and scan history stay in `<datapath>/nvd/`;
+delete that folder too if you want them gone. On clients, an updater transcript may remain next to `meshagent.exe`
+or in `C:\ProgramData\InventoryScanner`.
 
 ## Day-to-day use
 
@@ -95,8 +99,9 @@ site admins get a toast plus a server event listing findings at or above the thr
 *Repeat unrated findings* enabled, everything still unrated is repeated every time, so the notification works as
 a to-do list that shrinks as you rate. Rated and false-positive findings are never reported again.
 
-**Software updates (Updates tab)** - completely opt-in: nothing happens until you turn it on *and* tick at least
-one device group. Two views on the same fleet:
+**Software updates (Updates tab)** - completely opt-in: nothing runs **automatically** until you turn it on *and*
+tick at least one device group. The manual buttons (Run now, Dry run, per device, per package) act on demand on
+every non-excluded Windows device. Two views on the same fleet:
 
 * **By device** - every Windows machine with its last result; per row *Dry run*, *Update now*, *Exclude*/*Include*,
   and a *list* button that opens **every package with its outcome** (failed rows show the exit code and winget's own
@@ -141,9 +146,11 @@ which table is in force.
 
 ## Privacy & security
 
-* No inventory data is ever transmitted anywhere; the only outbound requests go to `nvd.nist.gov` (feeds and the
-  mapping table).
-* Admin-only: every endpoint re-checks your site-administr rights server-side.
+* No inventory data is ever transmitted anywhere; the only outbound requests go to `nvd.nist.gov` (feeds) and
+  `raw.githubusercontent.com` (mapping table - https only, size-capped, every regex checked before use).
+* Admin-only: every endpoint and the toolbar export re-check your site-administrator rights server-side; every
+  changing request must come from the plugin's own page (request-header check against cross-site requests).
+* The updater writes its client transcript only to folders that standard users cannot write to.
 * Output is hardened: HTML escaping on render, CSV formula-injection neutralization, strict id validation on
   every write.
 * The updater runs one self-logging PowerShell script per device; every run ends up in a server-side log and in the
@@ -161,8 +168,8 @@ which table is in force.
   the Settings tab. An empty list means *not collected*, never *clean*.
 * **A device row stays "waiting for answer"** - another command session on that machine (a MeshCentral terminal,
   another script) has the agent busy; the run closes with an explicit timeout instead of hanging forever. The
-  device also keeps a transcript of every updater run next to `meshagent.exe` (or in `C:\ProgramData`) - that is
-  the place to look when the server side stays silent.
+  device also keeps a transcript of every updater run next to `meshagent.exe` (or in the admin-only folder
+  `C:\ProgramData\InventoryScanner`) - that is the place to look when the server side stays silent.
 * **Reports look wrong** - check the inventory age first: offline devices show their last collected state.
 
 ## Known limitations
@@ -193,7 +200,7 @@ Agents and contributors: [AGENTS.md](AGENTS.md) documents the verified contracts
 ## Security & Audit
 
 * **Security Policy**: [SECURITY.md](SECURITY.md)
-* **Audit Report**: [AUDIT.md](AUDIT.md) (2026-11-06)
+* **Audit Report**: [AUDIT.md](AUDIT.md) (first audit 2026-11-06, second audit 2026-11-11)
 * **Changelog**: the [commit history](https://github.com/derStephan/meshcentral-inventoryscanner/commits/main) -
   every version is described there in full.
 

@@ -107,7 +107,7 @@
         <h1 id="pageTitle">Vulnerability Assessment</h1>
         <div class="status">
             NVD database: {{#if totalCves}}{{#if lastUpdate}}last updated {{lastUpdate}}{{else}}loaded{{/if}}{{else}}not downloaded yet{{/if}} &middot; Indexed CVEs: {{totalCves}} &middot;
-            Scheduled scans: {{#if scanIntervalHours}}every {{scanIntervalHours}}h{{else}}disabled{{/if}}{{#if lastScan}} (last run {{lastScan}}){{/if}} &middot; plugin v{{version}} &middot; plugin v{{version}}
+            Scheduled scans: {{#if scanIntervalHours}}every {{scanIntervalHours}}h{{else}}disabled{{/if}}{{#if lastScan}} (last run {{lastScan}}){{/if}} &middot; plugin v{{version}}
         </div>
         <div class="tab-content active" id="tab-assessment">
             <div class="info">
@@ -291,8 +291,9 @@
 
         <div class="tab-content" id="tab-updates">
             <div class="info">
-                Automatic software updates via <code>winget</code> on Windows devices. Nothing runs until you enable
-                it here <strong>and</strong> tick at least one device group. Updates are silent, one package at a
+                Automatic software updates via <code>winget</code> on Windows devices. Nothing runs automatically until you enable
+                it here <strong>and</strong> tick at least one device group; the manual buttons (Run Now, Dry run, per-device and
+                per-package actions) work on demand and cover every non-excluded Windows device. Updates are silent, one package at a
                 time, and a device is never rebooted. Packages on the ignore list are skipped and (optionally) pinned
                 on the client, so even a manual <code>winget upgrade --all</code> leaves license-bound versions
                 alone. Devices without winget are reported per run; offline devices are skipped. Automatic runs follow
@@ -404,7 +405,7 @@
             }
             return fetch(base, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-InvScanner-Request': '1' },
                 body: body,
                 credentials: 'same-origin'
             }).then(function (r) {
@@ -563,7 +564,7 @@
                 var rows2 = (d2.last && !d2.pending && Array.isArray(d2.last.rows)) ? d2.last.rows : [];
                 if (d2.pending) { last = 'waiting for answer since ' + new Date(d2.pending.since || Date.now()).toLocaleTimeString(); }
                 else if (d2.last) {
-                    last = fmtLocal(d2.last.time) + ' - ';
+                    last = esc(fmtLocal(d2.last.time)) + ' - ';
                     if (d2.last.error) { last += esc(d2.last.error); }
                     else if (!d2.last.winget) { last += 'winget not available'; }
                     else if (d2.last.dry) { last += (d2.last.would || 0) + ' would update, ' + (d2.last.skipped || 0) + ' skipped, ' + (d2.last.failed || 0) + ' failed'; }
@@ -713,7 +714,7 @@
         });
         $('wgPkgRefresh').addEventListener('click', function () { loadWgPackages(); });
         $('wgDryAllBtn').addEventListener('click', function () {
-            if (!window.confirm('Dry run on all in-scope, non-excluded Windows devices? Nothing is installed or removed.')) { return; }
+            if (!window.confirm('Dry run on ALL non-excluded Windows devices? Nothing is installed or removed.')) { return; }
             post('wg_run', { dry: 'true' }).then(function (d) {
                 if (d.busy) { floatMsg('A batch is already running.', false); return; }
                 floatMsg('Dry run started for all target devices - results appear in the device rows and the package table.', true);
@@ -791,7 +792,7 @@
             if (e.target && e.target.classList && e.target.classList.contains('wgGrp')) { saveWgConfig(); }
         });
         $('wgRunBtn').addEventListener('click', function () {
-            if (!window.confirm('Run the winget update batch now on all in-scope, non-excluded devices?')) { return; }
+            if (!window.confirm('Run the winget update batch now on ALL non-excluded Windows devices (the group selection only limits automatic runs)?')) { return; }
             post('wg_run', {}).then(function (d) {
                 if (d.busy) { showMsg('wgMsg', 'A batch is already running.', false); return; }
                 showMsg('wgMsg', d.started ? 'Batch started - watch the devices table and log.' : 'Nothing to run (no target devices?).', d.started !== false);

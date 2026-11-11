@@ -1,7 +1,7 @@
 {
   "name": "Inventory & Vulnerability Scanner",
   "shortName": "inventoryscanner",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "author": "derStephan",
   "description": "Hardware/software inventory CSV exports, offline NVD vulnerability scanning with honest coverage (drivers/firmware separated), group ratings, scheduled notifications, printable reports and opt-in winget auto-updates incl. fleet-wide per-package update/uninstall.",
   "hasAdminPanel": true,

@@ -87,7 +87,9 @@ function mockRes(done) {
         send: function (body) { dd({ _body: body, _headers: this._headers }); }
     };
 }
-const user = { name: 'admin', _id: 'user//u1', siteadmin: 0xFFFFFFFF };
+const user = { name: 'admin', _id: 'user//u1', siteadmin: 0xFFFFFFFF, domain: '' };
+// v3.0.1: every POST must carry the panel's request header (request-origin check)
+const XHDR = { 'x-invscanner-request': '1' };
 
 const steps = [];
 
@@ -133,7 +135,7 @@ steps.push(function (next) {
 
 // ---- POST routes: save / flag / unflag + validation ----
 steps.push(function (next) {
-    obj.handleAdminPostReq({ body: { action: 'save_assessment', meshIds: 'mesh//grp1,mesh//grp2', cveId: 'CVE-2024-0003', assessment: 'high', comment: 'patch tuesday' } },
+    obj.handleAdminPostReq({ headers: XHDR, body: { action: 'save_assessment', meshIds: 'mesh//grp1,mesh//grp2', cveId: 'CVE-2024-0003', assessment: 'high', comment: 'patch tuesday' } },
         mockRes(function (d) {
             check('route save_assessment: stores for all meshIds', d.success === true && obj.assessments['mesh//grp1:CVE-2024-0003'].assessment === 'HIGH' && obj.assessments['mesh//grp2:CVE-2024-0003'].assessment === 'HIGH', d);
             next();
@@ -141,10 +143,10 @@ steps.push(function (next) {
 });
 
 steps.push(function (next) {
-    obj.handleAdminPostReq({ body: { action: 'flag_false_positive', meshIds: 'mesh//grp1', cveId: 'CVE-2024-0001' } },
+    obj.handleAdminPostReq({ headers: XHDR, body: { action: 'flag_false_positive', meshIds: 'mesh//grp1', cveId: 'CVE-2024-0001' } },
         mockRes(function (d) {
             check('route flag: succeeds with NO comment', d.success === true && obj.assessments['mesh//grp1:CVE-2024-0001'].comment === '' && obj.assessments['mesh//grp1:CVE-2024-0001'].flagged === true, d);
-            obj.handleAdminPostReq({ body: { action: 'save_assessment', meshId: 'mesh//grp1', cveId: 'CVE-2024-0002', assessment: 'LOW', comment: '   ' } },
+            obj.handleAdminPostReq({ headers: XHDR, body: { action: 'save_assessment', meshId: 'mesh//grp1', cveId: 'CVE-2024-0002', assessment: 'LOW', comment: '   ' } },
                 mockRes(function (d2) {
                     check('route save: empty comment still rejected', !!d2.error, d2);
                     next();
@@ -153,16 +155,16 @@ steps.push(function (next) {
 });
 
 steps.push(function (next) {
-    obj.handleAdminPostReq({ body: { action: 'unflag_false_positive', meshIds: 'mesh//grp1,mesh//grp2', cveId: 'CVE-2024-0001' } },
+    obj.handleAdminPostReq({ headers: XHDR, body: { action: 'unflag_false_positive', meshIds: 'mesh//grp1,mesh//grp2', cveId: 'CVE-2024-0001' } },
         mockRes(function (d) {
             check('route unflag: removes flags for all meshes', d.success === true && obj.assessments['mesh//grp2:CVE-2024-0001'] === undefined, d);
-            obj.handleAdminPostReq({ body: { action: 'flag_false_positive', meshIds: 'mesh//grp1:evil', cveId: 'CVE-2024-0002' } },
+            obj.handleAdminPostReq({ headers: XHDR, body: { action: 'flag_false_positive', meshIds: 'mesh//grp1:evil', cveId: 'CVE-2024-0002' } },
                 mockRes(function (d2) {
                     check('validation: colon-bearing meshId rejected (key poisoning)', !!d2.error, d2);
-                    obj.handleAdminPostReq({ body: { action: 'save_assessment', meshId: 'mesh//grp1', cveId: 'DROP TABLE', assessment: 'LOW', comment: 'x' } },
+                    obj.handleAdminPostReq({ headers: XHDR, body: { action: 'save_assessment', meshId: 'mesh//grp1', cveId: 'DROP TABLE', assessment: 'LOW', comment: 'x' } },
                         mockRes(function (d3) {
                             check('validation: bogus cveId rejected', !!d3.error, d3);
-                            obj.handleAdminPostReq({ body: { action: 'flag_false_positive', meshId: 'mesh//grp1', cveId: 'WINDOWS-UPDATES' } },
+                            obj.handleAdminPostReq({ headers: XHDR, body: { action: 'flag_false_positive', meshId: 'mesh//grp1', cveId: 'WINDOWS-UPDATES' } },
                                 mockRes(function (d4) {
                                     check('WINDOWS-UPDATES is flaggable/rateable', d4.success === true, d4);
                                     next();
@@ -194,7 +196,7 @@ steps.push(function (next) {
 
 steps.push(function (next) {
     obj.handleAdminReq({ query: { action: 'show' } }, mockRes(function (d) { check('non-admin GET -> 401', d._status === 401, d); }), { name: 'x', siteadmin: 0 });
-    obj.handleAdminPostReq({ body: { action: 'save_assessment', meshId: 'mesh//grp1', cveId: 'CVE-2024-0001', assessment: 'LOW', comment: 'ok' } },
+    obj.handleAdminPostReq({ headers: XHDR, body: { action: 'save_assessment', meshId: 'mesh//grp1', cveId: 'CVE-2024-0001', assessment: 'LOW', comment: 'ok' } },
         mockRes(function (d) { check('non-admin POST -> 401', d._status === 401, d); next(); }), { name: 'x', siteadmin: 0 });
 });
 
@@ -219,14 +221,14 @@ steps.push(function (next) {
 // ---- CPE table handlers ----
 steps.push(function (next) {
     obj.customCpeEntries = [{ match: '^my tool', vendor: 'acme', product: 'tool' }];
-    obj.handleAdminPostReq({ body: { action: 'get_cpe_table' } }, mockRes(function (d) {
+    obj.handleAdminPostReq({ headers: XHDR, body: { action: 'get_cpe_table' } }, mockRes(function (d) {
         const builtin = d.entries.filter(e => e.source === 'built-in');
         check('get_cpe_table: built-in rows visible', builtin.length > 20, builtin.length);
         check('get_cpe_table: custom rows visible', d.entries.some(e => e.source === 'custom' && e.match === '^my tool'));
-        obj.handleAdminPostReq({ body: { action: 'delete_cpe_table', match: '^my tool', vendor: 'acme', product: 'tool' } },
+        obj.handleAdminPostReq({ headers: XHDR, body: { action: 'delete_cpe_table', match: '^my tool', vendor: 'acme', product: 'tool' } },
             mockRes(function (d2) {
                 check('delete_cpe_table removes custom entry', d2.success === true && obj.customCpeEntries.length === 0, d2);
-                obj.handleAdminPostReq({ body: { action: 'delete_cpe_table', match: '/mozilla firefox/i', vendor: 'mozilla', product: 'firefox' } },
+                obj.handleAdminPostReq({ headers: XHDR, body: { action: 'delete_cpe_table', match: '/mozilla firefox/i', vendor: 'mozilla', product: 'firefox' } },
                     mockRes(function (d3) {
                         check('built-in cannot be deleted via API', !!d3.error, d3);
                         next();
@@ -371,20 +373,20 @@ steps.push(function (next) {
     var captured = [];
     var realLong = obj.longTimeout, realRun = obj.runScheduledScans;
     obj.longTimeout = function (cb, ms) { captured.push(ms); };
-    obj.handleAdminPostReq({ body: { action: 'save_settings', scanIntervalHours: '720', updateHours: '168', anyCveMaxAgeYears: '5',
+    obj.handleAdminPostReq({ headers: XHDR, body: { action: 'save_settings', scanIntervalHours: '720', updateHours: '168', anyCveMaxAgeYears: '5',
             collectIntervalMinutes: '1440', notifyThreshold: 'HIGH', notifyOnScan: 'true', notifyUnratedRepeat: 'true',
             collectOnAgentConnect: 'true', scanMeshes: 'mesh//grp1', notifyMeshIds: 'mesh//grp2', notifySeverities: 'CRITICAL' } },
         mockRes(function (d) {
             check('save_settings: returns effective settings', d.settings && d.settings.scanIntervalHours === 720 && d.settings.notify['mesh//grp2'] === 'CRITICAL' && d.settings.notifyUnratedRepeat === true, d.settings);
             check('save_settings: persisted to file', fs.existsSync(obj.pluginSettingsPath));
             check('save_settings: bumped timer generation + rescheduled', obj.timerGen === 1 && captured.length >= 1, [obj.timerGen, captured.length]);
-            obj.handleAdminPostReq({ body: { action: 'get_settings' } }, mockRes(function (dg) {
+            obj.handleAdminPostReq({ headers: XHDR, body: { action: 'get_settings' } }, mockRes(function (dg) {
                 check('get_settings: source marking file vs config.json', dg.sources.scanIntervalHours === 'file' && dg.sources.notifyThreshold === 'file' && dg.sources.scanMeshes === 'file', dg.sources);
-                obj.handleAdminPostReq({ body: { action: 'revert_setting', revertScanIntervalHours: 'true' } }, mockRes(function (d2) {
+                obj.handleAdminPostReq({ headers: XHDR, body: { action: 'revert_setting', revertScanIntervalHours: 'true' } }, mockRes(function (d2) {
                     check('revert_setting: falls back to config.json value', d2.settings.scanIntervalHours === 24 && d2.sources.scanIntervalHours === 'config.json', d2.settings && d2.settings.scanIntervalHours);
-                    obj.handleAdminPostReq({ body: { action: 'save_settings', scanIntervalHours: 'abc' } }, mockRes(function (d3) {
+                    obj.handleAdminPostReq({ headers: XHDR, body: { action: 'save_settings', scanIntervalHours: 'abc' } }, mockRes(function (d3) {
                         check('save_settings: rejects non-numeric interval', !!d3.error, d3);
-                        obj.handleAdminPostReq({ body: { action: 'save_settings', scanIntervalHours: '24', updateHours: '168', anyCveMaxAgeYears: '5', collectIntervalMinutes: '60', notifyThreshold: 'NOPE' } },
+                        obj.handleAdminPostReq({ headers: XHDR, body: { action: 'save_settings', scanIntervalHours: '24', updateHours: '168', anyCveMaxAgeYears: '5', collectIntervalMinutes: '60', notifyThreshold: 'NOPE' } },
                             mockRes(function (d4) { check('save_settings: rejects invalid severity', !!d4.error, d4); next(); }), user);
                     }), user);
                 }), user);
@@ -437,7 +439,7 @@ steps.push(function (next) {
 // ---- uiCustomEvent: panel button without device selection ----
 steps.push(function (next) {
     var sent = [];
-    var fakeParent = { send: function (m) { sent.push(m); } };
+    var fakeParent = { send: function (m) { sent.push(m); }, user: user };
     obj.uiCustomEvent({ section: "devicesbarbuttons", element: "0", logmsg: "assessment", selectedDevices: [] }, fakeParent);
     check("uievent: assessment button with NO selection opens the panel", sent.length === 1 && sent[0].method === "openAssessment", sent);
     sent = [];
@@ -555,9 +557,9 @@ steps.push(function (next) {
     httpCalls = 0; obj.pluginSettings = {}; obj.cpeTableLoadedAt = new Date().toISOString();
     obj.maybeFetchCpeTable(function () { });
     check('cpeTable: fresh cache skips fetch', httpCalls === 0, httpCalls);
-    obj.handleAdminPostReq({ body: { action: 'save_settings', scanIntervalHours: '24', updateHours: '168', anyCveMaxAgeYears: '5', collectIntervalMinutes: '1440', notifyThreshold: 'HIGH', notifyOnScan: 'true', notifyUnratedRepeat: 'false', autoProductMatch: 'true', collectOnAgentConnect: 'true', cpeTableEnabled: 'true', cpeTableUrl: 'http://insecure.example/x' } },
+    obj.handleAdminPostReq({ headers: XHDR, body: { action: 'save_settings', scanIntervalHours: '24', updateHours: '168', anyCveMaxAgeYears: '5', collectIntervalMinutes: '1440', notifyThreshold: 'HIGH', notifyOnScan: 'true', notifyUnratedRepeat: 'false', autoProductMatch: 'true', collectOnAgentConnect: 'true', cpeTableEnabled: 'true', cpeTableUrl: 'http://insecure.example/x' } },
         mockRes(function (d) { check('cpeTable settings: http URL rejected', d.error && /URL/.test(d.error), d); }), user);
-    obj.handleAdminPostReq({ body: { action: 'save_settings', scanIntervalHours: '24', updateHours: '168', anyCveMaxAgeYears: '5', collectIntervalMinutes: '1440', notifyThreshold: 'HIGH', notifyOnScan: 'true', notifyUnratedRepeat: 'false', autoProductMatch: 'true', collectOnAgentConnect: 'true', cpeTableEnabled: 'false', cpeTableUrl: 'https://example.org/cpe-table.json', scanMeshes: '', notifyMeshIds: '', notifySeverities: '' } },
+    obj.handleAdminPostReq({ headers: XHDR, body: { action: 'save_settings', scanIntervalHours: '24', updateHours: '168', anyCveMaxAgeYears: '5', collectIntervalMinutes: '1440', notifyThreshold: 'HIGH', notifyOnScan: 'true', notifyUnratedRepeat: 'false', autoProductMatch: 'true', collectOnAgentConnect: 'true', cpeTableEnabled: 'false', cpeTableUrl: 'https://example.org/cpe-table.json', scanMeshes: '', notifyMeshIds: '', notifySeverities: '' } },
         mockRes(function (d) {
             check('cpeTable settings: save roundtrip', d.settings && d.settings.cpeTableEnabled === false && d.settings.cpeTableUrl === 'https://example.org/cpe-table.json', d.settings);
             check('cpeTable settings: sources marked file', d.sources && d.sources.cpeTableUrl === 'file' && d.sources.revertAllowed.cpeTableUrl === true, d.sources);
@@ -570,13 +572,13 @@ steps.push(function (next) {
 steps.push(function (next) {
     var savedNvd = obj.nvdDataPath;
     obj.nvdDataPath = require('path').join(require('os').tmpdir(), 'invscanner-nvdlog-' + Date.now());
-    obj.handleAdminPostReq({ body: { action: 'get_nvdlog' } }, mockRes(function (d) {
+    obj.handleAdminPostReq({ headers: XHDR, body: { action: 'get_nvdlog' } }, mockRes(function (d) {
         check('nvdlog: missing file -> note, no lines', Array.isArray(d.lines) && d.lines.length === 0 && !!d.note, d);
         require('fs').mkdirSync(obj.nvdDataPath, { recursive: true });
         var text = '';
         for (var i = 0; i < 500; i++) { text += 'line ' + i + String.fromCharCode(10); }
         require('fs').writeFileSync(require('path').join(obj.nvdDataPath, 'nvd-download.log'), text);
-        obj.handleAdminPostReq({ body: { action: 'get_nvdlog' } }, mockRes(function (d2) {
+        obj.handleAdminPostReq({ headers: XHDR, body: { action: 'get_nvdlog' } }, mockRes(function (d2) {
             check('nvdlog: tails last 200 lines', d2.lines.length === 200 && d2.lines[199] === 'line 499', d2.lines && [d2.lines.length, d2.lines[199]]);
         }), user);
     }), user);
@@ -590,16 +592,16 @@ steps.push(function (next) {
     var dlCalls = 0, pendingCb = null;
     obj.downloadNvdDatabase = function (force, cb) { dlCalls++; pendingCb = cb; };
     obj.nvdUpdateRunning = false;
-    obj.handleAdminPostReq({ body: { action: 'update_nvd' } }, mockRes(function (d) {
+    obj.handleAdminPostReq({ headers: XHDR, body: { action: 'update_nvd' } }, mockRes(function (d) {
         check('update_nvd: starts a run', d.started === true && dlCalls === 1 && obj.nvdUpdateRunning === true, d);
-        obj.handleAdminPostReq({ body: { action: 'update_nvd' } }, mockRes(function (d2) {
+        obj.handleAdminPostReq({ headers: XHDR, body: { action: 'update_nvd' } }, mockRes(function (d2) {
             check('update_nvd: second click reports alreadyRunning', d2.started === false && d2.alreadyRunning === true && dlCalls === 1, d2);
             var skipResult = null;
             obj.runNvdUpdate(true, function (err, r) { skipResult = r; });
             check('runNvdUpdate: concurrent call is skipped', skipResult === 'skipped', skipResult);
             pendingCb(null);
             check('runNvdUpdate: flag clears after finish', obj.nvdUpdateRunning === false);
-            obj.handleAdminPostReq({ body: { action: 'update_nvd' } }, mockRes(function (d3) {
+            obj.handleAdminPostReq({ headers: XHDR, body: { action: 'update_nvd' } }, mockRes(function (d3) {
                 check('update_nvd: works again after completion', d3.started === true && dlCalls === 2, d3);
                 pendingCb(null);
             }), user);
@@ -680,7 +682,7 @@ steps.push(function (next) {
 steps.push(function (next) {
     nodes.push({ _id: 'node//amt1', meshid: 'mesh//grp1', rname: 'amt-host', type: 2 });
     obj.wgResults['node//d2'] = { time: 'garbage-without-results' };
-    obj.handleAdminPostReq({ body: { action: 'wg_status' } }, mockRes(function (d) {
+    obj.handleAdminPostReq({ headers: XHDR, body: { action: 'wg_status' } }, mockRes(function (d) {
         check('status: legacy type field no longer filters', (d.devices || []).filter(function (x) { return x.id === 'node//amt1'; }).length === 1, (d.devices || []).length);
         check('status: malformed result record does not crash', (d.devices || []).filter(function (x) { return x.id === 'node//d2'; }).length === 1, d.error);
         nodes.pop();
@@ -695,7 +697,7 @@ steps.push(function (next) {
     nodes.push({ _id: 'node//iphone1', meshid: 'mesh//grp1', rname: 'iph1', name: 'Phone1', osdesc: 'iOS 17.5' });
     nodes.push({ _id: 'node//deb12', meshid: 'mesh//grp1', rname: 'debby', name: 'DebServer', osdesc: 'Debian GNU/Linux 12' });
     nodes.push({ _id: 'node//newbi', meshid: 'mesh//grp1', rname: 'fresh', name: 'FreshBox' });
-    obj.handleAdminPostReq({ body: { action: 'wg_status' } }, mockRes(function (d) {
+    obj.handleAdminPostReq({ headers: XHDR, body: { action: 'wg_status' } }, mockRes(function (d) {
         var ids = (d.devices || []).map(function (x) { return x.id; });
         check('status: iPhone and Linux hidden, unknown-OS kept', ids.indexOf('node//iphone1') < 0 && ids.indexOf('node//deb12') < 0 && ids.indexOf('node//newbi') >= 0, ids);
         nodes.splice(nodes.length - 3, 3);
@@ -718,7 +720,7 @@ steps.push(function (next) {
     obj.onAgentResponse({ action: 'msg', type: 'console', sessionid: 'invscanner-wg-node_x', value: "Run commands can't execute, already busy." }, '', 'node//x');
     check('console: agent messages on wg sessions reach the log', fs.readFileSync(obj.wingetLogPath, 'utf8').indexOf('agent console: Run commands') >= 0);
     obj.wgPending['node//d1'] = { nodeid: 'node//d1', sid: 'invscanner-wg-node_d1', since: Date.now() };
-    obj.handleAdminPostReq({ body: { action: 'wg_status' } }, mockRes(function (d) {
+    obj.handleAdminPostReq({ headers: XHDR, body: { action: 'wg_status' } }, mockRes(function (d) {
         var dd = d.devices.filter(function (x) { return x.id === 'node//d1'; })[0];
         check('status: running device exposes pending.since', dd.pending != null && dd.pending.since > 0, dd.pending);
         delete obj.wgPending['node//d1'];
@@ -733,7 +735,7 @@ steps.push(function (next) {
     check('transcript: script writes and closes a client log', sc.indexOf('Start-Transcript') >= 0 && sc.indexOf('Stop-Transcript') >= 0);
     check('transcript: answer is emitted BEFORE the transcript stops', sc.indexOf('@@INVWUP@@') < sc.indexOf('Stop-Transcript') || sc.indexOf(obj.WINGET_MARKER) < sc.indexOf('Stop-Transcript'), sc.indexOf(obj.WINGET_MARKER) + ':' + sc.indexOf('Stop-Transcript'));
     check('transcript: rotation guard present', sc.indexOf('-gt 5MB') >= 0);
-    check('transcript: agent folder probe + ProgramData fallback', sc.indexOf('Get-CimInstance Win32_Process') >= 0 && (sc.match(/ProgramData/g) || []).length >= 2, sc.length);
+    check('transcript: agent folder probe + protected ProgramData\\InventoryScanner fallback', sc.indexOf('Get-CimInstance Win32_Process') >= 0 && sc.indexOf("Join-Path $env:ProgramData 'InventoryScanner'") >= 0 && sc.indexOf('SetAccessRuleProtection($true, $false)') >= 0 && sc.indexOf("'S-1-5-18', 'S-1-5-32-544'") >= 0, sc.length);
     next();
 });
 
@@ -742,7 +744,7 @@ steps.push(function (next) {
 steps.push(function (next) {
     var sc = obj.wgBuildScript({ ignorePackages: [], pinSync: false }, true);
     check('transcript: Split-Path + Out-File probe', sc.indexOf('Split-Path $invPX') >= 0 && sc.indexOf('Out-File') >= 0);
-    check('transcript: three-tier writable probe chain', (sc.match(/Out-File/g) || []).length === 2 && sc.indexOf('$env:TEMP') >= 0);
+    check('transcript: no user-writable fallback (no plain ProgramData file, no TEMP), reparse points refused', sc.indexOf('$env:TEMP') < 0 && sc.indexOf("Join-Path $env:ProgramData 'invscanner-winget.log'") < 0 && (sc.match(/ReparsePoint/g) || []).length >= 2 && (sc.match(/Out-File/g) || []).length === 1);
     check('transcript: no silent bad path', sc.indexOf("if (-not $invTDir)") < 0);
     // runcommands answer WITHOUT any session field is still consumed while pending
     obj.wgPending['node//orphan'] = { nodeid: 'node//orphan', sid: 'invscanner-wg-node_orphan' };
@@ -872,7 +874,7 @@ steps.push(function (next) {
     ] };
     obj.wgResults['node//d2'] = { time: new Date().toISOString(), winget: true, dry: true, results: many };
     obj.wgResults['node//d4'] = { time: new Date().toISOString(), winget: true, dry: false, results: [{ id: 'Real.One', name: 'Real', from: '1', to: '2', state: 'ok' }] };
-    obj.handleAdminPostReq({ body: { action: 'wg_status' } }, mockRes(function (d) {
+    obj.handleAdminPostReq({ headers: XHDR, body: { action: 'wg_status' } }, mockRes(function (d) {
         var a = d.devices.filter(function (x) { return x.id === 'node//d1'; })[0];
         var b = d.devices.filter(function (x) { return x.id === 'node//d2'; })[0];
         var c = d.devices.filter(function (x) { return x.id === 'node//d4'; })[0];
@@ -915,7 +917,7 @@ steps.push(function (next) {
         check('script: onlyId passes the id whitelist (injection neutralised)', obj.wgBuildScript({ ignorePackages: [], pinSync: false }, false, { onlyId: "bad';rm -x" }).indexOf("$invOnly = ''") >= 0);
 
         obj.wgBatchRunning = false;
-        var rPost = function (b, cb) { obj.handleAdminPostReq({ body: b }, mockRes(cb), user); };
+        var rPost = function (b, cb) { obj.handleAdminPostReq({ headers: XHDR, body: b }, mockRes(cb), user); };
         var runErrs = [];
         rPost({ action: 'wg_run', mode: 'uninstall' }, function (d1x) {
             runErrs.push(!!d1x.error);
@@ -945,7 +947,7 @@ steps.push(function (next) {
                         objU.wgBatchRunning === false && objU.wgResults['node//d1'].results[0].state === 'not-installed' &&
                         lgU.indexOf('0 uninstalled, 1 skipped/not-installed, 0 failed') >= 0, lgU.split(String.fromCharCode(10)).slice(-3));
                     var puRes = null;
-                    objU.handleAdminPostReq({ body: { action: 'wg_programs' } }, mockRes(function (pu) { puRes = pu; }), user);
+                    objU.handleAdminPostReq({ headers: XHDR, body: { action: 'wg_programs' } }, mockRes(function (pu) { puRes = pu; }), user);
                     var upk = (puRes && puRes.packages && puRes.packages[0]) || null;
                     check('e2e: the package table shows the fleet result of that run',
                         upk != null && upk.id === 'Foo.Bar' && upk.skipped === 1 && upk.failed === 0 &&
@@ -1078,17 +1080,156 @@ steps.push(function (next) {
     next();
 });
 
-(function run(i) {
-    if (i >= steps.length) {
-        console.log(failures === 0 ? '\ntest-plugin: ALL PASSED' : '\ntest-plugin: ' + failures + ' FAILURE(S)');
-        process.exit(failures === 0 ? 0 : 1);
-    }
-    var once = false;
-    steps[i](function () {
-        if (once) { failures++; console.log('FAIL step ' + i + ' called next() twice'); return; }
-        once = true; run(i + 1);
+// ---- v3.0.1 (audit 2026-11-11): access control, request-origin check, agent routing, scripts ----
+steps.push(function (next) {
+    var codes = [];
+    var postAs = function (u, hdr, cb) { obj.handleAdminPostReq({ headers: hdr, body: { action: 'get_locations' } }, mockRes(function (d) { codes.push(d._status || 'ok'); cb(); }), u); };
+    postAs(user, {}, function () {
+        postAs(user, { 'x-invscanner-request': '0' }, function () {
+            postAs({ name: 'sub', siteadmin: 0xFFFFFFFF, domain: 'tenant2' }, XHDR, function () {
+                postAs(user, XHDR, function () {
+                    check('auth: POST without the panel header -> 403, wrong value -> 403, sub-domain admin -> 401, panel request ok', codes.join(',') === '403,403,401,ok', codes);
+                    obj.handleAdminReq({ query: { action: 'show' } }, mockRes(function (d) {
+                        check('auth: sub-domain site admin cannot open the panel (multi-tenant isolation)', d._status === 401, d);
+                        var sent = [];
+                        obj.uiCustomEvent({ section: 'devicesbarbuttons', logmsg: 'assessment', selectedDevices: [] }, { send: function (m) { sent.push(m); }, user: { siteadmin: 0 } });
+                        obj.uiCustomEvent({ section: 'devicesbarbuttons', logmsg: 'hardware', selectedDevices: ['node//d1'] }, { send: function (m) { sent.push(m); }, user: { siteadmin: 0 } });
+                        check('auth: toolbar hook ignores non-admin sessions (no CSV, no panel push)', sent.length === 0, sent);
+                        var dbCalls = 0, realGet = obj.db.Get;
+                        obj.db.Get = function (id, cb) { dbCalls++; cb(null, []); };
+                        obj.uiCustomEvent({ section: 'devicesbarbuttons', logmsg: 'hardware', selectedDevices: [{ x: 1 }, '../../etc', 'node//d1', 'node//d1'] }, { send: function () { }, user: user });
+                        obj.db.Get = realGet;
+                        check('uievent: only well-formed, unique node ids are looked up', dbCalls === 1, dbCalls);
+                        next();
+                    }), { name: 'sub', siteadmin: 0xFFFFFFFF, domain: 'tenant2' });
+                });
+            });
+        });
     });
-})(0);
+});
+
+steps.push(function (next) {
+    obj.handleAdminPostReq({ headers: XHDR, body: { action: 'unflag_false_positive', meshIds: 'mesh//grp1', cveId: '__proto__' } }, mockRes(function (d) {
+        check('validation: unflag rejects non-finding ids like the other write paths', !!d.error, d);
+        obj.handleAdminReq({ query: { action: 'scan', mesh: 'mesh//grp1:x,bogus' } }, mockRes(function (d2) {
+            check('validation: scan accepts only well-formed mesh ids', !!d2.error, d2);
+            next();
+        }), user);
+    }), user);
+});
+
+steps.push(function (next) {
+    // software inventory: browser-session replies are left alone, error answers never wipe a good list
+    obj.softwareInventory = {};
+    obj.pendingCollection['node//sw1'] = true;
+    var r1 = obj.onAgentResponse({ action: 'software', sessionid: 'user//admin/abc', value: JSON.stringify([{ name: 'Browser Only' }]) }, '', 'node//sw1');
+    check('software: reply addressed to a browser session is neither stored nor consumed', r1 === false && obj.softwareInventory.sw1 == null && obj.pendingCollection['node//sw1'] === true, obj.softwareInventory);
+    var r2 = obj.onAgentResponse({ action: 'software', value: JSON.stringify([{ name: 'Good App', version: '1' }]) }, '', 'node//sw1');
+    check('software: our session-less reply is stored and consumed (not broadcast)', r2 === true && obj.softwareInventory.sw1.apps.length === 1, obj.softwareInventory.sw1);
+    obj.pendingCollection['node//sw1'] = true;
+    obj.onAgentResponse({ action: 'software', value: JSON.stringify({ success: false, error: 'Denied' }) }, '', 'node//sw1');
+    check('software: an error answer keeps the last good inventory', obj.softwareInventory.sw1.apps.length === 1 && obj.softwareInventory.sw1.apps[0].name === 'Good App', obj.softwareInventory.sw1);
+    var sentSw = [];
+    obj.collectNodeSoftware('node//sw2', { send: function (m) { sentSw.push(JSON.parse(m)); } });
+    check('software: request carries a minimal numeric rights field (agent >= 2026-11-09 refuses commands without one)', sentSw.length === 1 && sentSw[0].rights === 8 && sentSw[0].type === 'installedapps', sentSw);
+    delete obj.pendingCollection['node//sw2'];
+    obj.softwareInventory = {};
+    next();
+});
+
+steps.push(function (next) {
+    // winget routing: replies of OTHER sessions are never taken over while a run is pending
+    obj.wgPending['node//own'] = { nodeid: 'node//own', sid: 'invscanner-wg-own', since: Date.now() };
+    obj.wgActive = 1;
+    var foreign = obj.onAgentResponse({ action: 'msg', type: 'runcommands', sessionid: 'user//admin/xyz', result: 'admin output' }, '', 'node//own');
+    var foreignCon = obj.onAgentResponse({ action: 'msg', type: 'console', sessionid: 'user//admin/xyz', value: obj.WINGET_MARKER + '{"winget":true,"results":[]}' }, '', 'node//own');
+    check('wg routing: a pending run never consumes runcommands/console output of a browser session', foreign === false && foreignCon === false && obj.wgPending['node//own'] != null && obj.wgPending['node//own'].cbuf == null, [foreign, foreignCon]);
+    delete obj.wgPending['node//own'];
+    obj.wgActive = 0;
+    next();
+});
+
+steps.push(function (next) {
+    // winget scripts: verified CLI contracts (winget 1.29 on Windows 11, audit 2026-11-11)
+    var sUn = obj.wgBuildScript({ ignorePackages: [], pinSync: false }, false, { mode: 'uninstall', onlyId: 'Foo.Bar' });
+    var unLine = sUn.split(String.fromCharCode(10)).filter(function (l) { return l.indexOf('uninstall --id') >= 0; })[0] || '';
+    check('script: uninstall never passes --accept-package-agreements (winget uninstall rejects it)', unLine !== '' && unLine.indexOf('--accept-package-agreements') < 0, unLine.substring(unLine.indexOf('uninstall --id'), unLine.indexOf('uninstall --id') + 120));
+    var sUp = obj.wgBuildScript({ ignorePackages: [], pinSync: false }, false);
+    check('script: upgrade keeps --accept-package-agreements (documented upgrade option)', /upgrade --id \$p\.id --exact --silent --accept-package-agreements/.test(sUp));
+    check('script: Get-Command hit is read from .Path (ApplicationInfo has no FullName)', sUp.indexOf('$wc.Path') >= 0 && sUp.indexOf('-CommandType Application') >= 0);
+    check('script: protected WindowsApps folder is tried before PATH', sUp.indexOf('WindowsApps') >= 0 && sUp.indexOf('WindowsApps') < sUp.indexOf('Get-Command winget'));
+    check('script: table parser uses header column positions with the old regex as fallback', sUp.indexOf("# invscanner:parse-begin") >= 0 && sUp.indexOf("[regex]::Matches($invLines[$invH]") >= 0 && sUp.indexOf("\\s{2,}") >= 0);
+    next();
+});
+
+steps.push(function (next) {
+    // the PowerShell table parser itself, exercised against a REAL winget 1.29 table (audit machine):
+    // single-space column gaps for full-width names/ids/versions and a '< x' version were dropped
+    // by the pre-3.0.1 regex. Runs only where PowerShell exists (Windows); skipped elsewhere.
+    var cp = require('child_process');
+    var sUp = obj.wgBuildScript({ ignorePackages: [], pinSync: false }, false);
+    var lines = sUp.split(String.fromCharCode(10));
+    var a = lines.indexOf('# invscanner:parse-begin'), b = lines.indexOf('# invscanner:parse-end');
+    var table = [
+        'Name                                                         Id                                 Version          Available        Source',
+        '----------------------------------------------------------------------------------------------------------------------------------------',
+        'App Installer                                                Microsoft.AppInstaller             1.29.379.0       1.29.380         winget',
+        'Microsoft OneDrive                                           Microsoft.OneDrive                 26.017.0126.0002 26.183.0920.0005 winget',
+        'Microsoft Visual C++ v14 Redistributable (x64) - 14.51.36247 Microsoft.VCRedist.2015+.x64       14.51.36247.0    14.52.37029.0    winget',
+        'Microsoft Windows Desktop Runtime 10.0.12 (x64)              Microsoft.DotNet.DesktopRuntime.10 10.0.12          10.0.15          winget',
+        'TortoiseSVN 1.14.9.29743 (64 bit)                            TortoiseSVN.TortoiseSVN            < 1.15.0.29830   1.15.0.29830     winget',
+        '13 upgrades available.'
+    ].join('\r\n');
+    var ps = "$raw = [IO.File]::ReadAllText($env:INV_T)\n$rows = @()\n" + lines.slice(a, b + 1).join('\n') + "\n$rows | ForEach-Object { $_.id + '|' + $_.from + '|' + $_.to }";
+    var dir = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-ps-'));
+    fs.writeFileSync(path.join(dir, 't.txt'), table); fs.writeFileSync(path.join(dir, 't.ps1'), ps);
+    var out = null;
+    try { out = cp.execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(dir, 't.ps1')], { env: Object.assign({}, process.env, { INV_T: path.join(dir, 't.txt') }), encoding: 'utf8', timeout: 60000 }); } catch (e) { out = null; }
+    if (out == null) { console.log('SKIP script: winget table parser (PowerShell not available)'); next(); return; }
+    var got = out.split(/\r?\n/).filter(function (x) { return x !== ''; });
+    check('script: real winget table - every upgradable row parsed, versions intact, footer ignored',
+        got.length === 5 && got[1] === 'Microsoft.OneDrive|26.017.0126.0002|26.183.0920.0005' && got[2] === 'Microsoft.VCRedist.2015+.x64|14.51.36247.0|14.52.37029.0' &&
+        got[3] === 'Microsoft.DotNet.DesktopRuntime.10|10.0.12|10.0.15' && got[4] === 'TortoiseSVN.TortoiseSVN|< 1.15.0.29830|1.15.0.29830', got);
+    next();
+});
+
+steps.push(function (next) {
+    // mapping table: every vendor:product pair was verified against the NVD CVE API on 2026-11-11
+    var tbl = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'cpe-table.json'), 'utf8'));
+    var pair = function (m) { var e = tbl.entries.filter(function (x) { return new RegExp(x.match, 'i').test(m); })[0]; return e ? e.vendor + ':' + e.product : null; };
+    check('table: corrected NVD names (notepad++ escaped, sumatrapdf, keepass, filezilla, audacity, electron)',
+        pair('Notepad++ (64-bit x64)') === 'notepad-plus-plus:notepad\\+\\+' && pair('SumatraPDF') === 'sumatrapdfreader:sumatrapdf' &&
+        pair('KeePass Password Safe 2.57') === 'keepass:keepass' && pair('FileZilla 3.68.1') === 'filezilla-project:filezilla_client' &&
+        pair('FileZilla Server') === 'filezilla-project:filezilla_server' && pair('Audacity 3.7') === 'audacityteam:audacity' && pair('Electron Fiddle') === 'electronjs:electron',
+        [pair('Notepad++ (64-bit x64)'), pair('SumatraPDF'), pair('KeePass Password Safe 2.57'), pair('FileZilla 3.68.1')]);
+    check('table: names without any NVD product are not mapped (pcvisit, chromium)', pair('pcvisit RemoteHost') === null && pair('Chromium') === null);
+    check('table: built-in seed agrees with the shipped table for the corrected rows',
+        obj.SOFTWARE_CPE_TABLE.filter(function (e) { return e.match.test('Notepad++'); })[0].product === 'notepad\\+\\+' &&
+        obj.SOFTWARE_CPE_TABLE.filter(function (e) { return e.match.test('SumatraPDF'); })[0].vendor === 'sumatrapdfreader');
+    check('table: dangerous regex shapes are rejected (nested quantifier, backreference), normal ones pass',
+        obj.isSafeTableRegex('(a+)+') === false && obj.isSafeTableRegex('(\\w+\\s?)+$') === false && obj.isSafeTableRegex('(.*)\\1') === false &&
+        obj.isSafeTableRegex('adobe acrobat( \\(64-bit\\))?') === true && tbl.entries.every(function (e) { return obj.isSafeTableRegex(e.match); }));
+    var rr = obj.applyCpeTableText({ entries: [{ match: '(a+)+$', vendor: 'x', product: 'y' }, { match: '^ok', vendor: 'v', product: 'p' }] });
+    check('table: remote payload with a dangerous regex skips that row only', rr.ok === true && rr.applied === 1 && rr.skipped === 1, rr);
+    obj.remoteCpeEntries = null; obj.loadRemoteCpeTable();
+    obj.addCustomCpe('(x*)*y', 'a', 'b', function (err) {
+        check('custom mapping: dangerous regex rejected by add_cpe', !!err, err && err.message);
+        next();
+    });
+});
+
+steps.push(function (next) {
+    // pruning: side-by-side runtimes keyed by the token the mapping really produces
+    var pr = obj.pruneSuperseded([
+        { name: 'Microsoft Visual C++ 2008 Redistributable - x64 9.0.30729.6161', version: '9.0.30729.6161', publisher: 'Microsoft Corporation' },
+        { name: 'Microsoft Visual C++ 2015-2022 Redistributable (x64) - 14.40.33810', version: '14.40.33810.0', publisher: 'Microsoft Corporation' },
+        { name: 'Microsoft Windows Desktop Runtime - 8.0.11 (x64)', version: '8.0.11', publisher: 'Microsoft Corporation' },
+        { name: 'Microsoft Windows Desktop Runtime - 10.0.12 (x64)', version: '10.0.12', publisher: 'Microsoft Corporation' }]);
+    check('prune: VC++ 2008 + 2015 and .NET 8 + 10 runtimes coexist (older one is still scanned)', pr.length === 4, pr.map(function (x) { return x.name; }));
+    check('batch: device cap constant is defined (was referenced but undefined)', typeof obj.WINGET_MAX_DEVICES === 'number' && obj.WINGET_MAX_DEVICES > 0);
+    next();
+});
+
 
 // ---- winget updater: script builder, queue, parser, config, status ----
 steps.push(function (next) {
@@ -1118,7 +1259,7 @@ steps.push(function (next) {
     // config validation via routes
     var wgTimers = [];
     obj3.longTimeout = function (cb, ms) { wgTimers.push(ms); };
-    var post = function (body, cb) { obj3.handleAdminPostReq({ body: body }, mockRes(cb), user); };
+    var post = function (body, cb) { obj3.handleAdminPostReq({ headers: XHDR, body: body }, mockRes(cb), user); };
     post({ action: 'wg_save_config', enabled: 'true', updateMeshes: '', excludeNodes: '', ignorePackages: '[]', pinSync: 'true' }, function (d) {
         check('wg cfg: save works without any interval field', !d.error && typeof d.config.scheduling === 'string', d);
         post({ action: 'wg_save_config', enabled: 'true', intervalHours: '48', updateMeshes: 'mesh//grp1', excludeNodes: 'node//d3', ignorePackages: JSON.stringify([{ id: 'OpenJS.NodeJS.18', note: 'lts license' }, { id: 'DROP TABLE' }]), pinSync: 'false' }, function (dBad) {
@@ -1174,4 +1315,43 @@ steps.push(function (next) {
     });
 });
 
+// The runner MUST stay the last statement: every steps.push() above has to be registered before
+// step 0 starts (pre-3.0.1 it sat mid-file and the trailing steps only ran because an earlier
+// step happened to be asynchronous).
+steps.push(function (next) {
+    // realistic upgrade (v3.0.1): installer unpacks new files, then re-requires the CACHED module and
+    // calls server_startup on a NEW instance of the OLD code - that instance must notice it and reload.
+    var base = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-upg-'));
+    var pd = path.join(base, 'plugins', 'inventoryscanner');
+    fs.mkdirSync(pd, { recursive: true });
+    var srcDir = path.join(__dirname, '..');
+    ['inventoryscanner.js', 'cpe-table.json'].forEach(function (f) { fs.copyFileSync(path.join(srcDir, f), path.join(pd, f)); });
+    fs.writeFileSync(path.join(pd, 'config.json'), fs.readFileSync(path.join(srcDir, 'config.json'), 'utf8').replace(/"version":\s*"[^"]+"/, '"version": "0.0.1"'));
+    var ms2 = { db: db, datapath: base, debug: function () { }, config: { settings: { vulnerabilityScanner: { scanIntervalHours: 0, cpeTableEnabled: false }, inventoryScanner: { collectIntervalMinutes: 0 } } }, webserver: {} };
+    var ph = { parent: ms2, plugins: {}, exports: {} };
+    var oldInst = require(path.join(pd, 'inventoryscanner.js')).inventoryscanner(ph);
+    fs.writeFileSync(path.join(pd, 'config.json'), fs.readFileSync(path.join(pd, 'config.json'), 'utf8').replace('"0.0.1"', '"0.0.2"'));
+    fs.appendFileSync(path.join(pd, 'inventoryscanner.js'), '\nmodule.exports.__upgradedCode = true;\n');
+    var second = require(path.join(pd, 'inventoryscanner.js')).inventoryscanner(ph); // cached module, like pluginHandler
+    ph.plugins.inventoryscanner = second; ph.exports.inventoryscanner = second.exports;
+    check('upgrade (real installer flow): a new instance of cached code still reports the OLD code version', second.PLUGIN_VERSION === '0.0.1', second.PLUGIN_VERSION);
+    second.server_startup();
+    var mod = require.cache[require.resolve(path.join(pd, 'inventoryscanner.js'))];
+    check('upgrade (real installer flow): server_startup reloads the new code and swaps it in', mod && mod.exports.__upgradedCode === true && ph.plugins.inventoryscanner !== second && ph.plugins.inventoryscanner.PLUGIN_VERSION === '0.0.2', ph.plugins.inventoryscanner.PLUGIN_VERSION);
+    check('upgrade: only the newest instance keeps timers alive', oldInst.timerValid(oldInst.timerGen) === false && second.timerValid(second.timerGen) === false && ph.plugins.inventoryscanner.timerValid(ph.plugins.inventoryscanner.timerGen) === true);
+    ph.plugins.inventoryscanner.timerGen++;
+    next();
+});
 
+console.log('registered steps: ' + steps.length);
+(function run(i) {
+    if (i >= steps.length) {
+        console.log(failures === 0 ? '\ntest-plugin: ALL PASSED' : '\ntest-plugin: ' + failures + ' FAILURE(S)');
+        process.exit(failures === 0 ? 0 : 1);
+    }
+    var once = false;
+    steps[i](function () {
+        if (once) { failures++; console.log('FAIL step ' + i + ' called next() twice'); return; }
+        once = true; run(i + 1);
+    });
+})(0);

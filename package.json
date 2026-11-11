@@ -1,6 +1,6 @@
 {
   "name": "meshcentral-inventoryscanner",
-  "version": "1.0.0",
+  "version": "3.0.1",
   "description": "MeshCentral plugin: inventory CSV exports, offline NVD CVE scanning, group-wide vulnerability assessment, printable audit reports and scheduled scans with notifications.",
   "main": "inventoryscanner.js",
   "scripts": {
@@ -37,8 +37,8 @@
   },
   "transparency": {
     "createdWith": ["Qwen 3.6 27B", "Qwen 3.8 Flash Next"],
-    "auditModel": "NVIDIA Nemotron 3 550B A55B",
-    "auditDate": "2026-11-06",
+    "auditModel": ["NVIDIA Nemotron 3 550B A55B", "Claude"],
+    "auditDate": ["2026-11-06", "2026-11-11"],
     "auditTool": "opencode"
   }
 }

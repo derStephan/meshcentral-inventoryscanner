@@ -29,7 +29,9 @@ package.json                   repo metadata; `npm test` runs tools/check.js + t
 
 ## What the plugin does
 
-Pure admin tool for MeshCentral (all endpoints gated on full site admin, `user.siteadmin === 0xFFFFFFFF`):
+Pure admin tool for MeshCentral (all endpoints and the toolbar hook gated by `obj.isAuthorizedAdmin`: full site
+admin `user.siteadmin === 0xFFFFFFFF` of the DEFAULT domain `user.domain === ''` - the plugin is server-wide, so
+sub-domain admins of a multi-tenant server are refused since v3.0.1):
 
 1. **Device-list toolbar CSV exports** (hardware / software) and a **panel-open button** (`assessment`),
    all on the device-list toolbar auto-injected by the exported `onWebUIStartupEnd` browser hook (no server
@@ -64,7 +66,11 @@ Based on official MeshCentral source (`pluginHandler.js`, `webserver.js`, `db.js
   Loading newly enabled plugins needs a server restart. Update detection = refetch configUrl and compare
   the version field (NO tags needed). versionHistoryUrl is intentionally absent: no downgrade picker.
 - **`pluginadmin.ashx` GET** → `handleAdminReq(req,res,user)`, `POST` (urlencoded body → `req.body`) →
-  `handleAdminPostReq`. Session auth only — the plugin does its own siteadmin gate.
+  `handleAdminPostReq`. Session auth only (cookie `xid`, SameSite from `sessionsamesite`, default `lax`; no CSRF
+  token, verified in webserver.js) — the plugin does its own admin gate AND requires the header
+  `X-InvScanner-Request: 1` on every POST (`obj.isSameOriginRequest`, 403 otherwise; a cross-site page cannot set
+  a custom header without a CORS preflight, which MeshCentral never answers). Host/Origin are not compared on
+  purpose (reverse proxies rewrite Host).
 - **Views:** `res.render('<name>', data)` ↔ `views/<name>.handlebars` — **case-sensitive** on Linux.
   Only core Handlebars helpers exist (`each if unless with @index @last @key`); no `Object.keys`, no custom helpers.
 - **Device-list buttons:** MeshCentral has no plugin API for buttons and no `mainmenuicons` key (verified
@@ -75,8 +81,10 @@ Based on official MeshCentral source (`pluginHandler.js`, `webserver.js`, `db.js
   slot is still empty (filled = admin-configured buttons; then no injection, no duplicates). The click
   handler replicates `customUIAction`: `defaultValue.substring(6)` of each checked `.DeviceCheckbox`, sent as
   `{action:'uicustomevent', section:'devicesbarbuttons', element:'0', selectedDevices:[...], logmsg:<type>}`
-  on the TOP level (NOT `command.src`). customui-fired buttons without a `selection` field fire with an empty
-  list, and `uiCustomEvent` is called on every plugin for every event. `tools/test-plugin.js` simulates the
+  on the TOP level (NOT `command.src`). MeshCentral rights-checks only `command.src.selectedDevices`, NOT the
+  top-level list (verified in meshuser.js `case 'uicustomevent'`), and calls `uiCustomEvent` on every plugin for
+  every event from ANY logged-in user - so `uiCustomEvent` itself checks `isAuthorizedAdmin(myparent.user)` and
+  accepts only well-formed, de-duplicated `node/<domain>/<id>` strings. `tools/test-plugin.js` simulates the
   whole injection.
 - **Browser functions:** listed in `obj.exports`; pluginHandler stringifies them via `Function.toString()` into
   a standalone browser namespace (`obj.<plugin>.<method>`) whose root has NO server properties - exported
@@ -91,10 +99,14 @@ Based on official MeshCentral source (`pluginHandler.js`, `webserver.js`, `db.js
   `identifiers.{cpu_name,gpu_name[],bios_*,board_*,product_name,chassis_*,storage_devices[]}`,
   `windows.memory[]`, `tpm`, `network.dns[]`.
 - **Software & Windows updates are NOT in any MeshCentral DB** (meshagent.js has an open TODO for it). The plugin
-  runs its own collector: it sends `{action:'software',type:'installedapps'}` and the console command
-  `winupdates` (unique `invscanner-*` sessionid) to online agents via `webserver.wsagents[nodeid]`, capturing the
-  replies server-side by wrapping `webserver.routeAgentCommand`. Stored per node under
-  `<datapath>/plugins/inventoryscanner/data/<nodeid>/{software,windowsupdates}.json`.
+  runs its own collector: it sends `{action:'software',type:'installedapps',rights:8}` (no sessionid; since
+  MeshCentral commit cdc9582ada, 2026-11-09, the agent refuses software commands without a numeric `rights`
+  field - 8 = Remote Control is the least value that permits the read, uninstall types stay refused) and the
+  console command `winupdates` (unique `invscanner-*` sessionid) to online agents via `webserver.wsagents[nodeid]`,
+  capturing the replies server-side by wrapping `webserver.routeAgentCommand`. A software reply is taken only
+  while a request is pending AND it carries no sessionid (a reply with sessionid belongs to a browser's Software
+  tab); it is then consumed (not broadcast). Error answers (`{error:...}`) never overwrite the last good list.
+  Stored per node under `<datapath>/plugins/inventoryscanner/data/<nodeid>/{software,windowsupdates}.json`.
   Only Critical/Important pending updates count towards the `WINDOWS-UPDATES` finding.
 - **Notifications:** `obj.meshServer.DispatchEvent(['*'], obj, {type:'notify', ...})` — ephemeral browser toast for
   logged-in admins + entry in the server event log. No built-in email.
@@ -139,7 +151,13 @@ POST body `action=`:
 | `remove_cpe` | `index` | legacy index-based removal |
 | `get_settings` | — | `{settings:{...effective...}, sources:{key:'file'|'config.json'|'default', notifyPerGroup:{meshId:src}, revertAllowed:{key:bool}}}` |
 | `save_settings` | full form field set (see `saveSettingsHandler`) | validates everything, writes `scanner-settings.json`, runs `rescheduleAll()`, answers with the `get_settings` payload; `reset=true` clears all overrides |
-| `revert_setting` | one key of `revertScanIntervalHours`/`revertScanMeshes`/`revertNotifyOnScan`/`revertNotifyThreshold`/`revertNotifyUnratedRepeat`/`revertNotify`/`revertUpdateHours`/`revertAnyCveMaxAgeYears`/`revertAutoProductMatch`/`revertCollectIntervalMinutes`/`revertCollectOnAgentConnect` = 'true' | removes that single override so config.json/default applies again |
+| `revert_setting` | one key of `revertScanIntervalHours`/`revertScanMeshes`/`revertNotifyOnScan`/`revertNotifyThreshold`/`revertNotifyUnratedRepeat`/`revertNotify`/`revertUpdateHours`/`revertAnyCveMaxAgeYears`/`revertAutoProductMatch`/`revertCpeTableEnabled`/`revertCpeTableUrl`/`revertCollectIntervalMinutes`/`revertCollectOnAgentConnect` = 'true' | removes that single override so config.json/default applies again |
+
+Every POST: 401 unless `isAuthorizedAdmin`, 403 without header `X-InvScanner-Request: 1`, 400 without an object body.
+GET also knows `show_cpe` (legacy JSON list of custom entries with index, used by nothing in the panel).
+`save_assessment`/`flag_false_positive`/`unflag_false_positive` all validate the finding id (unflag since v3.0.1);
+`scan` validates every mesh id with the same `^mesh/[^:]+$` rule (since v3.0.1, ≤1000 ids).
+`add_cpe` rejects regexes failing `isSafeTableRegex` and vendor/product longer than 200 characters.
 
 Assessments persist in `<datapath>/nvd/assessments.json`, key `"<meshId>:<cveId>"` →
 `{meshId, cveId, assessment, comment, lastModified, assessedBy, assessedById, flagged?}`.
@@ -171,10 +189,12 @@ over the merged `deviceList` (also inside `buildOverallReport` findings): unifor
 differing → `versionVaried`/`softwareVaried` + `variedVersions`/`variedSoftware` and `version` becomes '' -
 a row must NEVER show one arbitrary device's version as truth for all (the v2.7.1 "1.2.6.0 vs 2.3.3.0" bug).
 **Unknown installed version:** version strings first pass `normalizeCveVersion`: Debian epochs stripped
-  (`1:2.3.4-3ubuntu1` -> `2.3.4`), numeric cores without distro decoration (`22.04.0-1build1` -> `22.04.0`),
-  snap/DEB wrapper strings that contain no program version (`1:1snap1-0ubuntu5`) -> `''`. An empty version
-  asserts ONLY `kind:'any'` `assessment` is set only when
-uniform across ALL affected locations; a fully unrated finding is `mixed:false, assessment:null`.
+  (`1:2.3.4-1` -> `2.3.4`), numeric cores without distro decoration (`22.04.0-1build1` -> `22.04.0`),
+  any distro decoration (ubuntu/dfsg/+exp/bzr/~/debN/repack) and snap/DEB wrapper strings that contain no
+  program version (`1:1snap1-0ubuntu5`) -> `''`. An empty version asserts ONLY `kind:'any'` definitions
+  (age-filtered by `anyCveMaxAgeYears`).
+**Aggregated rating:** `assessment` is set only when it is uniform across ALL affected locations; a fully
+unrated finding is `mixed:false, assessment:null`.
 
 **`buildOverallReport()` shape** (drives both report views):
 `{ generated, totalSystems, totalPrograms, assessablePrograms, notAssessablePrograms, outOfScopePrograms,
@@ -204,8 +224,10 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
 - Save/flag/unflag post the **meshIds of all affected selected locations** in one request; after success the row
   state is patched client-side (no rescan).
 - All dynamic values rendered via `esc()` (comments stored raw → escape at output; never double-escape).
-- The page heading (`h1#pageTitle`) follows the active tab (titles map in the tab click handler); the (Handlebars would consume it) except the intended `'{{shortName}}'` token.
+- The page heading (`h1#pageTitle`) follows the active tab (titles map in the tab click handler).
+- The inline script must not contain `{{` (Handlebars would consume it) except the intended `'{{shortName}}'` token;
   `tools/check.js` enforces both this and `node --check` on the extracted script.
+- Every POST sends the header `X-InvScanner-Request: 1` (see Security below); a new fetch path must keep it.
 
 - Settings tab: fetches `get_settings` + `get_locations` on load; each numeric field carries a source select
   ("set in plugin settings" / "from config.json" / "built-in default") offering `revert_setting` when overridden;
@@ -253,8 +275,8 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
 <plugins/inventoryscanner>/winget-update.log     batch log, rotated at ~5 MB
 <plugins/inventoryscanner>/data/<nodeid>/        collected software + windowsupdates JSON per device
 ```
-- On the client the updater writes `invscanner-winget.log` next to `meshagent.exe` (fallbacks: `C:\ProgramData`,
-  then TEMP - chosen by a write probe because `Start-Transcript` reports success on locked paths). While a device
+- On the client the updater writes `invscanner-winget.log` next to `meshagent.exe` (fallback: the protected
+  `C:\ProgramData\InventoryScanner` folder; no transcript when neither is safe). While a device
   is busy with another command session the agent answers 'already busy' on its **console only** (no runcommands
   reply), which the plugin mirrors into `winget-update.log`; the watchdog (10 min dry / 2 h real) closes it.
 - Group ids are mesh `_id`s `mesh/<domain>/<name>` (default domain: `mesh//Server1`); easiest lookup is the
@@ -276,12 +298,15 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
 ## Plugin upgrade path (verified against MeshCentral 1.3.1 pluginHandler/meshagent)
 
 - pluginHandler.installPlugin unzips then ends with a bare require(): after an UPGRADE Node
-  returns the CACHED old module - the running instance stays stale until a full restart (the
-  two-click symptom). Routes/hooks dispatch dynamically via obj.plugins[name][fn], therefore the
-  plugin self-heals: server_startup compares config.json vs the in-memory PLUGIN_VERSION and on
-  mismatch busts the require cache for __dirname, creates a fresh instance, swaps it into
-  parent.plugins/exports and disarms its own timer chain (timerGen++). One click, no restart.
-  The routeAgentCommand monkey-patch resolves the current instance per call (never a stale ref).
+  returns the CACHED old module and builds a NEW instance from the OLD code (verified in pluginHandler.js).
+  Routes/hooks dispatch dynamically via obj.plugins[name][fn], therefore the plugin self-heals:
+  server_startup compares config.json on disk with `MODULE_CODE_VERSION` - read ONCE at module load, so it is
+  the version of the code actually running (pre-3.0.1 the version was read per instance, the cached code then
+  reported the new version and the swap never happened; verified with a simulated installer flow, now a test).
+  On mismatch it busts the require cache for `__dirname + path.sep`, creates a fresh instance, swaps it into
+  parent.plugins/exports. Every instance gets a process-wide generation (`global.__inventoryscannerInstanceGen`);
+  `obj.timerValid(gen)` lets only the NEWEST instance act on its timer chains, so instances replaced by the
+  installer stop by themselves. The routeAgentCommand monkey-patch resolves the current instance per call.
   An already-open browser page keeps running old inline JS until reloaded - HTML/exports are
   re-rendered fresh on every request, there is no server push channel to plugin pages.
 
@@ -299,18 +324,29 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   trouble, PS gets the whole script atomically (exit/transcript reliable), gzip keeps the line at
   ~2KB vs cmd's 8191 limit. PowerShell is NEVER fed line-interactive anymore.
   The builder still keeps one statement per line anyway (defense in depth, guarded by a test).
-  winget is located via HKLM App Paths (readable by SYSTEM; the
-  WindowsApps folder itself is NOT enumerable even as SYSTEM), then PATH, then wildcard.
-  The script probes transcript writability (agent folder -> ProgramData -> TEMP) because
-  Start-Transcript reports success but writes nothing on locked paths.
+  winget is located via HKLM App Paths, then the admin-only `%ProgramFiles%\WindowsApps\Microsoft.DesktopAppInstaller_*`
+  folder (newest first; enumerable for SYSTEM via the wildcard), then PATH - a `Get-Command` hit is an
+  ApplicationInfo whose location is `.Path` (`.FullName` is EMPTY there; pre-3.0.1 code read FullName and never
+  used the PATH hit - verified on Windows 11 / winget 1.29).
+  The client transcript goes ONLY to folders standard users cannot write to: the agent folder, else
+  `%ProgramData%\InventoryScanner` (created with a protected ACL for SYSTEM + Administrators, refused if it already
+  exists with another owner or as a reparse point; the log file itself is refused when it is a reparse point).
+  Plain `%ProgramData%` and `%TEMP%` are no longer used (v3.0.1): both let standard users pre-create files that a
+  SYSTEM process would then write through. No safe folder -> run continues without a transcript.
   Existence probe:
-  `winget list --upgrade-available --accept-source-agreements --disable-interactivity`, a strict regex
-  per table line (name / dotted id / version / available / source), skip-if-ignored (case-insensitive id
-  match), `(& $wg) upgrade --id <id> --exact --silent --accept-package-agreements --accept-source-agreements
-  --disable-interactivity` per remaining package, best-effort `winget pin add --id <id> --installed --exact`
-  for ignore entries (pinSync), and ONE answer line `@@INVWUP@@{json}`. `ConvertTo-Json` unwraps
-  single-element arrays - the parser rewraps them. Anything unparsable is recorded as an error, never as
-  a silent success.
+  `winget list --upgrade-available --accept-source-agreements --disable-interactivity`; the table is parsed by the
+  column START positions of the header line above the dash line (language independent; winget separates a
+  full-width cell by ONE space, which the old `\s{2,}` regex missed - OneDrive, VC++ redistributables, .NET
+  runtimes and `< x.y` versions were silently never updated before v3.0.1), each row validated (dotted id,
+  non-empty versions/source) with the old regex as fallback, parsing stops at the footer. Then skip-if-ignored
+  (case-insensitive id match), `(& $wg) upgrade --id <id> --exact --silent --accept-package-agreements
+  --accept-source-agreements --disable-interactivity` per remaining package, best-effort
+  `winget pin add --id <id> --installed --exact` for ignore entries (pinSync), and ONE answer line
+  `@@INVWUP@@{json}`. `winget uninstall` has NO `--accept-package-agreements` option - passing it makes winget
+  abort with "Argument name was not recognized" (exit 0x8A150002); the uninstall line omits it since v3.0.1
+  (verified on winget 1.29, the v3.0.0 "Uninstall everywhere" therefore never removed anything).
+  `ConvertTo-Json` unwraps single-element arrays - the parser rewraps them. Anything unparsable is recorded as an
+  error, never as a silent success.
 - Automatic scheduling is two-stage, no interval: `wgNodeDue` = never ran OR last run on an earlier
   calendar day OR >=24 h old; the agent-connect hook queues a due single device (after `staggerDelay`),
   `wgSweepOnce` (hourly, gen-guarded) catches devices whose connection outlived the day boundary.
@@ -328,7 +364,9 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   `msg/console` packets carrying an `invscanner-wg-` sessionid (e.g. the agent's 'already busy' note,
   meshcore.js breaks WITHOUT a runcommands reply in that case) are mirrored into winget-update.log.
   Answers that carry NEITHER sessionid NOR responseid (some agent builds) are still consumed when a
-  wgPending entry exists for that node; console-channel text accumulates on the pending entry (`.cbuf`,
+  wgPending entry exists for that node - but a reply WITH a foreign sessionid (a browser session) never is;
+  console-channel text is buffered only when it is session-less (meshcore.js echoes runcommands output via
+  `sendConsoleText` without a sessionid) or on our own wg session, accumulates on the pending entry (`.cbuf`,
   capped) and is consumed ONLY once the marker payload actually parses — partial chunks must never end
   a session (the runcommands reply or the watchdog finishes it). The payload is read up to the first
   line break after the marker (ConvertTo-Json -Compress is one line), so trailing console text cannot
@@ -339,14 +377,13 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   Every script self-logs on the client: Start/Stop-Transcript (both silenced via `| Out-Null`) around
   the run. The agent folder is found by walking up to FOUR process ancestors (Get-CimInstance
   Win32_Process - with the cmd transport the DIRECT parent is cmd.exe/System32, the agent is the
-  grandparent; matched by leaf name `meshagent|meshcentral...exe`), default C:\ProgramData. Candidates
-  agent-folder -> ProgramData -> TEMP are chosen by an Out-File -Append write probe, because
-  Start-Transcript on a blocked file reports success while writing NOTHING (rotates once at 5MB).
+  grandparent; matched by leaf name `meshagent|meshcentral...exe`), else the protected
+  `%ProgramData%\InventoryScanner` folder (see above); the log rotates once at 5MB.
   `hook_agentCoreIsStable` additionally queues the device through `wgQueueNode` (stagger-delayed, so the
   collector settles first; disabled/excluded/not-due devices short-circuit without any agent traffic).
 - Batching: queue with 2 devices in parallel (`WINGET_MAX_PARALLEL`), 2 h watchdog per device, results in
   `winget-results.json`, log `winget-update.log` (rotates ~5 MB). Scheduled batches require explicit
-  `updateMeshes`; manual "Run Now" covers every non-excluded desktop node. No reboots are ever triggered
+  `updateMeshes`; manual "Run Now" covers every non-excluded Windows node (unknown-OS nodes included). No reboots are ever triggered
   (`--allow-reboot` is never used).
 
 ## Design decisions (with reasons)
@@ -383,8 +420,11 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
    ~1 min after startup (baseline run).
 9. **Notification modes:** default = once per CVE (marked `(SEVERITY, new)`); `notifyUnratedRepeat:true` adds
    everything still unrated as `(SEVERITY, open)` on every run — the monthly to-do list. Rated/flagged → never again.
-10. **Security:** CSV formula-injection neutralized in `formatCsvField`; strict id validation on writes
-    (key-poisoning guard); rights come from MeshCentral's own checks; everything admin-gated.
+10. **Security:** CSV formula-injection neutralized in `formatCsvField`; strict id validation on writes AND on the
+    scan query (key-poisoning guard); `isAuthorizedAdmin` on every route and the toolbar hook; the
+    `X-InvScanner-Request` header on every POST (cross-site request guard); table/custom regexes pass
+    `isSafeTableRegex` (no nested quantifiers/backreferences - one bad regex would stall the event loop for every
+    scan); https-only table download with RFC 3986 redirect resolution; client transcript only in admin-only folders.
 11. **Settings precedence & live application:** writing MeshCentral's config.json from a plugin is dangerous
     (comments lost, server may not boot, core reads it only at startup). The Settings tab therefore persists to
     `scanner-settings.json`; `scannerConfig()`/`collectorConfig()`/`scheduleUpdate()`/`anyCveMaxAgeYears()` read
@@ -454,7 +494,7 @@ Data dumps from support sessions (CSV exports, browser output TXTs) live OUTSIDE
 MeshCentral install folder) and root `/*.txt` + `/*.csv` are gitignored as a guard - never copy them in.
 - `tools/check.js`: `node --check` on the plugin, inline-script syntax/`{{`-hazard check, JSON validity of
   config files, and view-name↔render-name consistency. Must run anywhere (no dependencies).
-- `tools/test-plugin.js`: 233 behavioral assertions against the real module (mocked MeshCentral DB/webserver):
+- `tools/test-plugin.js`: 261 behavioral assertions (55 steps) against the real module (mocked MeshCentral DB/webserver):
   locations grouping & counting, manual-rating severity override, FP exclusion, host-name preference, coverage
   numbers, multi-mesh scan/`mixed` logic, all POST handlers incl. validation/rejections, routes, admin gating
   (401), CPE table add/delete, vulns CSV header/content, toolbar button injection (simulated browser DOM), remote CPE table apply/cache/fetch/settings, NVD download-log tailing, manual NVD update trigger + concurrency guard, unknown-version matching rules, winget updater (builder/parser/queue/routes, incl. single-package update/uninstall runs + `wg_programs`), driver/firmware classification & coverage denominator, honest CVE aggregation (`deviceList`/`versionVaried`), coexistence-aware pruning, `longTimeout` chunking, restart-proof schedule delays,
@@ -468,6 +508,10 @@ MeshCentral install folder) and root `/*.txt` + `/*.csv` are gitignored as a gua
   fail parsing on the client while every server-side test stayed green. Verify generated scripts with the PS
   parser when you touch `wgBuildScript`:
   `[System.Management.Automation.Language.Parser]::ParseFile(<script.ps1>, [ref]$t, [ref]$e)`.
+  The winget table parser is additionally EXECUTED by PowerShell against a real winget 1.29 table (block between
+  the `# invscanner:parse-begin/-end` markers; skipped where PowerShell is missing). The runner is the LAST
+  statement of the file and prints `registered steps: N` - new steps must be pushed above it.
+  Requests in tests carry `headers: XHDR` (the panel header); the test admin has `domain: ''`.
 - `tools/test-views.js`: compiles all three views and renders them with mock data **and empty data**.
 
 If you change data shapes, UPDATE these tests — they are the contract.
@@ -517,3 +561,6 @@ per-location pages → scheduled monthly scans with toast/event-log notification
 Since v3.0.0 also: drivers/firmware as their own out-of-scope category (kind rows in the table + name heuristics,
 excluded from the coverage denominator) and the Updates tab's Packages view with per-package update/uninstall
 across the whole fleet (`$invOnly` restricted script runs).
+v3.0.1 (second audit, see AUDIT.md): request-header guard on POST, default-domain admin gate incl. toolbar hook,
+working winget uninstall/PATH lookup/table parsing, protected client transcript folder, NVD-verified mapping
+table, safe-regex check, agent-reply ownership checks, rights field for agents >= 2026-11-09.

@@ -17,10 +17,10 @@
  * NVD feed is downloaded.
  *
  * @author derStephan
- * @version 3.0.0
+ * @version 3.0.1
  *
  * Transparency: This plugin was created with the assistance of Qwen 3.6 27B and Qwen 3.8 Flash Next.
- * Security audit (2026-11-06) performed by NVIDIA Nemotron 3 550B A55B via opencode.
+ * Audits: 2026-11-06 (NVIDIA Nemotron 3 550B A55B) and 2026-11-11 (Claude, v3.0.1) via opencode - see AUDIT.md.
  */
 
 "use strict";
@@ -30,6 +30,15 @@ const path = require('path');
 const https = require('https');
 const zlib = require('zlib');
 const crypto = require('crypto');
+
+/**
+ * Version of the CODE in this module, read ONCE when Node loads the module (v3.0.1).
+ * pluginHandler.installPlugin re-requires the plugin after an upgrade, gets the CACHED old
+ * module and creates a new instance from it; reading config.json per instance (pre-3.0.1)
+ * made that instance report the new version, so the stale code was never noticed or reloaded.
+ */
+var MODULE_CODE_VERSION = 'unknown';
+try { MODULE_CODE_VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8')).version || 'unknown'; } catch (ex) { }
 
 /**
  * @brief Plugin entry point.
@@ -54,8 +63,16 @@ module.exports.inventoryscanner = function (parent) {
     obj.shortName = 'inventoryscanner';
     /** @type {string} Version from the manifest beside this file - shown in the panel so stale
      *  deploys (new view, old server code) are visible at a glance. */
-    obj.PLUGIN_VERSION = 'unknown';
-    try { obj.PLUGIN_VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8')).version || 'unknown'; } catch (ex) { }
+    obj.PLUGIN_VERSION = MODULE_CODE_VERSION;
+    /** @type {number} Process-wide instance generation (shared across module reloads via global):
+     *  only the newest instance may act on its timers - pluginHandler replaces instances on
+     *  install/upgrade without telling the old one, whose timer chains would otherwise keep running. */
+    global.__inventoryscannerInstanceGen = (global.__inventoryscannerInstanceGen || 0) + 1;
+    obj.instanceGen = global.__inventoryscannerInstanceGen;
+    /** @brief True while this object is the newest plugin instance in the process. */
+    obj.isCurrentInstance = function () { return obj.instanceGen === global.__inventoryscannerInstanceGen; };
+    /** @brief A chained timer started under generation <code>gen</code> may still run. */
+    obj.timerValid = function (gen) { return (gen === obj.timerGen) && obj.isCurrentInstance(); };
 
     /**
      * @brief Functions exported to the web UI (serialized into /pluginHandler.js).
@@ -176,7 +193,7 @@ module.exports.inventoryscanner = function (parent) {
                 var sname = obj.shortName;
                 obj.wgLog('upgrade detected on disk (' + obj.PLUGIN_VERSION + ' -> ' + diskVer + '), reloading without server restart');
                 try {
-                    Object.keys(require.cache).forEach(function (k) { if (k.indexOf(__dirname) === 0) { delete require.cache[k]; } });
+                    Object.keys(require.cache).forEach(function (k) { if (k.indexOf(__dirname + path.sep) === 0) { delete require.cache[k]; } }); // path.sep: never touch a sibling folder such as inventoryscanner2
                     var fresh = require(path.join(__dirname, sname + '.js'))[sname](obj.parent);
                     obj.parent.plugins[sname] = fresh;
                     obj.parent.exports[sname] = fresh.exports;
@@ -337,6 +354,8 @@ module.exports.inventoryscanner = function (parent) {
      * @param {function} [callback] - Called with <code>(err)</code>.
      */
     obj.addCustomCpe = function (match, vendor, product, callback) {
+        if (!obj.isSafeTableRegex(match)) { if (callback) callback(new Error('Regex rejected (empty, longer than 500 characters, nested quantifier or backreference).')); return; }
+        if ((typeof vendor !== 'string') || (typeof product !== 'string') || (vendor.length > 200) || (product.length > 200)) { if (callback) callback(new Error('Vendor/product too long.')); return; }
         try {
             // Validate that the regex is valid before storing.
             new RegExp(match, 'i');
@@ -370,13 +389,14 @@ module.exports.inventoryscanner = function (parent) {
         var out = [];
         for (var i = 0; i < obj.customCpeEntries.length; i++) {
             var e = obj.customCpeEntries[i];
+            if (!obj.isSafeTableRegex(e.match)) { continue; }
             try { out.push({ match: new RegExp(e.match, 'i'), vendor: e.vendor, product: e.product }); }
             catch (err) { }
         }
         return out;
     };
 
-    // ---- Plugin settings (UI-managed, overrides config.json â€” which is never written) ----
+    // ---- Plugin settings (UI-managed, overrides config.json - which is never written) ----
 
     /**
      * @brief Load the UI-managed scanner settings from disk into memory.
@@ -560,9 +580,9 @@ module.exports.inventoryscanner = function (parent) {
         obj.debug('plugin:inventory_scanner', 'Next NVD update scheduled in', hours, 'hours');
         var gen = obj.timerGen;
         obj.longTimeout(function () {
-            if (gen !== obj.timerGen) { return; }
+            if (!obj.timerValid(gen)) { return; }
             obj.runNvdUpdate(true, function (err) {
-                if (gen !== obj.timerGen) { return; }
+                if (!obj.timerValid(gen)) { return; }
                 if (!err) {
                     obj.updateTimerArmed = true;
                 }
@@ -575,7 +595,7 @@ module.exports.inventoryscanner = function (parent) {
 // ============================================================================
 // winget automatic software updates (engine)
 // ----------------------------------------------------------------------------
-// Verified transport (meshcore.js): {action:'runcommands', type:2, cmds,
+// Verified transport (meshcore.js): {action:'runcommands', type:1 (cmd.exe), cmds,
 // runAsUser:0, reply:true, sessionid, responseid} -> the agent answers
 // {action:'msg', type:'runcommands', result, sessionid, responseid}, captured
 // by this plugin's routeAgentCommand hook. Verified winget CLI usage from the
@@ -606,6 +626,8 @@ module.exports.inventoryscanner = function (parent) {
     obj.wgBatchOpts = null;
 
     obj.WINGET_MAX_PARALLEL = 2;
+    /** @type {number} hard cap of devices per batch (pre-3.0.1 this constant was referenced but undefined). */
+    obj.WINGET_MAX_DEVICES = 5000;
     obj.WINGET_RUN_TIMEOUT_MS = 2 * 60 * 60 * 1000;
     obj.WINGET_DRY_TIMEOUT_MS = 10 * 60 * 1000;
     obj.WINGET_MARKER = '@@INVWUP@@';
@@ -641,12 +663,12 @@ module.exports.inventoryscanner = function (parent) {
         return out;
     };
 
-        /**
+    /**
      * @brief Build the one-shot PowerShell script (runs as SYSTEM over the
-     * agent's runcommands channel). CRITICAL: the agent feeds PowerShell in
-     * line-interactive mode (each stdin line is executed as its own
-     * statement; PSReadLine errors on continuation lines), so EVERY statement
-     * MUST be a single self-contained line - no multi-line blocks.
+     * agent's runcommands channel). Transport: wgTransport wraps the whole script
+     * into ONE gzip+base64 line for cmd.exe, so PowerShell receives it atomically;
+     * every statement is nevertheless kept on a single line (defense in depth,
+     * guarded by a test).
      * @param {object} wcfg - The winget config section.
      * @param {boolean} [dry] - Dry run: list only, install/pin nothing.
      * @param {object} [opts] - { onlyId: winget id (already WINGET_ID_RE-validated) to
@@ -654,7 +676,9 @@ module.exports.inventoryscanner = function (parent) {
      *   Uninstall REQUIRES onlyId, probes existence with a case-insensitive id
      *   containment check on 'winget list --id <id> --exact' output (no reliance on
      *   exit-code or message localization) and then 'winget uninstall --id --exact
-     *   --silent', state ok/failed by exit code - the same verified primitives as upgrades.
+     *   --silent' (winget uninstall has NO --accept-package-agreements option - passing it
+     *   aborts with "Argument name was not recognized", verified on winget 1.29),
+     *   state ok/failed by exit code.
      * @returns {string} The script text.
      */
     obj.wgBuildScript = function (wcfg, dry, opts) {
@@ -682,15 +706,25 @@ module.exports.inventoryscanner = function (parent) {
             "$invDry = " + (dry ? '$true' : '$false'),
             "$invMode = '" + (mode === 'uninstall' ? 'uninstall' : (dry ? 'scan' : 'update')) + "'",
             "$invOnly = '" + onlyId.replace(/'/g, "''") + "'",
-            "$invTDir = $env:ProgramData",
+            // Client transcript location (v3.0.1): only folders that standard users cannot write to.
+            // 1) the agent folder (found via the process ancestors), 2) a dedicated
+            // %ProgramData%\\InventoryScanner folder that is created with an ACL for SYSTEM +
+            // Administrators only and refused when it already exists with another owner or as a
+            // reparse point. Plain %ProgramData% / %TEMP% are no longer used (both allow file
+            // creation by standard users). Without a safe folder the run continues without a transcript.
+            "$invTDir = $null",
             "try { $invQ = $PID; for ($invHop = 0; $invHop -lt 4; $invHop++) { $invPP = 0; try { $invPP = (Get-CimInstance Win32_Process -Filter ('ProcessId={0}' -f $invQ) -ErrorAction Stop).ParentProcessId } catch { break }; if (-not $invPP) { break }; $invPX = $null; try { $invPX = (Get-Process -Id $invPP -ErrorAction Stop).Path } catch { break }; if ($invPX -and ((Split-Path $invPX -Leaf) -imatch '^(meshagent|meshcentral)[a-z0-9_-]*\\.exe$')) { $invTDir = Split-Path $invPX; break }; $invQ = $invPP } } catch { }",
-            "$invT = Join-Path $invTDir 'invscanner-winget.log'",
-            "if (Test-Path $invT) { try { if ((Get-Item $invT).Length -gt 5MB) { Move-Item $invT ($invT + '.old') -Force } } catch { } }",
-            "try { '' | Out-File -FilePath $invT -Append -Encoding utf8 -ErrorAction Stop } catch { $invT = Join-Path $env:ProgramData 'invscanner-winget.log'; try { '' | Out-File -FilePath $invT -Append -Encoding utf8 -ErrorAction Stop } catch { $invT = Join-Path $env:TEMP 'invscanner-winget.log' } }",
-            "try { Start-Transcript -Path $invT -Append | Out-Null } catch { }",
+            "if ($null -eq $invTDir) { try { $invLD = Join-Path $env:ProgramData 'InventoryScanner'; $invOK = @('S-1-5-18', 'S-1-5-32-544'); if (Test-Path -LiteralPath $invLD) { $invLI = Get-Item -LiteralPath $invLD -Force; $invOw = (Get-Acl -LiteralPath $invLD).GetOwner([System.Security.Principal.SecurityIdentifier]).Value; if (($invLI.Attributes -band [IO.FileAttributes]::ReparsePoint) -or ($invOK -notcontains $invOw)) { $invLD = $null } } else { $null = New-Item -ItemType Directory -Path $invLD -ErrorAction Stop; $invDS = New-Object System.Security.AccessControl.DirectorySecurity; $invDS.SetAccessRuleProtection($true, $false); foreach ($invS in $invOK) { $invDS.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule((New-Object System.Security.Principal.SecurityIdentifier($invS)), 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow'))) }; Set-Acl -LiteralPath $invLD -AclObject $invDS -ErrorAction Stop }; $invTDir = $invLD } catch { $invTDir = $null } }",
+            "$invT = $null; if ($invTDir) { $invT = Join-Path $invTDir 'invscanner-winget.log' }",
+            "if ($invT -and (Test-Path -LiteralPath $invT)) { try { $invFI = Get-Item -LiteralPath $invT -Force; if ($invFI.Attributes -band [IO.FileAttributes]::ReparsePoint) { $invT = $null } elseif ($invFI.Length -gt 5MB) { Move-Item -LiteralPath $invT ($invT + '.old') -Force } } catch { } }",
+            "if ($invT) { try { '' | Out-File -FilePath $invT -Append -Encoding utf8 -ErrorAction Stop } catch { $invT = $null } }",
+            "if ($invT) { try { Start-Transcript -Path $invT -Append | Out-Null } catch { } }",
             "$wg = $null",
             "$invAP = $null; if (Test-Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\winget.exe') { $invAP = (Get-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\winget.exe' -ErrorAction SilentlyContinue).'(default)' }; if ($invAP -and (Test-Path $invAP)) { $wg = $invAP }",
-            "if (-not $wg) { foreach ($wc in @((Get-Command winget -ErrorAction SilentlyContinue), (Get-ChildItem ($env:ProgramFiles + \"\\WindowsApps\\Microsoft.DesktopAppInstaller_*\\winget.exe\") -ErrorAction SilentlyContinue | Select-Object -First 1))) { if ($wc -ne $null -and $wc.FullName) { $wg = $wc.FullName; break } } }",
+            // Lookup order: App Paths, the admin-only WindowsApps package folder (newest first),
+            // then PATH. Get-Command returns an ApplicationInfo whose location is in .Path
+            // (.FullName is empty there - the pre-3.0.1 code therefore never used the PATH hit).
+            "if (-not $wg) { foreach ($wc in @((Get-ChildItem ($env:ProgramFiles + \"\\WindowsApps\\Microsoft.DesktopAppInstaller_*\\winget.exe\") -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1), (Get-Command winget -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1))) { if ($null -ne $wc) { $invWP = $null; if ($wc.Path) { $invWP = [string]$wc.Path } elseif ($wc.FullName) { $invWP = [string]$wc.FullName }; if ($invWP) { $wg = $invWP; break } } } }",
             "if ($wg -eq $null) { Write-Output '" + obj.WINGET_MARKER + "{\"winget\":false}'; Stop-Transcript -ErrorAction SilentlyContinue | Out-Null; exit }",
             "$invIgnore = @(" + psList + ")",
             "$results = @()"
@@ -701,14 +735,25 @@ module.exports.inventoryscanner = function (parent) {
             head.push(
                 "$invProbe = ''",
                 "try { $invProbe = ((& $wg list --id $invOnly --exact --accept-source-agreements --disable-interactivity) 2>&1) -join ' ' } catch { $invProbe = '' }",
-                "if ($invProbe -inotmatch ([regex]::Escape($invOnly))) { $results += @{ id = $invOnly; name = ''; from = ''; to = ''; state = 'not-installed' } } else { $o = (& $wg uninstall --id $invOnly --exact --silent --accept-package-agreements --accept-source-agreements --disable-interactivity) 2>&1; $code = $LASTEXITCODE; $tail = (($o | Select-Object -Last 3) -join ' '); if ($tail -isnot [string]) { $tail = [string]$tail }; if ($tail.Length -gt 400) { $tail = $tail.Substring(0,400) }; $st = 'failed'; if ($code -eq 0) { $st = 'ok' }; $results += @{ id = $invOnly; name = ''; from = ''; to = ''; state = $st; exit = $code; log = $tail } }"
+                "if ($invProbe -inotmatch ([regex]::Escape($invOnly))) { $results += @{ id = $invOnly; name = ''; from = ''; to = ''; state = 'not-installed' } } else { $o = (& $wg uninstall --id $invOnly --exact --silent --accept-source-agreements --disable-interactivity) 2>&1; $code = $LASTEXITCODE; $tail = (($o | Select-Object -Last 3) -join ' '); if ($tail -isnot [string]) { $tail = [string]$tail }; if ($tail.Length -gt 400) { $tail = $tail.Substring(0,400) }; $st = 'failed'; if ($code -eq 0) { $st = 'ok' }; $results += @{ id = $invOnly; name = ''; from = ''; to = ''; state = $st; exit = $code; log = $tail } }"
             );
         } else {
             head.push(
                 "$raw = ''",
                 "try { $raw = ((& $wg list --upgrade-available --accept-source-agreements --disable-interactivity) 2>&1) -join [Environment]::NewLine } catch { }",
                 "$rows = @()",
-                "foreach ($line in ($raw -split '[\\r\\n]+')) { if ($line -match '^(.+?)\\s{2,}([A-Za-z0-9._+-]+\\.[A-Za-z0-9._+-]+)\\s{2,}(\\S+)\\s{2,}(\\S+)\\s{2,}(\\S+)\\s*$') { $rows += [pscustomobject]@{ name = $matches[1].Trim(); id = $matches[2]; from = $matches[3]; to = $matches[4] } } }",
+                // Table parser (v3.0.1): winget pads columns to a fixed width, so a full-width cell is
+                // followed by ONE space only (long names, long ids, long versions, '< x.y' versions).
+                // The column starts are therefore taken from the header line above the dash line
+                // (language independent: only positions are used); every row is validated (dotted id,
+                // non-empty versions/source) and falls back to the old two-space regex when the
+                // column cut does not validate. Parsing stops at the table footer.
+                "# invscanner:parse-begin",
+                "$invLines = @($raw -split '[\\r\\n]+')",
+                "$invH = -1; for ($invI = 1; $invI -lt $invLines.Count; $invI++) { if ($invLines[$invI] -match '^\\s*-{10,}\\s*$') { $invH = $invI - 1; break } }",
+                "$invC = @(); if ($invH -ge 0) { $invC = @([regex]::Matches($invLines[$invH], '(?:^|(?<=\\s))\\S+') | ForEach-Object { $_.Index }) }",
+                "$invEnd = $false; for ($invI = [Math]::Max(0, $invH + 2); ($invI -lt $invLines.Count) -and (-not $invEnd); $invI++) { $line = [string]$invLines[$invI]; $invR = $null; if (($invC.Count -eq 5) -and ($line.Length -gt $invC[4])) { $invR = @($line.Substring(0, $invC[1]).Trim(), $line.Substring($invC[1], $invC[2] - $invC[1]).Trim(), $line.Substring($invC[2], $invC[3] - $invC[2]).Trim(), $line.Substring($invC[3], $invC[4] - $invC[3]).Trim(), $line.Substring($invC[4]).Trim()) }; if (($null -eq $invR) -or ($invR[1] -notmatch '^[A-Za-z0-9._+-]+\\.[A-Za-z0-9._+-]+$') -or ($invR[2] -eq '') -or ($invR[3] -notmatch '^\\S+$') -or ($invR[4] -notmatch '^\\S+$')) { $invR = $null; if ($line -match '^(.+?)\\s{2,}([A-Za-z0-9._+-]+\\.[A-Za-z0-9._+-]+)\\s{2,}(\\S+)\\s{2,}(\\S+)\\s{2,}(\\S+)\\s*$') { $invR = @($matches[1].Trim(), $matches[2], $matches[3], $matches[4], $matches[5]) } }; if ($null -ne $invR) { $rows += [pscustomobject]@{ name = $invR[0]; id = $invR[1]; from = $invR[2]; to = $invR[3] } } elseif (($invH -ge 0) -and (($line -match '^\\s*-{10,}\\s*$') -or ($line -match '^\\s*\\d+\\s'))) { $invEnd = $true } }",
+                "# invscanner:parse-end",
                 "foreach ($p in $rows) { " + onlyGuard + "$skip = $false; foreach ($ig in $invIgnore) { if ($p.id -ieq $ig) { $skip = $true; break } }; if ($skip) { $results += @{ id = $p.id; name = $p.name; from = $p.from; to = $p.to; state = 'skipped-ignored' }; continue }; if ($p.to -ieq 'Unknown' -or $p.to -eq $p.from) { $results += @{ id = $p.id; name = $p.name; from = $p.from; to = $p.to; state = 'skipped-noversion' }; continue }; " + dryGuard + " $o = (& $wg upgrade --id $p.id --exact --silent --accept-package-agreements --accept-source-agreements --disable-interactivity) 2>&1; $code = $LASTEXITCODE; $tail = (($o | Select-Object -Last 3) -join ' '); if ($tail -isnot [string]) { $tail = [string]$tail }; if ($tail.Length -gt 400) { $tail = $tail.Substring(0,400) }; $st = 'failed'; if ($code -eq 0) { $st = 'ok' }; $results += @{ id = $p.id; name = $p.name; from = $p.from; to = $p.to; state = $st; exit = $code; log = $tail } }"
             );
         }
@@ -854,9 +899,10 @@ module.exports.inventoryscanner = function (parent) {
     };
 
     /**
-     * @brief Wrap the builder script for the agent's line-interactive PowerShell stdin:
-     * ONE line carrying the whole script base64(UTF-16LE) as a ScriptBlock - pipes have no
-     * length ceiling, PSReadLine continuation issues and quoting cannot occur, exit works.
+     * @brief Wrap the builder script for the agent's cmd.exe runcommands channel (type 1):
+     * ONE powershell -Command line carrying the whole script as base64(gzip(UTF-8)); it is
+     * decompressed and run in one piece (no per-line stdin parsing, no quoting issues, the
+     * line stays far below cmd's 8191 character limit).
      * @param {string} script - The raw PowerShell text from wgBuildScript.
      * @returns {string} The single-line command.
      */
@@ -1070,7 +1116,10 @@ module.exports.inventoryscanner = function (parent) {
 
     obj.pruneSuperseded = function (softwareList) {
         if (!Array.isArray(softwareList)) return [];
-        var SIDE_BY_SIDE = { jre: 1, jdk: 1, java: 1, net_framework: 1, dotnet: 1, python: 2, visual_c: 1, 'visual_c++_redistributable': 1, vcredist: 1 };
+        // Products that genuinely install side by side, keyed by the CPE product token the mapping
+        // actually produces (v3.0.1: '.net', 'visual_c\\+\\+' and friends were missing, so VC++ 2008 /
+        // 2015 and .NET 8 / 10 runtimes collapsed into one row and the older one was never scanned).
+        var SIDE_BY_SIDE = { jre: 1, jdk: 1, java: 1, net_framework: 1, '.net_framework': 1, '.net': 1, '.net_core': 1, 'asp.net_core': 1, dotnet: 1, python: 2, visual_c: 1, 'visual_c\\+\\+': 1, 'visual_c++': 1, 'visual_c\\+\\+_redistributable': 1, 'visual_c++_redistributable': 1, vcredist: 1 };
         var groups = {}, drop = {};
         for (var i = 0; i < softwareList.length; i++) {
             var sw = softwareList[i];
@@ -1207,7 +1256,7 @@ module.exports.inventoryscanner = function (parent) {
         if (!wcfg.enabled) { return; }
         var gen = obj.timerGen;
         obj.longTimeout(function () {
-            if (gen !== obj.timerGen) { return; }
+            if (!obj.timerValid(gen)) { return; }
             obj.wgSweepOnce(function () { obj.scheduleWingetUpdates(); });
         }, obj.WINGET_SWEEP_MS);
     };
@@ -1683,7 +1732,7 @@ module.exports.inventoryscanner = function (parent) {
         obj.debug('plugin:inventory_scanner', 'Scheduled group scan every', intervalHours, 'hours; next run in', Math.round(delay / 60000), 'minutes');
         var gen = obj.timerGen;
         obj.longTimeout(function () {
-            if (gen !== obj.timerGen) { return; } // superseded by a settings save
+            if (!obj.timerValid(gen)) { return; } // superseded by a settings save
             obj.runScheduledScans();
             obj.scheduleScans();
         }, delay);
@@ -1860,19 +1909,24 @@ module.exports.inventoryscanner = function (parent) {
     obj.onAgentResponse = function (command, domainid, nodeid, meshid) {
         if ((nodeid == null) || (command == null)) return false;
         if (command.action === 'software') {
-            // Only capture responses to this plugin's own collection requests.
-            // A user browsing the Software tab of another device would otherwise
-            // also trigger responses here, risking data being stored under the
-            // wrong node.
-            if (obj.pendingCollection[nodeid] === true) {
+            // Only capture responses to this plugin's own collection requests: the agent answers
+            // with sessionid = the request's sessionid, and the plugin sends none, so a reply WITH a
+            // sessionid belongs to a browser session (Software tab) and is neither stored nor
+            // consumed. Our own session-less reply is consumed, so it is not broadcast to every
+            // user session with rights on the node (v3.0.1).
+            if ((obj.pendingCollection[nodeid] === true) && (command.sessionid == null)) {
                 obj.handleSoftwareResponse(nodeid, command);
+                return true;
             }
-            return false; // still route to browsers (may be a UI-triggered request)
+            return false; // a UI-triggered request: route to the browser
         } else if ((command.action === 'msg') && (command.type === 'runcommands')) {
             // Answer to one of our update sessions (agent builds differ on whether the
             // reply carries sessionid, responseid or both - accept any prefix hit).
             var ours = (((typeof command.sessionid === 'string') && (command.sessionid.indexOf('invscanner-wg-') === 0)) || ((typeof command.responseid === 'string') && (command.responseid.indexOf('invscanner-wg-') === 0)));
-            if (!ours && (obj.wgPending != null) && (obj.wgPending[nodeid] != null)) { ours = true; } // some agent builds answer without any session field
+            // Session-less answers (some agent builds) are only accepted while a run is pending for
+            // that node AND the reply carries no session field at all - a reply addressed to another
+            // (browser) session is never taken over (v3.0.1).
+            if (!ours && (obj.wgPending != null) && (obj.wgPending[nodeid] != null) && (command.sessionid == null) && (command.responseid == null)) { ours = true; }
             if (ours) {
                 obj.wgHandleResponse(nodeid, command);
                 return true; // consumed - the marker JSON is plugin-internal
@@ -1886,7 +1940,11 @@ module.exports.inventoryscanner = function (parent) {
             // payload is complete and parses (otherwise the runcommands reply or the
             // watchdog finishes the session).
             var wge = (obj.wgPending != null) ? obj.wgPending[nodeid] : null;
-            if ((typeof command.value === 'string') && (wge != null)) {
+            // The agent's runcommands child echoes its output with sendConsoleText() WITHOUT a
+            // sessionid (verified in meshcore.js), so only session-less console text or text on our
+            // own wg session is buffered - console output of an admin's terminal session is left alone.
+            var wgConsoleOurs = (command.sessionid == null) || ((typeof command.sessionid === 'string') && (command.sessionid.indexOf('invscanner-wg-') === 0));
+            if ((typeof command.value === 'string') && (wge != null) && wgConsoleOurs) {
                 wge.cbuf = (typeof wge.cbuf === 'string' ? wge.cbuf : '') + command.value;
                 if (wge.cbuf.length > 262144) wge.cbuf = wge.cbuf.substring(wge.cbuf.length - 131072);
                 if (obj.wgPayloadFromText(wge.cbuf) != null) {
@@ -1992,15 +2050,23 @@ module.exports.inventoryscanner = function (parent) {
      */
     obj.handleSoftwareResponse = function (nodeId, command) {
         delete obj.pendingCollection[nodeId];
-        var apps = [];
+        var apps = null, why = 'unrecognized answer';
         try {
             var raw = command.value;
             if (typeof raw === 'string') {
                 var parsed = JSON.parse(raw);
                 if (Array.isArray(parsed)) { apps = parsed; }
                 else if ((parsed != null) && (typeof parsed === 'object') && Array.isArray(parsed.value)) { apps = parsed.value; }
+                else if ((parsed != null) && (typeof parsed === 'object') && (parsed.error != null)) { why = 'agent error: ' + String(parsed.error).substring(0, 120); }
             } else if (Array.isArray(raw)) { apps = raw; }
-        } catch (e) { apps = []; }
+        } catch (e) { apps = null; why = 'unparsable answer'; }
+        // An error answer ("Denied", "Not supported", ...) must never overwrite the last good
+        // inventory with an empty list - empty would read as "nothing installed" (v3.0.1).
+        if (apps == null) {
+            obj.debug('plugin:inventory_scanner', 'Software collection for', nodeId, 'not stored -', why);
+            return;
+        }
+        if (apps.length > 20000) { apps = apps.slice(0, 20000); } // a device never has more; caps disk/memory use
         obj.softwareInventory[safeNodeDir(nodeId)] = { time: new Date().toISOString(), apps: apps };
         obj.saveSoftwareInventory(nodeId, obj.softwareInventory[safeNodeDir(nodeId)]);
         obj.debug('plugin:inventory_scanner', 'Collected', apps.length, 'software entries for', nodeId);
@@ -2017,7 +2083,7 @@ module.exports.inventoryscanner = function (parent) {
         var gen = obj.timerGen;
         // First pass shortly after startup (agents may need a moment to reconnect),
         // then keep collecting periodically.
-        setTimeout(function () { if (gen === obj.timerGen) { obj.collectAndReschedule(); } }, 20000);
+        setTimeout(function () { if (obj.timerValid(gen)) { obj.collectAndReschedule(); } }, 20000);
     };
 
     /**
@@ -2031,7 +2097,7 @@ module.exports.inventoryscanner = function (parent) {
         // without a restart; stop the chain if collection was disabled meanwhile.
         var intervalMs = obj.collectorConfig().intervalMinutes * 60 * 1000;
         if (intervalMs <= 0) { return; }
-        obj.longTimeout(function () { if (gen === obj.timerGen) { obj.collectAndReschedule(); } }, intervalMs);
+        obj.longTimeout(function () { if (obj.timerValid(gen)) { obj.collectAndReschedule(); } }, intervalMs);
     };
 
     /**
@@ -2061,7 +2127,13 @@ module.exports.inventoryscanner = function (parent) {
         try {
             if (typeof agent.send !== 'function') return;
             obj.pendingCollection[nodeId] = true;
-            agent.send(JSON.stringify({ action: 'software', type: 'installedapps', responseid: 'invscanner' }));
+            // Since MeshCentral commit cdc9582ada (2026-11-09) the agent refuses 'software'
+            // commands without a numeric rights field. The server-side collector sends the least
+            // value that permits the inventory read: Remote Control (8), NOT the full-admin mask -
+            // uninstall types stay refused by the agent. Older agents ignore the field.
+            agent.send(JSON.stringify({ action: 'software', type: 'installedapps', rights: 8, responseid: 'invscanner' }));
+            // Clear the interest flag if no answer arrives (offline mid-request, old agent).
+            setTimeout(function () { try { delete obj.pendingCollection[nodeId]; } catch (e) { } }, 120000);
         } catch (e) { delete obj.pendingCollection[nodeId]; }
     };
 
@@ -2534,7 +2606,7 @@ obj.loadNvdFromAllFiles = function () {
         var hasDot = /\d\.\d/.test(s);
         if (/ubuntu|dfsg|\+exp|bzr|deb\d|repack|~/.test(s)) {
             // Debian/Ubuntu patch upstream fixes into the SAME upstream version -
-            // the NVD range check would report CVEs that the distrol already fixed.
+            // the NVD range check would report CVEs that the distro already fixed.
             // Without OVAL data the honest answer is: version not assessable.
             return '';
         }
@@ -2702,7 +2774,7 @@ obj.loadNvdFromAllFiles = function () {
         { match: /adobe acrobat reader/i, vendor: 'adobe', product: 'acrobat_reader' },
         { match: /adobe acrobat( \(64-bit\))?/i, vendor: 'adobe', product: 'acrobat' },
         { match: /^adobe acrobat/i, vendor: 'adobe', product: 'acrobat' },
-        // Office / Microsoft-Produkte (via CPE; MSRC deckt Updates separat ab)
+        // Office / Microsoft products (via CPE; Windows Update / MSRC cover patches separately)
         { match: /microsoft 365|microsoft office|office 16|microsoft onenote/i, vendor: 'microsoft', product: 'office' },
         { match: /microsoft onedrive/i, vendor: 'microsoft', product: 'onedrive' },
         { match: /microsoft visual studio code/i, vendor: 'microsoft', product: 'visual_studio_code' },
@@ -2716,9 +2788,9 @@ obj.loadNvdFromAllFiles = function () {
         // Apache
         { match: /apache netbeans/i, vendor: 'apache', product: 'netbeans' },
         { match: /openoffice/i, vendor: 'apache', product: 'openoffice' },
-        // Open-Source / bekannte Tools
+        // Open source / well-known tools
         { match: /^7-zip/i, vendor: '7-zip', product: '7-zip' },
-        { match: /notepad\+\+/i, vendor: 'notepad-plus-plus', product: 'notepad++' },
+        { match: /notepad\+\+/i, vendor: 'notepad-plus-plus', product: 'notepad\\+\\+' }, // NVD criteria escape '+'
         { match: /vlc media player/i, vendor: 'videolan', product: 'vlc_media_player' },
         { match: /^python/i, vendor: 'python', product: 'python' },
         { match: /node\.js/i, vendor: 'nodejs', product: 'node.js' },
@@ -2731,35 +2803,34 @@ obj.loadNvdFromAllFiles = function () {
         { match: /foxit pdf editor/i, vendor: 'foxit', product: 'pdf_editor' },
         { match: /screentogif/i, vendor: 'screentogif', product: 'screentogif' },
         { match: /^gimp/i, vendor: 'gimp', product: 'gimp' },
-        { match: /audacity/i, vendor: 'audacity', product: 'audacity' },
+        { match: /audacity/i, vendor: 'audacityteam', product: 'audacity' },
         { match: /^inkscape/i, vendor: 'inkscape', product: 'inkscape' },
         { match: /keepassxc/i, vendor: 'keepassxc', product: 'keepassxc' },
-        { match: /keepass(?!xc)/i, vendor: 'sourceforge', product: 'keepass' },
+        { match: /keepass(?!xc)/i, vendor: 'keepass', product: 'keepass' },
         { match: /mremoteng/i, vendor: 'mremoteng', product: 'mremoteng' },
         { match: /forticlient/i, vendor: 'fortinet', product: 'forticlient' },
         { match: /teamviewer/i, vendor: 'teamviewer', product: 'teamviewer' },
         { match: /anydesk/i, vendor: 'anydesk', product: 'anydesk' },
         { match: /^putty/i, vendor: 'putty', product: 'putty' },
-        { match: /filezilla/i, vendor: 'filezilla_project', product: 'filezilla' },
+        { match: /filezilla server/i, vendor: 'filezilla-project', product: 'filezilla_server' },
+        { match: /filezilla/i, vendor: 'filezilla-project', product: 'filezilla_client' },
         { match: /wireshark/i, vendor: 'wireshark', product: 'wireshark' },
         { match: /^curl/i, vendor: 'haxx', product: 'curl' },
         { match: /openssl/i, vendor: 'openssl', product: 'openssl' },
         { match: /^php /i, vendor: 'php', product: 'php' },
-        // Nextcloud / Kollaboration
+        // Nextcloud / collaboration
         { match: /^nextcloud talk/i, vendor: 'nextcloud', product: 'talk' },
         { match: /^nextcloud/i, vendor: 'nextcloud', product: 'nextcloud' },
         // Common software whose display name does not trivially reduce to its CPE product
-        { match: /chromium/i, vendor: 'google', product: 'chromium' },
         { match: /^git(?!hub)/i, vendor: 'git', product: 'git' },
         { match: /brave browser|brave \d/i, vendor: 'brave', product: 'brave' },
         { match: /docker desktop/i, vendor: 'docker', product: 'docker_desktop' },
-        { match: /electron/i, vendor: 'electron', product: 'electron' },
-        { match: /power ?bi( |$|desktop)/i, vendor: 'microsoft', product: 'powerbi' },
+        { match: /electron/i, vendor: 'electronjs', product: 'electron' },
+        { match: /power bi report server/i, vendor: 'microsoft', product: 'power_bi_report_server' },
         { match: /globalprotect/i, vendor: 'paloaltonetworks', product: 'globalprotect' },
-        { match: /sumatrapdf/i, vendor: 'sumrapdf', product: 'sumatrapdf' },
+        { match: /sumatrapdf/i, vendor: 'sumatrapdfreader', product: 'sumatrapdf' },
         // VPN / Remote
-        { match: /securepoint (ssl vpn|vpn client)/i, vendor: 'securepoint', product: 'securepoint' },
-        { match: /pcvisit remotehost/i, vendor: 'pcvisit', product: 'pcvisit' }
+        { match: /securepoint (ssl vpn|vpn client)/i, vendor: 'securepoint', product: 'openvpn-client' }
         // NOTE (v3.0.0): additions belong in cpe-table.json (the shipped + fetched table) -
         // do NOT mirror them here; this array is only the offline seed of last resort.
     ];
@@ -2774,6 +2845,23 @@ obj.loadNvdFromAllFiles = function () {
      * @param {string|object} payload - Raw JSON text or parsed object.
      * @returns {object} { ok: boolean, applied: number, skipped: number, error?: string }
      */
+    /**
+     * @brief Reject regex sources with the classic catastrophic-backtracking shape (a quantified
+     * group that itself contains a quantifier, e.g. (a+)+ or (x*)*). Table and custom regexes run
+     * against every installed program name on the server's event loop, so one such pattern from a
+     * tampered table could stall the whole MeshCentral process (OWASP A08 / CWE-1333, v3.0.1).
+     * Heuristic by design: it blocks the known-dangerous form, plain patterns stay accepted.
+     * @param {string} src - Regex source.
+     * @returns {boolean} true when acceptable.
+     */
+    obj.isSafeTableRegex = function (src) {
+        var s = String(src || '');
+        if (s.length === 0 || s.length > 500) { return false; }
+        if (/\((?:[^()\\]|\\.)*(?:[+*]|\{\d+,\d*\})(?:[^()\\]|\\.)*\)(?:[+*]|\{\d+,\d*\})/.test(s)) { return false; }
+        if (/\\[1-9]/.test(s)) { return false; } // backreferences
+        return true;
+    };
+
     obj.applyCpeTableText = function (payload) {
         var data = null;
         try { data = (typeof payload === 'string') ? JSON.parse(payload) : payload; } catch (ex) { return { ok: false, applied: 0, skipped: 0, error: 'Invalid JSON: ' + ex.message }; }
@@ -2783,6 +2871,7 @@ obj.loadNvdFromAllFiles = function () {
         for (var i = 0; i < data.entries.length; i++) {
             var en = data.entries[i];
             if (!en || (typeof en.match !== 'string') || (en.match.length === 0) || (en.match.length > 500)) { skipped++; continue; }
+            if (!obj.isSafeTableRegex(en.match)) { skipped++; continue; }
             var isKind = (en.kind === 'driver' || en.kind === 'firmware');
             if (isKind) {
                 try { out.push({ match: new RegExp(en.match, 'i'), kind: en.kind }); applied++; } catch (ex) { skipped++; }
@@ -2851,8 +2940,8 @@ obj.loadNvdFromAllFiles = function () {
             var req = https.get(u, { headers: { 'User-Agent': 'meshcentral-inventoryscanner' }, timeout: 30000 }, function (res) {
                 if (((res.statusCode == null) || (res.statusCode >= 300) && (res.statusCode < 400)) && res.headers.location && (redirectsLeft > 0)) {
                     res.resume();
-                    var nu = res.headers.location;
-                    if (nu.indexOf('http') !== 0) { nu = u.replace(/\/[^\/]*$/, '') + nu; }
+                    var nu = null;
+                    try { nu = new URL(String(res.headers.location), u).href; } catch (e) { callback(new Error('Invalid redirect')); return; } // RFC 3986 resolution (v3.0.1)
                     if (!/^https:\/\//i.test(nu)) { callback(new Error('Redirect away from https blocked')); return; }
                     getIt(nu, redirectsLeft - 1);
                     return;
@@ -3019,12 +3108,12 @@ obj.loadNvdFromAllFiles = function () {
         'malwarebytes': 'malwarebytes', 'piriform': 'piriform', 'foxit': 'foxit',
         'autodesk': 'autodesk', 'solidworks': 'solidworks', 'corel': 'corel', 'nitro': 'nitro',
         'opera software': 'opera', 'brave software': 'brave', 'vivaldi': 'vivaldi',
-        'libreoffice': 'libreoffice', 'document foundation': 'documentfoundation',
+        'libreoffice': 'libreoffice', 'document foundation': 'libreoffice',
         'python software foundation': 'python', 'eclipse foundation': 'eclipse', 'eclipse adoptium': 'eclipse',
         'adoptium': 'eclipse', 'node js': 'nodejs', 'docker': 'docker', 'git scm': 'git',
         'github': 'github', 'slack technologies': 'slack', 'realvnc': 'realvnc', 'turbovnc': 'turbovnc',
         'tightvnc': 'tightvnc', 'ultravnc': 'ultravnc', 'openvpn': 'openvpn', 'tailscale': 'tailscale',
-        'dropbox': 'dropbox', 'logmein': 'logmein', 'securepoint': 'secpoint',
+        'dropbox': 'dropbox', 'logmein': 'logmein', 'securepoint': 'securepoint',
         'palo alto networks': 'paloaltonetworks'
     };
 
@@ -3564,8 +3653,21 @@ obj.loadNvdFromAllFiles = function () {
      * @param {object} res - The Express response.
      * @param {object} user - The authenticated user.
      */
+    /**
+     * @brief Authorization rule for every route and the toolbar hook (OWASP A01).
+     * The plugin works server-wide (all devices of all domains, one assessments file), so it is
+     * restricted to full site administrators of the DEFAULT domain (user.domain === ''); in a
+     * multi-domain (multi-tenant) server a sub-domain administrator must not see other tenants'
+     * inventory (v3.0.1). Single-domain servers are unaffected.
+     * @param {object} user - The authenticated MeshCentral user.
+     * @returns {boolean} true when allowed.
+     */
+    obj.isAuthorizedAdmin = function (user) {
+        return (user != null) && (user.siteadmin === 0xFFFFFFFF) && ((user.domain == null) || (user.domain === ''));
+    };
+
     obj.handleAdminReq = function (req, res, user) {
-        if ((user == null) || (user.siteadmin !== 0xFFFFFFFF)) { res.sendStatus(401); return; }
+        if (!obj.isAuthorizedAdmin(user)) { res.sendStatus(401); return; }
         if (req.query.action === 'show') { return obj.showAssessmentPanel(req, res, user); }
         if (req.query.action === 'scan') { return obj.assessmentScan(req, res, user); }
         if (req.query.action === 'show_cpe') { return obj.showCustomCpe(req, res, user); }
@@ -3583,8 +3685,27 @@ obj.loadNvdFromAllFiles = function () {
      * @param {object} res - The Express response.
      * @param {object} user - The authenticated user.
      */
+    /**
+     * @brief Request-origin check for every state-changing POST (OWASP A01 / CWE-352).
+     * MeshCentral authenticates pluginadmin.ashx by session cookie only (no CSRF token);
+     * its default SameSite=lax already keeps the cookie off cross-site POSTs, but that is a
+     * server setting (sessionsamesite) the plugin cannot rely on. Every POST must therefore
+     * carry the custom header <code>X-InvScanner-Request: 1</code>: a cross-site page cannot
+     * add a custom header without a CORS preflight, and MeshCentral never answers one with
+     * Access-Control-Allow-* headers (OWASP "custom request header" defence). Origin/Host are
+     * deliberately NOT compared - reverse proxies that rewrite Host would break the panel.
+     * @param {object} req - The Express request.
+     * @returns {boolean} true when the request may proceed.
+     */
+    obj.isSameOriginRequest = function (req) {
+        var h = (req && req.headers) ? req.headers : {};
+        return String(h['x-invscanner-request'] || '') === '1';
+    };
+
     obj.handleAdminPostReq = function (req, res, user) {
-        if ((user == null) || (user.siteadmin !== 0xFFFFFFFF)) { res.sendStatus(401); return; }
+        if (!obj.isAuthorizedAdmin(user)) { res.sendStatus(401); return; }
+        if (!obj.isSameOriginRequest(req)) { res.sendStatus(403); return; }
+        if ((req.body == null) || (typeof req.body !== 'object')) { res.sendStatus(400); return; }
         if (req.body.action === 'save_assessment') { return obj.saveAssessmentHandler(req, res, user); }
         if (req.body.action === 'flag_false_positive') { return obj.flagFalsePositiveHandler(req, res, user); }
         if (req.body.action === 'unflag_false_positive') { return obj.unflagFalsePositiveHandler(req, res, user); }
@@ -4179,7 +4300,7 @@ obj.loadNvdFromAllFiles = function () {
      */
     obj.assessmentScan = function (req, res, user) {
         var meshParam = String(req.query.mesh || req.query.meshes || '');
-        var meshIds = meshParam.split(',').map(function (s) { return s.trim(); }).filter(function (s) { return s; });
+        var meshIds = parseMeshIds(meshParam).slice(0, 1000); // same validation as every write path
         if (meshIds.length === 0) { res.type('json'); res.json({ error: 'No locations selected.' }); return; }
         obj.scanMultiMeshCves(meshIds, function (err, result) {
             if (err) { res.type('json'); res.json({ error: err.message }); return; }
@@ -4631,6 +4752,9 @@ obj.loadNvdFromAllFiles = function () {
         if ((meshIds.length === 0) || !cveId) {
             res.type('json'); res.json({ error: 'Missing mesh or CVE.' }); return;
         }
+        if (!isFindingId(cveId)) {
+            res.type('json'); res.json({ error: 'Invalid CVE-ID format.' }); return;
+        }
         for (var i = 0; i < meshIds.length; i++) {
             var key = meshIds[i] + ':' + cveId;
             if (obj.assessments[key] && obj.assessments[key].flagged) {
@@ -4735,7 +4859,7 @@ obj.loadNvdFromAllFiles = function () {
                         sysRow('BIOS/UEFI', ident.bios_version || 'Unknown', ident.bios_version || 'Unknown',
                             'Vendor: ' + (ident.bios_vendor || 'N/A') + ', Serial: ' + (ident.bios_serial || 'N/A') + ', Mode: ' + (ident.bios_mode || 'N/A'), '');
                     }
-                    // Motherboard / Platinen
+                    // Motherboard
                     if (ident.board_vendor || ident.board_name) {
                         sysRow('Motherboard', ident.board_name || 'Unknown', ident.board_name || 'Unknown',
                             'Vendor: ' + (ident.board_vendor || 'N/A') + ', Serial: ' + (ident.board_serial || 'N/A') + ', Version: ' + (ident.board_version || 'N/A'), '');
@@ -4820,6 +4944,9 @@ obj.loadNvdFromAllFiles = function () {
     obj.uiCustomEvent = function (command, myparent) {
         if ((command == null) || (myparent == null) || (myparent.send == null)) return;
         if (command.section !== 'devicesbarbuttons') return;
+        // Same gate as every HTTP route (v3.0.1): only full site administrators get CSV data.
+        // myparent is the MeshUser session; its .user is the authenticated account (meshuser.js).
+        if (!obj.isAuthorizedAdmin(myparent.user)) return;
         // The front-end sends selectedDevices on the top level of the uicustomevent
         // command (default.handlebars customUIAction), never under command.src.
         var type = (typeof command.logmsg === 'string') ? command.logmsg : 'hardware';
@@ -4834,7 +4961,15 @@ obj.loadNvdFromAllFiles = function () {
             return;
         }
 
-        var nodeIds = Array.isArray(command.selectedDevices) ? command.selectedDevices : [];
+        // Only well-formed node ids are looked up (the top-level selectedDevices list is NOT
+        // rights-checked by MeshCentral, verified in meshuser.js); capped and de-duplicated.
+        var nodeIds = [];
+        if (Array.isArray(command.selectedDevices)) {
+            for (var si = 0; (si < command.selectedDevices.length) && (nodeIds.length < 5000); si++) {
+                var sid = command.selectedDevices[si];
+                if ((typeof sid === 'string') && /^node\/[^\/:]*\/[^\/:]{1,128}$/.test(sid) && (nodeIds.indexOf(sid) < 0)) { nodeIds.push(sid); }
+            }
+        }
         if (nodeIds.length === 0) return;
 
         // Load the node records for the selected ids.
