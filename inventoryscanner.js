@@ -17,7 +17,7 @@
  * NVD feed is downloaded.
  *
  * @author derStephan
- * @version 2.8.1
+ * @version 3.0.0
  *
  * Transparency: This plugin was created with the assistance of Qwen 3.6 27B and Qwen 3.8 Flash Next.
  * Security audit (2026-11-06) performed by NVIDIA Nemotron 3 550B A55B via opencode.
@@ -100,6 +100,9 @@ module.exports.inventoryscanner = function (parent) {
     obj.remoteCpeEntries = null;
     /** @type {string|null} Timestamp (ISO) of the last successfully applied remote table. */
     obj.cpeTableLoadedAt = null;
+
+    /** @type {string} Where the applied table came from: '' | 'downloaded' | 'cache' | 'bundled'. */
+    obj.cpeTableOrigin = '';
 
     /** @type {number} Timer generation; incremented on every settings save so old chained timers stop themselves. */
     obj.timerGen = 0;
@@ -373,7 +376,7 @@ module.exports.inventoryscanner = function (parent) {
         return out;
     };
 
-    // ---- Plugin settings (UI-managed, overrides config.json — which is never written) ----
+    // ---- Plugin settings (UI-managed, overrides config.json â€” which is never written) ----
 
     /**
      * @brief Load the UI-managed scanner settings from disk into memory.
@@ -597,6 +600,10 @@ module.exports.inventoryscanner = function (parent) {
     obj.wgResults = {};
     /** @type {boolean} true while a batch (scheduled or manual) occupies the queue. */
     obj.wgBatchRunning = false;
+    /** @type {boolean} true while the running batch is a report-only dry run. */
+    obj.wgBatchDry = false;
+    /** @type {object|null} extra script options for the running batch: { mode, onlyId }. */
+    obj.wgBatchOpts = null;
 
     obj.WINGET_MAX_PARALLEL = 2;
     obj.WINGET_RUN_TIMEOUT_MS = 2 * 60 * 60 * 1000;
@@ -642,24 +649,39 @@ module.exports.inventoryscanner = function (parent) {
      * MUST be a single self-contained line - no multi-line blocks.
      * @param {object} wcfg - The winget config section.
      * @param {boolean} [dry] - Dry run: list only, install/pin nothing.
+     * @param {object} [opts] - { onlyId: winget id (already WINGET_ID_RE-validated) to
+     *   touch exactly this package, mode: 'update' (default) | 'uninstall' }.
+     *   Uninstall REQUIRES onlyId, probes existence with a case-insensitive id
+     *   containment check on 'winget list --id <id> --exact' output (no reliance on
+     *   exit-code or message localization) and then 'winget uninstall --id --exact
+     *   --silent', state ok/failed by exit code - the same verified primitives as upgrades.
      * @returns {string} The script text.
      */
-    obj.wgBuildScript = function (wcfg, dry) {
+    obj.wgBuildScript = function (wcfg, dry, opts) {
+        opts = opts || {};
+        var mode = (opts.mode === 'uninstall') ? 'uninstall' : 'update';
+        var onlyId = (typeof opts.onlyId === 'string' && obj.WINGET_ID_RE.test(opts.onlyId)) ? opts.onlyId : '';
+        if (mode === 'uninstall' && onlyId === '') { throw new Error('wgBuildScript: uninstall requires a validated onlyId'); }
         var ids = [];
         for (var i = 0; i < wcfg.ignorePackages.length; i++) {
             var id = wcfg.ignorePackages[i].id;
             if (obj.WINGET_ID_RE.test(id) && (ids.indexOf(id) < 0)) { ids.push(id); }
         }
         var psList = ids.map(function (x) { return "'" + x.replace(/'/g, "''") + "'"; }).join(', ');
-        var pinLines = (!dry && wcfg.pinSync && ids.length > 0) ? [
-            "foreach ($pn in $invIgnore) { try { $null = (& $wg pin add --id $pn --installed --exact --accept-source-agreements --disable-interactivity 2>&1) } catch { } }"
+        var pinLines = (mode === 'update' && onlyId === '' && !dry && wcfg.pinSync && ids.length > 0) ? [
+            "foreach ($pn in $invIgnore) { try { $null = (& $wg pin add --id $pn --installed --exact --accept-source-agreements --disable-interactivity) 2>&1 } catch { } }"
         ] : [];
         var dryGuard = dry
             ? "if ($invDry) { $results += @{ id = $p.id; name = $p.name; from = $p.from; to = $p.to; state = 'dry-run' }; continue };"
             : "";
-        return [
+        var onlyGuard = (mode === 'update' && onlyId !== '')
+            ? "if ($p.id -ine $invOnly) { continue };"
+            : "";
+        var head = [
             "$ProgressPreference = 'SilentlyContinue'",
             "$invDry = " + (dry ? '$true' : '$false'),
+            "$invMode = '" + (mode === 'uninstall' ? 'uninstall' : (dry ? 'scan' : 'update')) + "'",
+            "$invOnly = '" + onlyId.replace(/'/g, "''") + "'",
             "$invTDir = $env:ProgramData",
             "try { $invQ = $PID; for ($invHop = 0; $invHop -lt 4; $invHop++) { $invPP = 0; try { $invPP = (Get-CimInstance Win32_Process -Filter ('ProcessId={0}' -f $invQ) -ErrorAction Stop).ParentProcessId } catch { break }; if (-not $invPP) { break }; $invPX = $null; try { $invPX = (Get-Process -Id $invPP -ErrorAction Stop).Path } catch { break }; if ($invPX -and ((Split-Path $invPX -Leaf) -imatch '^(meshagent|meshcentral)[a-z0-9_-]*\\.exe$')) { $invTDir = Split-Path $invPX; break }; $invQ = $invPP } } catch { }",
             "$invT = Join-Path $invTDir 'invscanner-winget.log'",
@@ -671,15 +693,28 @@ module.exports.inventoryscanner = function (parent) {
             "if (-not $wg) { foreach ($wc in @((Get-Command winget -ErrorAction SilentlyContinue), (Get-ChildItem ($env:ProgramFiles + \"\\WindowsApps\\Microsoft.DesktopAppInstaller_*\\winget.exe\") -ErrorAction SilentlyContinue | Select-Object -First 1))) { if ($wc -ne $null -and $wc.FullName) { $wg = $wc.FullName; break } } }",
             "if ($wg -eq $null) { Write-Output '" + obj.WINGET_MARKER + "{\"winget\":false}'; Stop-Transcript -ErrorAction SilentlyContinue | Out-Null; exit }",
             "$invIgnore = @(" + psList + ")",
-            "$raw = ''",
-            "try { $raw = ((& $wg list --upgrade-available --accept-source-agreements --disable-interactivity) 2>&1) -join [Environment]::NewLine } catch { }",
-            "$rows = @()",
-            "foreach ($line in ($raw -split '[\\r\\n]+')) { if ($line -match '^(.+?)\\s{2,}([A-Za-z0-9._+-]+\\.[A-Za-z0-9._+-]+)\\s{2,}(\\S+)\\s{2,}(\\S+)\\s{2,}(\\S+)\\s*$') { $rows += [pscustomobject]@{ name = $matches[1].Trim(); id = $matches[2]; from = $matches[3]; to = $matches[4] } } }",
-            "$results = @()",
-            "foreach ($p in $rows) { $skip = $false; foreach ($ig in $invIgnore) { if ($p.id -ieq $ig) { $skip = $true; break } }; if ($skip) { $results += @{ id = $p.id; name = $p.name; from = $p.from; to = $p.to; state = 'skipped-ignored' }; continue }; if ($p.to -ieq 'Unknown' -or $p.to -eq $p.from) { $results += @{ id = $p.id; name = $p.name; from = $p.from; to = $p.to; state = 'skipped-noversion' }; continue }; " + dryGuard + " $o = (& $wg upgrade --id $p.id --exact --silent --accept-package-agreements --accept-source-agreements --disable-interactivity) 2>&1; $code = $LASTEXITCODE; $tail = (($o | Select-Object -Last 3) -join ' '); if ($tail -isnot [string]) { $tail = [string]$tail }; if ($tail.Length -gt 400) { $tail = $tail.Substring(0,400) }; $st = 'failed'; if ($code -eq 0) { $st = 'ok' }; $results += @{ id = $p.id; name = $p.name; from = $p.from; to = $p.to; state = $st; exit = $code; log = $tail } }"
-        ].concat(pinLines, [
+            "$results = @()"
+        ];
+        if (mode === 'uninstall') {
+            // existence probe: case-insensitive containment of the id in 'winget list --id X --exact'
+            // output - no exit-code mythology and no reliance on (localizable) message text.
+            head.push(
+                "$invProbe = ''",
+                "try { $invProbe = ((& $wg list --id $invOnly --exact --accept-source-agreements --disable-interactivity) 2>&1) -join ' ' } catch { $invProbe = '' }",
+                "if ($invProbe -inotmatch ([regex]::Escape($invOnly))) { $results += @{ id = $invOnly; name = ''; from = ''; to = ''; state = 'not-installed' } } else { $o = (& $wg uninstall --id $invOnly --exact --silent --accept-package-agreements --accept-source-agreements --disable-interactivity) 2>&1; $code = $LASTEXITCODE; $tail = (($o | Select-Object -Last 3) -join ' '); if ($tail -isnot [string]) { $tail = [string]$tail }; if ($tail.Length -gt 400) { $tail = $tail.Substring(0,400) }; $st = 'failed'; if ($code -eq 0) { $st = 'ok' }; $results += @{ id = $invOnly; name = ''; from = ''; to = ''; state = $st; exit = $code; log = $tail } }"
+            );
+        } else {
+            head.push(
+                "$raw = ''",
+                "try { $raw = ((& $wg list --upgrade-available --accept-source-agreements --disable-interactivity) 2>&1) -join [Environment]::NewLine } catch { }",
+                "$rows = @()",
+                "foreach ($line in ($raw -split '[\\r\\n]+')) { if ($line -match '^(.+?)\\s{2,}([A-Za-z0-9._+-]+\\.[A-Za-z0-9._+-]+)\\s{2,}(\\S+)\\s{2,}(\\S+)\\s{2,}(\\S+)\\s*$') { $rows += [pscustomobject]@{ name = $matches[1].Trim(); id = $matches[2]; from = $matches[3]; to = $matches[4] } } }",
+                "foreach ($p in $rows) { " + onlyGuard + "$skip = $false; foreach ($ig in $invIgnore) { if ($p.id -ieq $ig) { $skip = $true; break } }; if ($skip) { $results += @{ id = $p.id; name = $p.name; from = $p.from; to = $p.to; state = 'skipped-ignored' }; continue }; if ($p.to -ieq 'Unknown' -or $p.to -eq $p.from) { $results += @{ id = $p.id; name = $p.name; from = $p.from; to = $p.to; state = 'skipped-noversion' }; continue }; " + dryGuard + " $o = (& $wg upgrade --id $p.id --exact --silent --accept-package-agreements --accept-source-agreements --disable-interactivity) 2>&1; $code = $LASTEXITCODE; $tail = (($o | Select-Object -Last 3) -join ' '); if ($tail -isnot [string]) { $tail = [string]$tail }; if ($tail.Length -gt 400) { $tail = $tail.Substring(0,400) }; $st = 'failed'; if ($code -eq 0) { $st = 'ok' }; $results += @{ id = $p.id; name = $p.name; from = $p.from; to = $p.to; state = $st; exit = $code; log = $tail } }"
+            );
+        }
+        return head.concat(pinLines, [
             "if ($null -eq $results) { $results = @() }",
-            "@{ winget = $true; dry = $invDry; results = @($results) } | ConvertTo-Json -Compress -Depth 5 | ForEach-Object { Write-Output ('" + obj.WINGET_MARKER + "' + $_) }",
+            "@{ winget = $true; dry = $invDry; mode = $invMode; results = @($results) } | ConvertTo-Json -Compress -Depth 5 | ForEach-Object { Write-Output ('" + obj.WINGET_MARKER + "' + $_) }",
             "Stop-Transcript -ErrorAction SilentlyContinue | Out-Null"
         ]).join(String.fromCharCode(10));
     };
@@ -793,18 +828,20 @@ module.exports.inventoryscanner = function (parent) {
      * @param {boolean} [dry] - report only: nothing is installed or pinned.
      * @returns {object} { started, nodes, busy? }
      */
-    obj.wgStartBatch = function (reason, done, nodeids, dry) {
+    obj.wgStartBatch = function (reason, done, nodeids, dry, opts) {
         if (obj.wgBatchRunning) { return { started: false, busy: true, nodes: 0 }; }
         var wcfg = obj.wingetConfig();
         var launch = function (ids) {
+            var what = (dry === true) ? 'DRY-RUN' : ((opts != null && opts.mode === 'uninstall') ? 'uninstall batch' : 'update batch');
             if (ids.length === 0) {
-                obj.wgLog('update batch (' + reason + ') - no target devices');
+                obj.wgLog(what + ' (' + reason + ') - no target devices');
                 if (done) done();
                 return;
             }
             obj.wgBatchRunning = true;
             obj.wgBatchDry = dry === true;
-            obj.wgLog((dry === true ? 'DRY-RUN' : 'update batch') + ' (' + reason + ') starting for ' + ids.length + ' device(s)');
+            obj.wgBatchOpts = opts || null;
+            obj.wgLog(what + ' (' + reason + ') starting for ' + ids.length + ' device(s)');
             obj.wgQueue = ids.slice();
             obj.wgBatchDone = done || null;
             obj.wgPump();
@@ -849,7 +886,7 @@ module.exports.inventoryscanner = function (parent) {
                 obj.wgPending[nodeid] = entry;
                 obj.wgActive++;
                 try {
-                    agent.send(JSON.stringify({ action: 'runcommands', type: 1, cmds: obj.wgTransport(obj.wgBuildScript(obj.wingetConfig(), obj.wgBatchDry === true)), runAsUser: 0, reply: true, sessionid: sid, responseid: sid }));
+                    agent.send(JSON.stringify({ action: 'runcommands', type: 1, cmds: obj.wgTransport(obj.wgBuildScript(obj.wingetConfig(), obj.wgBatchDry === true, obj.wgBatchOpts)), runAsUser: 0, reply: true, sessionid: sid, responseid: sid }));
                     obj.wgLog(nodeid + ' - update script sent (client transcript: invscanner-winget.log next to meshagent.exe or in C:\\ProgramData)');
                 } catch (ex) {
                     clearTimeout(entry.timer); delete obj.wgPending[nodeid]; obj.wgActive--;
@@ -859,8 +896,8 @@ module.exports.inventoryscanner = function (parent) {
             }
             if ((obj.wgActive === 0) && (obj.wgQueue.length === 0) && obj.wgBatchRunning) {
                 obj.wgBatchRunning = false;
-        obj.wgBatchDry = false;
-            obj.wgBatchDry = false;
+                obj.wgBatchDry = false;
+                obj.wgBatchOpts = null;
                 obj.wgSaveResults();
                 obj.wgLog('update batch finished');
                 var d = obj.wgBatchDone; obj.wgBatchDone = null;
@@ -917,7 +954,7 @@ module.exports.inventoryscanner = function (parent) {
         delete obj.wgPending[nodeid];
         obj.wgActive--;
         var text = (typeof command.result === 'string') ? command.result : JSON.stringify(command.result || '');
-        var rec = { time: new Date().toISOString(), winget: false, dry: obj.wgBatchDry === true, results: [] };
+        var rec = { time: new Date().toISOString(), winget: false, dry: obj.wgBatchDry === true, mode: (obj.wgBatchOpts && obj.wgBatchOpts.mode) || '', results: [] };
         var data = obj.wgPayloadFromText(text);
         var hadMarker = (text.indexOf(obj.WINGET_MARKER) >= 0);
         if ((data == null) && (typeof entry.cbuf === 'string') && (entry.cbuf !== '')) { data = obj.wgPayloadFromText(entry.cbuf); hadMarker = hadMarker || (entry.cbuf.indexOf(obj.WINGET_MARKER) >= 0); } // answer line was chunk-split on the console channel
@@ -933,13 +970,13 @@ module.exports.inventoryscanner = function (parent) {
         var okN = 0, skipN = 0, failN = 0, wouldN = 0;
         for (var i = 0; i < rec.results.length; i++) {
             var s = rec.results[i].state;
-            if (s === 'ok') okN++; else if (s === 'dry-run') wouldN++; else if (s.indexOf('skipped') === 0) skipN++; else failN++;
+            if (s === 'ok') okN++; else if (s === 'dry-run') wouldN++; else if (s.indexOf('skipped') === 0 || s === 'not-installed') skipN++; else failN++;
         }
-        obj.wgLog(nodeid + ' - ' + (rec.dry ? '[dry-run] ' : '') + (rec.error || (rec.winget ? (rec.dry ? ('would update ' + wouldN + ', ' + skipN + ' skipped, ' + failN + ' failed') : ('done: ' + okN + ' updated, ' + skipN + ' skipped, ' + failN + ' failed')) : 'winget not available')));
+        obj.wgLog(nodeid + ' - ' + (rec.dry ? '[dry-run] ' : '') + (rec.error || (rec.winget ? (rec.dry ? ('would update ' + wouldN + ', ' + skipN + ' skipped, ' + failN + ' failed') : (rec.mode === 'uninstall' ? ('done: ' + okN + ' uninstalled, ' + skipN + ' skipped/not-installed, ' + failN + ' failed') : ('done: ' + okN + ' updated, ' + skipN + ' skipped, ' + failN + ' failed'))) : 'winget not available')));
         // Per-package detail lines so failures never require opening the client transcript:
         // one FAILED line with exit code + winget's own (system) message per failed package,
         // and a WARNING when the client upgraded a package that was on the ignore list.
-        var evMsg = 'Winget updater: ' + (rec.error || (rec.winget === false ? 'winget is not available on this device' : (rec.dry ? ('dry run - ' + wouldN + ' package(s) would be updated') : (okN + ' package(s) updated, ' + failN + ' failed'))));
+        var evMsg = 'Winget updater: ' + (rec.error || (rec.winget === false ? 'winget is not available on this device' : (rec.dry ? ('dry run - ' + wouldN + ' package(s) would be updated') : (rec.mode === 'uninstall' ? (okN + ' package(s) uninstalled, ' + failN + ' failed') : (okN + ' package(s) updated, ' + failN + ' failed')))));
         if (rec.error == null) {
             var ignIds = [];
             try { var igl = obj.wingetConfig().ignorePackages; for (var zi = 0; zi < igl.length; zi++) { ignIds.push({ raw: String(igl[zi].id), lc: String(igl[zi].id).toLowerCase() }); } } catch (e) { }
@@ -949,7 +986,7 @@ module.exports.inventoryscanner = function (parent) {
                 if (fr.state === 'failed') {
                     failIds.push(fr.id);
                     obj.wgLog(nodeid + ' - FAILED ' + fr.id + ' [' + fr.from + ' -> ' + fr.to + '] exit ' + (fr.exit == null ? '?' : (fr.exit + ' (0x' + obj.wgExitHex(fr.exit) + ')')) + ': ' + String(fr.log || '').replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim());
-                } else if (fr.state === 'ok' && rec.dry !== true) {
+                } else if (fr.state === 'ok' && rec.dry !== true && rec.mode !== 'uninstall') {
                     // An upgraded package that the ignore list should have covered is never silent:
                     // exact hits mean the script ran without the current list, near misses mean the
                     // stored id does not equal the id winget reports on this device.
@@ -1275,7 +1312,12 @@ module.exports.inventoryscanner = function (parent) {
 
     /**
      * @brief POST wg_run: manual batch; optional nodeIds (one or several
-     *   devices, bypasses scope filters) and dry=true (report only).
+     *   devices, bypasses scope filters), dry=true (report only) and the
+     *   per-package mode: pkgId (exact winget id, validated) limits the batch
+     *   to that ONE package across all targeted devices, mode 'update'
+     *   (default) upgrades it everywhere, 'uninstall' removes it everywhere
+     *   (devices without the package report 'not-installed'). Uninstall never
+     *   runs dry and always requires pkgId.
      */
     obj.wgRunHandler = function (req, res, user) {
         var send = function (o) { res.type('json'); res.json(o); };
@@ -1294,8 +1336,65 @@ module.exports.inventoryscanner = function (parent) {
             if (ids.length === 0) { return send({ error: 'Invalid nodeIds.' }); }
         }
         var dry = (body.dry === 'true' || body.dry === true);
-        var r = obj.wgStartBatch(dry ? 'dry-run' : 'manual', null, ids, dry);
-        send({ started: !!r.started, busy: !!r.busy, dry: dry, devices: ids == null ? -1 : ids.length });
+        var pkgId = (typeof body.pkgId === 'string') ? body.pkgId.trim() : '';
+        var mode = (body.mode === 'uninstall') ? 'uninstall' : (body.mode === 'update' ? 'update' : '');
+        if (pkgId !== '' && !obj.WINGET_ID_RE.test(pkgId)) { return send({ error: 'Invalid package id.' }); }
+        if (mode === 'uninstall') {
+            if (pkgId === '') { return send({ error: 'Uninstall needs an exact package id.' }); }
+            if (dry) { return send({ error: 'Uninstall does not support dry runs.' }); }
+        }
+        var opts = (pkgId !== '' || mode !== '') ? { onlyId: (pkgId !== '' ? pkgId : null), mode: (mode !== '' ? mode : 'update') } : null;
+        if (opts != null && opts.onlyId == null) delete opts.onlyId;
+        var reason = (mode === 'uninstall') ? 'pkg-uninstall' : (pkgId !== '' ? 'pkg-update' : (dry ? 'dry-run' : 'manual'));
+        var r = obj.wgStartBatch(reason, null, ids, dry, opts);
+        send({ started: !!r.started, busy: !!r.busy, dry: dry, pkgId: pkgId, mode: (mode !== '' ? mode : 'update'), devices: ids == null ? -1 : ids.length });
+    };
+
+    /**
+     * @brief POST wg_programs: the per-program view across all devices.
+     * Aggregates the stored per-device run results (last run per device, dry
+     * or real) into one row per winget package id: which devices carry it,
+     * from which version to which, and which state the last run produced -
+     * the base for "update/uninstall this program on every device at once".
+     * Stale device ids (deleted nodes) are dropped.
+     */
+    obj.wgProgramsHandler = function (req, res, user) {
+        var send = function (o) { res.type('json'); res.json(o); };
+        obj.db.GetAllType('node', function (nerr, nodes) {
+            var labels = {};
+            if (!nerr && nodes) {
+                for (var i = 0; i < nodes.length; i++) {
+                    var n = nodes[i];
+                    if ((n == null) || (n._id == null) || (n.deleted != null)) continue;
+                    labels[n._id] = ((typeof n.name === 'string' && n.name.trim() !== '') ? n.name.trim() : '') || obj.getHostName(n) || n._id;
+                }
+            }
+            var byId = {}, order = [];
+            var nodeids = Object.keys(obj.wgResults);
+            for (var k = 0; k < nodeids.length; k++) {
+                var rec = obj.wgResults[nodeids[k]];
+                if ((rec == null) || (labels[nodeids[k]] == null)) continue; // deleted/unknown device
+                var rl = Array.isArray(rec.results) ? rec.results : [];
+                for (var ri = 0; ri < rl.length; ri++) {
+                    var r2 = rl[ri];
+                    if ((r2 == null) || (typeof r2.id !== 'string') || r2.id === '') continue;
+                    var p = byId[r2.id];
+                    if (p == null) { p = byId[r2.id] = { id: r2.id, name: '', devices: [], ready: 0, ok: 0, failed: 0, skipped: 0 }; order.push(r2.id); }
+                    if ((p.name === '') && (typeof r2.name === 'string')) { p.name = r2.name; }
+                    var st = String(r2.state || '');
+                    if (st === 'dry-run') p.ready++;
+                    else if (st === 'ok') p.ok++;
+                    else if (st === 'failed') p.failed++;
+                    else p.skipped++;
+                    p.devices.push({ node: nodeids[k], label: labels[nodeids[k]], state: st || 'unknown', from: String(r2.from || '').substring(0, 60), to: String(r2.to || '').substring(0, 60), time: rec.time || '', dry: rec.dry === true });
+                }
+            }
+            var pkgs = order.map(function (x) { return byId[x]; });
+            pkgs.sort(function (a, b) { return (b.ready + b.failed) - (a.ready + a.failed) || String(a.id).localeCompare(String(b.id)); });
+            if (pkgs.length > 400) pkgs = pkgs.slice(0, 400);
+            for (var pi = 0; pi < pkgs.length; pi++) { if (pkgs[pi].devices.length > 200) pkgs[pi].devices = pkgs[pi].devices.slice(0, 200); }
+            send({ packages: pkgs, note: (pkgs.length === 0) ? 'No stored run results yet - start a dry run to populate this table.' : '' });
+        });
     };
 
     /**
@@ -1335,7 +1434,7 @@ module.exports.inventoryscanner = function (parent) {
                                 // nobody should need the client transcript to find out what failed.
                                 if (s === 'ok') okN++;
                                 else if (s === 'dry-run') wdN++;
-                                else if (s.indexOf('skipped') === 0) skN++; else faN++;
+                                else if (s.indexOf('skipped') === 0 || s === 'not-installed') skN++; else faN++;
                                 if (rl[ri] != null && pkgRows.length < 200) {
                                     pkgRows.push({ id: String(rl[ri].id || '').substring(0, 128), name: String(rl[ri].name || '').substring(0, 200), from: String(rl[ri].from || '').substring(0, 60), to: String(rl[ri].to || '').substring(0, 60), state: s || 'unknown', exit: (typeof rl[ri].exit === 'number') ? rl[ri].exit : null, log: String(rl[ri].log || '').substring(0, 500) });
                                 }
@@ -2660,25 +2759,18 @@ obj.loadNvdFromAllFiles = function () {
         { match: /sumatrapdf/i, vendor: 'sumrapdf', product: 'sumatrapdf' },
         // VPN / Remote
         { match: /securepoint (ssl vpn|vpn client)/i, vendor: 'securepoint', product: 'securepoint' },
-        { match: /pcvisit remotehost/i, vendor: 'pcvisit', product: 'pcvisit' },
-        // Microsoft runtimes (all vendor/product pairs verified against the live NVD API 2026-11-10;
-        // 'visual_c\+\+' is the exact token the feed criteria carry - the parser does not unescape)
-        { match: /asp\.net core/i, vendor: 'microsoft', product: 'asp.net_core' },
-        { match: /\.net framework/i, vendor: 'microsoft', product: '.net_framework' },
-        { match: /microsoft \.net core/i, vendor: 'microsoft', product: '.net_core' },
-        { match: /microsoft \.net (runtime|host|app host)/i, vendor: 'microsoft', product: '.net' },
-        { match: /windows desktop runtime/i, vendor: 'microsoft', product: '.net' },
-        { match: /microsoft visual c\+\+/i, vendor: 'microsoft', product: 'visual_c\\+\\+' },
-        // Dell client tooling + the Linux docker suite
-        { match: /^dell supportassist/i, vendor: 'dell', product: 'supportassist' },
-        { match: /dell command \|? ?update/i, vendor: 'dell', product: 'command_update' },
-        { match: /^docker(\.io|-ce|-cli|-buildx-plugin|-compose-plugin)/i, vendor: 'docker', product: 'docker' }
+        { match: /pcvisit remotehost/i, vendor: 'pcvisit', product: 'pcvisit' }
+        // NOTE (v3.0.0): additions belong in cpe-table.json (the shipped + fetched table) -
+        // do NOT mirror them here; this array is only the offline seed of last resort.
     ];
 
     /**
-     * @brief Validate and apply a remote CPE table JSON payload (string or object).
+     * @brief Validate and apply a CPE table JSON payload (string or object).
      * Entry regexes compile with the i flag only (same semantics as the built-in table);
-     * invalid entries are skipped, not fatal. Accepts { entries:[{match,vendor,product}] }.
+     * invalid entries are skipped, not fatal. Two entry shapes are accepted:
+     * <code>{match, vendor, product}</code> (maps to a NVD CPE) or
+     * <code>{match, kind}</code> with kind "driver"/"firmware" (declares the matched
+     * software out-of-NVD-scope - it is reported as such and excluded from coverage).
      * @param {string|object} payload - Raw JSON text or parsed object.
      * @returns {object} { ok: boolean, applied: number, skipped: number, error?: string }
      */
@@ -2690,8 +2782,14 @@ obj.loadNvdFromAllFiles = function () {
         var applied = 0, skipped = 0, out = [];
         for (var i = 0; i < data.entries.length; i++) {
             var en = data.entries[i];
-            if (!en || (typeof en.match !== 'string') || (typeof en.vendor !== 'string') || (typeof en.product !== 'string') ||
-                (en.match.length === 0) || (en.match.length > 500) || (en.vendor.length > 200) || (en.product.length > 200)) { skipped++; continue; }
+            if (!en || (typeof en.match !== 'string') || (en.match.length === 0) || (en.match.length > 500)) { skipped++; continue; }
+            var isKind = (en.kind === 'driver' || en.kind === 'firmware');
+            if (isKind) {
+                try { out.push({ match: new RegExp(en.match, 'i'), kind: en.kind }); applied++; } catch (ex) { skipped++; }
+                continue;
+            }
+            if ((typeof en.vendor !== 'string') || (typeof en.product !== 'string') ||
+                (en.vendor.length === 0) || (en.vendor.length > 200) || (en.product.length > 200)) { skipped++; continue; }
             try { out.push({ match: new RegExp(en.match, 'i'), vendor: en.vendor.toLowerCase(), product: en.product.toLowerCase() }); applied++; }
             catch (ex) { skipped++; }
         }
@@ -2701,17 +2799,29 @@ obj.loadNvdFromAllFiles = function () {
         return { ok: true, applied: applied, skipped: skipped };
     };
 
-    /** @brief Load the cached remote CPE table from disk (silent; absence just keeps the built-in table). */
+    /**
+     * @brief Load the CPE mapping table from disk (silent).
+     * Priority: the downloaded cache under the datapath, then the copy shipped
+     * INSIDE the plugin folder (the installer unpacks the repository
+     * cpe-table.json beside inventoryscanner.js) - so the maintained table is
+     * live even on a first start without network and contributions never need
+     * a code change; SOFTWARE_CPE_TABLE stays as the last-resort seed only.
+     */
     obj.loadRemoteCpeTable = function () {
-        try {
-            if (fs.existsSync(obj.cpeTablePath)) {
-                var r = obj.applyCpeTableText(fs.readFileSync(obj.cpeTablePath, 'utf8'));
+        var tryFiles = [obj.cpeTablePath, path.join(__dirname, 'cpe-table.json')];
+        for (var f = 0; f < tryFiles.length; f++) {
+            try {
+                if (!fs.existsSync(tryFiles[f])) continue;
+                var r = obj.applyCpeTableText(fs.readFileSync(tryFiles[f], 'utf8'));
                 if (r.ok) {
-                    try { obj.cpeTableLoadedAt = new Date(fs.statSync(obj.cpeTablePath).mtimeMs).toISOString(); } catch (ex) { }
-                    obj.debug('plugin:inventory_scanner', 'Loaded remote CPE table:', r.applied, 'entries');
-                } else { obj.debug('plugin:inventory_scanner', 'Cached CPE table invalid, using built-in:', r.error); }
-            }
-        } catch (ex) { obj.debug('plugin:inventory_scanner', 'CPE table cache read failed:', ex.message); }
+                    obj.cpeTableOrigin = (f === 0 ? 'cache' : 'bundled');
+                    try { obj.cpeTableLoadedAt = new Date(fs.statSync(tryFiles[f]).mtimeMs).toISOString(); } catch (ex) { }
+                    obj.debug('plugin:inventory_scanner', 'Loaded CPE table from', (f === 0 ? 'cache' : 'plugin folder:'), r.applied, 'entries');
+                    return;
+                }
+                obj.debug('plugin:inventory_scanner', 'CPE table invalid in', (f === 0 ? 'cache' : 'plugin folder'), '-', r.error);
+            } catch (ex) { obj.debug('plugin:inventory_scanner', 'CPE table read failed:', ex.message); }
+        }
     };
 
     /**
@@ -2726,6 +2836,7 @@ obj.loadNvdFromAllFiles = function () {
             if (err) { if (callback) callback(err); return; }
             var r = obj.applyCpeTableText(text);
             if (!r.ok) { if (callback) callback(new Error('CPE table rejected: ' + r.error)); return; }
+            obj.cpeTableOrigin = 'downloaded';
             try {
                 fs.mkdirSync(path.dirname(obj.cpeTablePath), { recursive: true });
                 fs.writeFileSync(obj.cpeTablePath, text);
@@ -2786,6 +2897,7 @@ obj.loadNvdFromAllFiles = function () {
         var scfg = obj.scannerConfig();
         return {
             source: (obj.remoteCpeEntries != null) ? 'remote' : 'builtin',
+            origin: (obj.remoteCpeEntries != null) ? (obj.cpeTableOrigin || 'cache') : '',
             updated: obj.cpeTableLoadedAt || '',
             url: scfg.cpeTableUrl,
             enabled: scfg.cpeTableEnabled,
@@ -2793,14 +2905,15 @@ obj.loadNvdFromAllFiles = function () {
         };
     };
     /**
-     * @brief Map a display name to a known CPE vendor/product via the curated table.
+     * @brief First table hit for a display name (custom entries win, then the active
+     * curated table, first match). Returns { vendor, product } for a CPE mapping row
+     * or { kind } for a driver/firmware exclusion row - the FIRST hit is final, so an
+     * exclusion placed before a broader CPE row suppresses it on purpose.
      * @param {string} name - The software display name.
-     * @returns {object|null} <code>{ vendor, product }</code>, or null.
+     * @returns {object|null} { vendor, product } | { kind } | null.
      */
-    obj.matchKnownProduct = function (name) {
+    obj.matchTableEntry = function (name) {
         if (!name) return null;
-        // User-customized entries take precedence so an admin can extend or override
-        // the built-in table without editing the plugin source.
         var custom = obj.compiledCustomCpe();
         for (var c = 0; c < custom.length; c++) {
             if (custom[c].match.test(name)) { return { vendor: custom[c].vendor, product: custom[c].product }; }
@@ -2808,25 +2921,74 @@ obj.loadNvdFromAllFiles = function () {
         var table = obj.activeSoftwareTable();
         for (var i = 0; i < table.length; i++) {
             var e = table[i];
-            if (e.match.test(name)) { return { vendor: e.vendor, product: e.product }; }
+            if (e.match.test(name)) { return (e.kind != null) ? { kind: e.kind } : { vendor: e.vendor, product: e.product }; }
         }
         return null;
     };
 
     /**
+     * @brief Map a display name to a known CPE vendor/product via the curated table
+     * (kind/exclusion hits deliberately return null - use obj.matchTableEntry/classifySoftware).
+     * @param {string} name - The software display name.
+     * @returns {object|null} <code>{ vendor, product }</code>, or null.
+     */
+    obj.matchKnownProduct = function (name) {
+        var ent = obj.matchTableEntry(name);
+        if (ent == null || ent.kind != null) return null;
+        return { vendor: ent.vendor, product: ent.product };
+    };
+
+    /** @brief Conservative name rule for clearly driver/firmware software - only consulted
+     *  AFTER curated+auto matching proved there is no CPE for the row, and never for
+     *  driver TOOLs (booster/wizard/... are applications about drivers, not drivers). */
+    obj.DRIVERTOOL_RE = /\b(booster|commander|genius|hub|wizard|assistant|studio|sdk|installer|pack(age)?s?)\b/i;
+    obj.guessDriverFirmware = function (name) {
+        var n = String(name || '');
+        if (n === '' || obj.DRIVERTOOL_RE.test(n)) return null;
+        if (/\b(firmware|bios|uefi)\b/i.test(n)) return 'firmware';
+        if (/\b(drivers?|treiber)\b/i.test(n)) return 'driver';
+        return null;
+    };
+
+    /**
+     * @brief Full classification of one installed-software row.
+     * Order: table hit (CPE or explicit kind exclusion) -> automatic evidence matcher ->
+     * conservative driver/firmware name guess (only when nothing else matched).
+     * @param {string} name - Display name.
+     * @param {string} publisher - Publisher.
+     * @returns {object} {} | { search: {vendor,product,...} } | { kind: 'driver'|'firmware' }.
+     */
+    obj.classifySoftware = function (name, publisher) {
+        var ent = obj.matchTableEntry(name);
+        if (ent != null) {
+            if (ent.kind != null) return { kind: ent.kind };
+            return { search: { vendor: ent.vendor, product: ent.product, viaCurated: true } };
+        }
+        try {
+            if (obj.scannerConfig().autoProductMatch !== false) {
+                var auto = obj.autoMatchProductTokens(publisher, name);
+                if (auto != null) return { search: auto };
+            }
+        } catch (ex) { }
+        var g = obj.guessDriverFirmware(name);
+        if (g != null) return { kind: g };
+        return {};
+    };
+
+    /**
      * @brief Map a software display name + publisher to a CPE { vendor, product } target.
-     * Matching order (most to least precise): custom entries, curated table, then the
-     * automatic evidence matcher below - the latter can be switched off with the
-     * vulnerabilityScanner setting autoProductMatch (default: on). Results are tagged
-     * viaCurated / viaAuto for transparency.
+     * Matching order (most to least precise): custom entries, curated table (CPE rows),
+     * then the automatic evidence matcher - the latter can be switched off with the
+     * vulnerabilityScanner setting autoProductMatch (default: on). A table KIND hit is an
+     * explicit exclusion and yields null here (classifySoftware reports the kind).
      * @param {string} publisher - The software publisher (vendor evidence).
      * @param {string} name - The software display name (product evidence).
      * @returns {object|null} <code>{ vendor, product, viaCurated|viaAuto }</code> or null.
      */
     obj.deriveCpeProduct = function (publisher, name) {
         if (!name) return null;
-        var known = obj.matchKnownProduct(name);
-        if (known) { return { vendor: known.vendor, product: known.product, viaCurated: true }; }
+        var ent = obj.matchTableEntry(name);
+        if (ent != null) { return (ent.kind != null) ? null : { vendor: ent.vendor, product: ent.product, viaCurated: true }; }
         try {
             if (obj.scannerConfig().autoProductMatch !== false) {
                 var auto = obj.autoMatchProductTokens(publisher, name);
@@ -2987,7 +3149,10 @@ obj.loadNvdFromAllFiles = function () {
             // known (curated table or publisher), the CVE search is exact (vendor+product)
             // and cannot produce cross-vendor false positives. Only for product-only
             // matches (no vendor derivable) do we fall back to a search across all vendors.
-            var searchResult = obj.deriveCpeProduct(publisher, name);
+            // classifySoftware additionally honours table kind rows and reports clearly
+            // driver/firmware software as such (out of NVD application scope, see report).
+            var classHit = obj.classifySoftware(name, publisher);
+            var searchResult = classHit.search;
 
             if (searchResult) {
                 var cves = [];
@@ -3023,6 +3188,18 @@ obj.loadNvdFromAllFiles = function () {
                     isCve: false,
                     cve: '', severity: '', cvss: '',
                     description: 'CPE product "' + searchResult.vendor + '/' + searchResult.product + '" exists, but no matching CVE was found in the NVD list.' + (version === '' ? ' The installed version is unknown, so version-bounded CVEs were not asserted - only all-version entries were checked.' : ''),
+                    software: name, version: version,
+                    published: '', references: []
+                });
+            } else if (classHit.kind != null) {
+                // Honest third category: drivers/firmware are patched via vendor tools and Windows
+                // Update; the NVD application (part "a") data this scanner uses does not cover them.
+                deviceVulns.push({
+                    status: classHit.kind, outOfScope: true, isCve: false,
+                    cve: '', severity: '', cvss: '',
+                    description: (classHit.kind === 'driver'
+                        ? 'Windows drivers are not covered by the NVD CVE application data - they are patched via the hardware vendor and Windows Update.'
+                        : 'Firmware/BIOS is not covered by the NVD CVE application data this scan evaluates - updates come from the hardware vendor.'),
                     software: name, version: version,
                     published: '', references: []
                 });
@@ -3422,6 +3599,7 @@ obj.loadNvdFromAllFiles = function () {
         if (req.body.action === 'wg_save_config') { return obj.wgSaveConfigHandler(req, res, user); }
         if (req.body.action === 'wg_run') { return obj.wgRunHandler(req, res, user); }
         if (req.body.action === 'wg_status') { return obj.wgStatusHandler(req, res, user); }
+        if (req.body.action === 'wg_programs') { return obj.wgProgramsHandler(req, res, user); }
         if (req.body.action === 'delete_cpe_table') { return obj.deleteCpeTableHandler(req, res, user); }
         if (req.body.action === 'get_settings') { return obj.getSettingsHandler(req, res, user); }
         if (req.body.action === 'save_settings') { return obj.saveSettingsHandler(req, res, user); }
@@ -3543,7 +3721,7 @@ obj.loadNvdFromAllFiles = function () {
         var tblSource = (obj.remoteCpeEntries != null) ? 'remote' : 'built-in';
         for (var i = 0; i < table.length; i++) {
             var e = table[i];
-            entries.push({ match: e.match.source, vendor: e.vendor, product: e.product, source: tblSource });
+            entries.push({ match: e.match.source, vendor: (e.kind != null) ? '-' : e.vendor, product: (e.kind != null) ? ('excluded: ' + e.kind) : e.product, source: tblSource });
         }
         // Custom entries
         for (var i = 0; i < obj.customCpeEntries.length; i++) {
@@ -4049,6 +4227,8 @@ obj.loadNvdFromAllFiles = function () {
                 totalPrograms: 0,
                 assessablePrograms: 0,
                 notAssessablePrograms: 0,
+                outOfScopePrograms: 0,
+                coverageBase: 0,
                 coveragePercent: 0,
                 totalCves: 0,
                 falsePositiveCves: 0,
@@ -4073,6 +4253,8 @@ obj.loadNvdFromAllFiles = function () {
                         totalPrograms: 0,
                         assessablePrograms: 0,
                         notAssessablePrograms: 0,
+                        outOfScopePrograms: 0,
+                        coverageBase: 0,
                         coveragePercent: 0,
                         totalCves: 0,
                         falsePositiveCves: 0,
@@ -4116,24 +4298,32 @@ obj.loadNvdFromAllFiles = function () {
                         var wu = obj.getWindowsUpdates(node);
                         if (wu && wu.count > 0) { deviceVulns.push(obj.windowsUpdatesFinding(wu.count)); }
 
-                        // CPE coverage: classify every installed program by its scan status row
-                        // (verified CPE mapping -> assessable, OEM/unknown -> not assessable), so
-                        // the report can state its blind spot instead of looking "clean".
+                        // CPE coverage: classify every installed program by its scan status row.
+                        // assessable = a verified CPE mapping was checked against the NVD;
+                        // notAssessable = a real program with no proven CPE (the honest blind spot);
+                        // outOfScope = driver/firmware - not a program the NVD application data can
+                        // ever cover, so it is reported separately and EXCLUDED from the coverage
+                        // denominator instead of dragging it down.
                         var progSeen = {};
-                        var devOK = 0, devNA = 0;
+                        var devOK = 0, devNA = 0, devX = 0;
                         for (var sk = 0; sk < softwareVulns.length; sk++) {
                             var sv = softwareVulns[sk];
                             var skey = (sv.software || '') + '@@' + (sv.version || '');
                             if (progSeen[skey]) continue;
                             progSeen[skey] = 1;
-                            if (sv.status === 'not assessable') { devNA++; } else { devOK++; }
+                            if (sv.outOfScope) { devX++; }
+                            else if (sv.status === 'not assessable') { devNA++; }
+                            else { devOK++; }
                         }
                         deviceRec.programsAssessable = devOK;
                         deviceRec.programsNotAssessable = devNA;
+                        deviceRec.programsOutOfScope = devX;
                         loc.assessablePrograms += devOK;
                         loc.notAssessablePrograms += devNA;
+                        loc.outOfScopePrograms += devX;
                         report.assessablePrograms += devOK;
                         report.notAssessablePrograms += devNA;
+                        report.outOfScopePrograms += devX;
 
                         // Deduplicate CVEs per device.
                         var seen = {};
@@ -4217,14 +4407,18 @@ obj.loadNvdFromAllFiles = function () {
                                 L.findings = fl;
                                 delete L.findingsById;
                                 L.devices.sort(function (a, b) { return String(a.hostName).localeCompare(String(b.hostName)); });
-                                L.coveragePercent = L.totalPrograms > 0 ? Math.round((L.assessablePrograms / L.totalPrograms) * 100) : 0;
+                                var lDenom = L.assessablePrograms + L.notAssessablePrograms; // drivers/firmware excluded
+                                L.coverageBase = lDenom;
+                                L.coveragePercent = lDenom > 0 ? Math.round((L.assessablePrograms / lDenom) * 100) : 0;
                                 report.locations.push(L);
                             }
                             report.locations.sort(function (a, b) { return String(a.name).localeCompare(String(b.name)); });
                             report.locationCount = report.locations.length;
                             report.devices.sort(function (a, b) { return (b.cveCount - a.cveCount) || String(a.hostName).localeCompare(String(b.hostName)); });
                             report.uniqueCves = Object.keys(report.uniqueCveIds).length;
-                            report.coveragePercent = report.totalPrograms > 0 ? Math.round((report.assessablePrograms / report.totalPrograms) * 100) : 0;
+                            var rDenom = report.assessablePrograms + report.notAssessablePrograms; // drivers/firmware excluded
+                            report.coverageBase = rDenom;
+                            report.coveragePercent = rDenom > 0 ? Math.round((report.assessablePrograms / rDenom) * 100) : 0;
                             if (callback) callback(null, report);
                         }
                     });
@@ -4593,6 +4787,7 @@ obj.loadNvdFromAllFiles = function () {
                         for (var m = 0; m < deviceVulns.length; m++) {
                             var v = deviceVulns[m];
                             var status = v.status || ((v.isCve || v.cve) ? 'CVE' : '');
+                            if (v.outOfScope === true) { status = (status === 'firmware' ? 'firmware is not covered by CVE data' : 'drivers are not covered by CVE data'); }
                             var assessment = obj.getMeshAssessment(node.meshid, v.cve);
                             var rating = assessment ? assessment.assessment : (v.severity || '');
                             var comment = assessment ? assessment.comment : '';

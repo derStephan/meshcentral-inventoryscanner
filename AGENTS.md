@@ -118,17 +118,20 @@ POST body `action=`:
 | `save_assessment` | `meshId` or `meshIds` (comma list), `cveId`, `assessment`, `comment` | comment **mandatory**; id must match `CVE-\d{4}-\d{4,}` or be `WINDOWS-UPDATES`; mesh ids validated `^mesh/[^:]+$`; comment trimmed, ≤1000 chars, stored **raw** |
 | `flag_false_positive` | `meshId(s)`, `cveId`, `comment?` | comment **optional** (empty stays empty); sets `assessment:'UNKNOWN', flagged:true` |
 | `unflag_false_positive` | `meshId(s)`, `cveId` | deletes flagged entries for all given meshes |
-| `get_cpe_table` | — | `{entries:[{match,vendor,product,source:'built-in'|'remote'|'custom'}], cpeTable:{source,updated,url,enabled,entries}}` |
+| `get_cpe_table` | — | `{entries:[{match,vendor,product,source:'built-in'|'remote'|'custom'}], cpeTable:{source,updated,url,enabled,entries}}`; a `kind`
+    (driver/firmware) table row is shown as `vendor:'-', product:'excluded: <kind>'` instead of a CPE pair |
 | `delete_cpe_table` | `match`,`vendor`,`product` | custom entries only (built-ins can be shadowed, not deleted) |
 | `add_cpe` | `match`,`vendor`,`product` | regex validated via `new RegExp`; custom wins over built-in |
 | `wg_get_config` | — | effective wingetUpdater config + per-key sources + queue state |
 | `wg_save_config` | enabled, updateMeshes(csv), excludeNodes(csv), ignorePackages(JSON), pinSync (intervalHours accepted but ignored) | validates EVERYTHING, writes overlay, `rescheduleAll()`; the panel calls it automatically on EVERY Updates-tab change (switches, groups, ignore add/remove, exclusions, "+ ignore" buttons) - no manual-save footgun since v2.7.0 |
-| `wg_run` | optional `nodeIds`(csv; overrides scope+exclusions), `dry`('true') | manual batch; per-device or dry test runs; {busy} while one runs |
+| `wg_run` | optional `nodeIds`(csv; overrides scope+exclusions), `dry`('true'), `pkgId` + `mode`('update'\|'uninstall') | manual batch; per-device or dry test runs; {busy} while one runs. With `pkgId` the whole batch runs restricted to that ONE package (`$invOnly` guard in the script) - `mode:'uninstall'` needs a valid `pkgId`, is never a dry run and never without one (rejected). Scope without `nodeIds` = `wgTargetNodes`: `updateMeshes` gates
+    scheduled/sweep runs ONLY, every manual and package run covers ALL non-excluded Windows nodes |
 | `wg_status` | — | every non-deleted WINDOWS node (`wgIsWindowsNode`: reported `osdesc` must contain 'windows'; no osdesc yet = kept; phones/Linux hidden). Each row: `host` (rname-first) + `given` (admin name, used for labels/sort); malformed records tolerated. `last.rows:[{id,name,from,to,state,exit,log}]` = EVERY package of the last run
     (dry or real, ≤200) - the panel's row expander shows them with the outcome (failed rows carry exit code
     incl. hex + winget's own message), "+ ignore" pushes one onto `ignorePackages` and saves immediately;
     failed packages additionally get one `FAILED` line per package in `winget-update.log`, and upgraded
-    packages that match (exactly or as substring) an ignore entry raise a `WARNING` line there |
+     packages that match (exactly or as substring) an ignore entry raise a `WARNING` line there |
+| `wg_programs` | — | the PACKAGES view (v3.0.0): aggregates `wgResults` per package id -> `{packages:[{id,name,ready,ok,failed,skipped,devices:[{node,label,state,from,to,time,dry}]}],note}` (≤400 packages, ≤200 devices each, sorted by ready+failed). `label` = admin given name first, then host name, then id; results of deleted devices are dropped; `not-installed` counts into `skipped` |
 | `get_log` | `type` = nvd\|winget | whitelisted log tail (last 300 lines) |
 | `update_nvd` | — | starts `runNvdUpdate(true)` (background) and answers {started:true} / {alreadyRunning:true}; concurrent runs skip via the `nvdUpdateRunning` flag |
 | `get_nvdlog` | — | `{lines:[...last 200 of nvd-download.log], size, file}`; `note` if file missing |
@@ -141,11 +144,19 @@ POST body `action=`:
 Assessments persist in `<datapath>/nvd/assessments.json`, key `"<meshId>:<cveId>"` →
 `{meshId, cveId, assessment, comment, lastModified, assessedBy, assessedById, flagged?}`.
 Scheduled results in `<datapath>/nvd/scans.json` → `meshId -> {time, cves:[{cve, severity, ...}]}`.
-Remote CPE table: repo `cpe-table.json` → fetched when stale at startup and after every NVD download cycle, cached at
-`<datapath>/plugins/inventoryscanner/cpe-table.json`. External mapping contributions come in as PRs that touch
-ONLY this file (process + validation rules: CONTRIBUTING.md) - a table edit needs NO plugin version bump. `activeSoftwareTable()` = remote entries when a valid table was
-applied, else `SOFTWARE_CPE_TABLE`; custom (UI) entries always first. Entry regexes compile with the `i` flag ONLY;
+Remote CPE table: repo `cpe-table.json` → the installer unpacks it into `<datapath>/plugins/inventoryscanner/`, which is
+**exactly `obj.cpeTablePath`** - so on an installed server the maintained table is live from the first second without
+any download, and a refresh (`fetchCpeTable`, at startup when stale and after every NVD cycle, https only) rewrites
+that SAME file in place; a plugin upgrade re-unpacks the shipped copy (the newer shipped table then wins until the
+next refresh). `loadRemoteCpeTable()` therefore tries the cache path first and `path.join(__dirname, 'cpe-table.json')`
+second (the second entry only matters in dev `plugins.list` layouts/tests where code and datapath differ);
+`SOFTWARE_CPE_TABLE` stays as last-resort seed and the two lists are NOT kept in sync by hand - adding a mapping is a
+PR on the JSON file only (process + validation: CONTRIBUTING.md), no plugin version bump. `cpeTableStatus().origin`
+reports where the live file came from ('downloaded' | 'cache' | 'bundled'); `activeSoftwareTable()` = remote entries
+when a valid table was applied, else `SOFTWARE_CPE_TABLE`; custom (UI) entries always first. Entry regexes compile with the `i` flag ONLY;
 bad JSON/regex → payload rejected, current table keeps running. Keys: `cpeTableEnabled`/`cpeTableUrl` (Settings tab).
+A table row may replace `vendor`/`product` with **`kind:'driver'|'firmware'`** (out-of-NVD-scope marker, see below);
+`applyCpeTableText` validates that shape and `matchTableEntry` returns it, kind rows win over the name heuristics.
 
 UI-managed scanner settings in `<datapath>/plugins/inventoryscanner/scanner-settings.json` →
 `{vulnerabilityScanner:{...}, inventoryScanner:{...}}`, merged over `config.settings` by
@@ -166,14 +177,16 @@ a row must NEVER show one arbitrary device's version as truth for all (the v2.7.
 uniform across ALL affected locations; a fully unrated finding is `mixed:false, assessment:null`.
 
 **`buildOverallReport()` shape** (drives both report views):
-`{ generated, totalSystems, totalPrograms, assessablePrograms, notAssessablePrograms, coveragePercent,
-totalCves, falsePositiveCves, severityCounts{CRITICAL..UNKNOWN}, uniqueCves, locationCount,
-locations:[{ id, name, totalSystems, totalPrograms, assessablePrograms, notAssessablePrograms, coveragePercent,
-totalCves, falsePositiveCves, severityCounts, uniqueCves, findings:[{cve, severity, cvss, software, version,
+`{ generated, totalSystems, totalPrograms, assessablePrograms, notAssessablePrograms, outOfScopePrograms,
+coverageBase, coveragePercent, totalCves, falsePositiveCves, severityCounts{CRITICAL..UNKNOWN}, uniqueCves, locationCount,
+locations:[{ id, name, totalSystems, totalPrograms, assessablePrograms, notAssessablePrograms, outOfScopePrograms,
+coverageBase, coveragePercent, totalCves, falsePositiveCves, severityCounts, uniqueCves, findings:[{cve, severity, cvss, software, version,
 description, assessment, comment, flagged, effectiveSeverity, devices:[hostnames]}], devices:[deviceRec] }],
 devices:[deviceRec] }` with `deviceRec = {hostName, name, group, os, programs, programsAssessable,
-programsNotAssessable, cveCount, critical..unknown}`. `locations` is an **array** (views iterate it with
+programsNotAssessable, programsOutOfScope, cveCount, critical..unknown}`. `locations` is an **array** (views iterate it with
 `{{@index}}` anchors); `findingsById`/`uniqueCveIds` internals: `findingsById` is deleted before returning.
+**`coverageBase` exists because Handlebars cannot add** - the reports must print `assessable/coverageBase`, never
+`assessable/totalPrograms` (drivers would silently deflate the percentage).
 
 Counting semantics: `totalCves`/`severityCounts` = device×CVE **occurrences**; a false-positive-flagged occurrence
 moves to `falsePositiveCves` and is excluded from severity counting; a group rating **overrides** the NVD severity
@@ -212,6 +225,40 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
 - normalizeCveVersion: ANY distro decoration (ubuntu/dfsg/+exp/bzr/~ /debN/snap wrapper) -> ''
   (unknown) - Debian/Ubuntu patch fixes into identical upstream versions; plain '-1' suffixes
   and epochs-without-decoration still extract their numeric core.
+
+## Install, first start and file layout (support facts moved out of the README)
+
+- **ZIP extraction is slow and alphabetical**: files land root-files-first, `tools/`+`views/` LAST, so
+  `inventoryscanner.js` briefly exists as a 0-byte file and the Plugins page keeps showing **Disabled** until the
+  archive is fully unpacked (slower on small VMs / with antivirus scanning). Never restart or re-install in that
+  phase; the Plugins page shows no progress at all (MeshCentral UI limitation) and can print the OLD version until
+  the page is refreshed. The plugin's own log line on a successful hot swap is
+  `upgrade detected ... reloading without server restart` / `hot reload complete`.
+- First start downloads ALL NVD years (10-60 min typical) and then runs a baseline scan of every location; until
+  the feeds are indexed the panel says "not downloaded" and no CVE can be reported.
+- An **empty software list means "not collected yet"**, never "clean"; offline devices keep their last cached
+  inventory (check inventory age before trusting a device row).
+- Files written by the plugin (all under the MeshCentral datapath):
+
+```
+<nvd>/nvdcve-2.0-<year>.json       feed cache (matching is offline against these)
+<nvd>/assessments.json             group ratings + false-positive flags
+<nvd>/scans.json                   scheduled scan snapshots
+<nvd>/nvd-download.log             feed download log (tailed by the Settings tab)
+<plugins/inventoryscanner>/custom-cpe.json       UI-added mappings
+<plugins/inventoryscanner>/cpe-table.json        the maintained table itself: the installer unpacks the repo copy
+                                  here and every refresh rewrites it in place (see the CPE table paragraph)
+<plugins/inventoryscanner>/scanner-settings.json Settings-tab overrides (never config.json)
+<plugins/inventoryscanner>/winget-results.json   last run per device (drives wg_status/wg_programs)
+<plugins/inventoryscanner>/winget-update.log     batch log, rotated at ~5 MB
+<plugins/inventoryscanner>/data/<nodeid>/        collected software + windowsupdates JSON per device
+```
+- On the client the updater writes `invscanner-winget.log` next to `meshagent.exe` (fallbacks: `C:\ProgramData`,
+  then TEMP - chosen by a write probe because `Start-Transcript` reports success on locked paths). While a device
+  is busy with another command session the agent answers 'already busy' on its **console only** (no runcommands
+  reply), which the plugin mirrors into `winget-update.log`; the watchdog (10 min dry / 2 h real) closes it.
+- Group ids are mesh `_id`s `mesh/<domain>/<name>` (default domain: `mesh//Server1`); easiest lookup is the
+  checkbox values in the panel or the `meshes` collection.
 
 ## Software-list pruning (verified)
 
@@ -267,9 +314,16 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
 - Automatic scheduling is two-stage, no interval: `wgNodeDue` = never ran OR last run on an earlier
   calendar day OR >=24 h old; the agent-connect hook queues a due single device (after `staggerDelay`),
   `wgSweepOnce` (hourly, gen-guarded) catches devices whose connection outlived the day boundary.
-  Per-device manual/dry runs pass explicit ids to `wgStartBatch(reason, done, nodeids, dry)`.
+  Per-device manual/dry runs pass explicit ids to `wgStartBatch(reason, done, nodeids, dry, opts)`; `opts`
+  (`{mode:'update'|'uninstall', onlyId:<winget id>}`) is kept for the whole batch in `obj.wgBatchOpts` and reaches
+  `wgBuildScript` per device: the script then carries `$invMode`/`$invOnly` and either handles only that one id in the
+  upgrade loop (`onlyGuard`: `if ($p.id -ine $invOnly) { continue }`) or skips the loop entirely and runs
+  `winget list --id <only> --exact` + `winget uninstall --id <only> --exact --silent` (an uninstall of a package that
+  is not installed answers `not-installed`, never `failed`; `onlyId` always goes through `WINGET_ID_RE`, so a bad id
+  degrades to `$invOnly = ''` instead of injecting shell text).
   `wgTargetNodes` applies the same Windows rule (no agent traffic to phones/Linux ever).
-  Package states: `ok`/`failed`/`skipped-ignored`/`skipped-noversion`/`dry-run` (dry JSON carries `dry:true`).
+  Package states: `ok`/`failed`/`skipped-ignored`/`skipped-noversion`/`dry-run`/`not-installed` (dry JSON carries
+  `dry:true`, single-package runs carry `mode`). `wg_status`/`wg_programs` count `not-installed` as skipped.
   Watchdogs: 2h real batches, 10min dry runs (`WINGET_DRY_TIMEOUT_MS`, chosen via `wgBatchDry`).
   `msg/console` packets carrying an `invscanner-wg-` sessionid (e.g. the agent's 'already busy' note,
   meshcore.js breaks WITHOUT a runcommands reply in that case) are mirrored into winget-update.log.
@@ -306,9 +360,14 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
    long, not in `GENERIC_PRODUCT_TOKENS`). CVE version ranges are always re-checked, so a token hit on a patched
    version degrades to "no CVE for <product>", never to a false finding. Setting `autoProductMatch` (default true)
    disables only the auto stage. No CPE dictionary API exists anywhere.
-2. **Coverage honesty:** `buildOverallReport` classifies every installed program by its scan row status
-   (`assessable` vs `not assessable`, deduped by name+version) and both reports publish `coveragePercent` —
-   a small finding count must not read as "everything clean".
+ 2. **Coverage honesty:** `buildOverallReport` classifies every installed program by its scan row status,
+    deduped by name+version, into THREE categories: `assessable` (a proven CPE was checked), `not assessable`
+    (a real application with no proven CPE - the blind spot) and `out of scope` (`driver`/`firmware` rows -
+    the NVD application data never covered them, hardware vendor + Windows Update do). The machine status stays
+    `driver`/`firmware` (row.status + outOfScope:true), the vulns CSV prints the self-explanatory text
+    `drivers are not covered by CVE data` / `firmware is not covered by CVE data` instead.
+    `coveragePercent = assessable / (assessable + notAssessable)`, drivers/firmware are NOT in the denominator:
+    a driver-heavy fleet must neither look clean nor look broken. Both reports publish all three numbers.
 3. **Reports split by document, grouped by location:** vulnerability report has NO device list; the device
    report shows **host names** (`node.rname` preferred via `getHostName`). One print page per location.
 4. **Group-wide ratings:** mitigations are decided per location; one UI action writes all affected selected
@@ -351,9 +410,38 @@ never touches config.json). The config.json keys below remain the fallback/seed:
   --installed` on the clients when `pinSync` true), `pinSync` (true). All ids validated against
   `WINGET_ID_RE` before anything reaches the agent shell.
 
+**Key -> default -> Settings-tab control** (the user-facing table; kept here because the README deliberately no
+longer duplicates it - drift between the two files was the reason for the move):
+
+| Key (under `settings.<section>`) | Default | Settings/Updates tab control |
+|---|---|---|
+| `vulnerabilityScanner.scanIntervalHours` | `24` | Scan interval in hours (`0` = off); timed from the END of the last scan, restart-proof |
+| `vulnerabilityScanner.scanMeshes` | all | Group table "Scan" checkboxes (empty selection = all groups) |
+| `vulnerabilityScanner.notifyOnScan` | `true` | "Notify admins after scans" |
+| `vulnerabilityScanner.notifyThreshold` | `"HIGH"` | Global notify threshold (CRITICAL/HIGH/MEDIUM/LOW/UNKNOWN) |
+| `vulnerabilityScanner.notify` (`meshId` -> severity) | - | Group table per-group threshold (empty = global) |
+| `vulnerabilityScanner.notifyUnratedRepeat` | `false` | "Repeat unrated findings every scan" (`open` instead of only `new`) |
+| `vulnerabilityScanner.updateHours` | `168` | NVD feed refresh in hours (also paces the CPE table re-download) |
+| `vulnerabilityScanner.autoProductMatch` | `true` | "Auto-map" - automatic evidence matching for names without a table entry |
+| `vulnerabilityScanner.cpeTableEnabled` | `true` | Re-download the maintained table with every NVD refresh |
+| `vulnerabilityScanner.cpeTableUrl` | (this repo's `cpe-table.json`) | https URL of the maintained table (own fork allowed) |
+| `vulnerabilityScanner.anyCveMaxAgeYears` | `5` | "Suppress version-less CVEs older than N years" (`0` = never) |
+| `inventoryScanner.collectIntervalMinutes` | `1440` | Collect inventory every N minutes (`0` = off) |
+| `inventoryScanner.collectOnAgentConnect` | `true` | "Collect when an agent connects" |
+| `wingetUpdater.enabled` | `false` | Automatic winget updates on/off (Updates tab) |
+| `wingetUpdater.updateMeshes` | none | Device groups that receive AUTOMATIC updates (a package/manual run ignores this list, exclusions still apply) |
+| `wingetUpdater.excludeNodes` | none | Node ids permanently excluded from every batch |
+| `wingetUpdater.ignorePackages` | none | `[{id, note}]` package ids never upgraded (also client-pinned) |
+| `wingetUpdater.pinSync` | `true` | Keep the client-side pins in sync with the ignore list |
+| `wingetUpdater.intervalHours` | - | DEPRECATED, read and ignored (two-stage day-based scheduling replaced it) |
+
+`vulnerabilityScanner` and `inventoryScanner` are **siblings of `plugins`** directly under `settings`; the two
+names differ by one letter and a typo silently keeps defaults. Settings-tab changes need no restart, config.json
+changes need a server restart (+ Ctrl+F5, the browser caches the UI scripts).
+
 **When adding a setting key, update all of:** `scannerConfig`/`collectorConfig`, `getSettingsHandler` (value +
-sources + revertAllowed), `saveSettingsHandler` (+ `SETTING_MAP` for revert), the Settings tab form, the README
-table, and a test assertion. Partial updates are a contract break the tests catch.
+sources + revertAllowed), `saveSettingsHandler` (+ `SETTING_MAP` for revert), the Settings tab form, the table
+above, and a test assertion. Partial updates are a contract break the tests catch.
 
 ## Testing before committing changes
 
@@ -366,12 +454,20 @@ Data dumps from support sessions (CSV exports, browser output TXTs) live OUTSIDE
 MeshCentral install folder) and root `/*.txt` + `/*.csv` are gitignored as a guard - never copy them in.
 - `tools/check.js`: `node --check` on the plugin, inline-script syntax/`{{`-hazard check, JSON validity of
   config files, and view-name↔render-name consistency. Must run anywhere (no dependencies).
-- `tools/test-plugin.js`: 188 behavioral assertions against the real module (mocked MeshCentral DB/webserver):
+- `tools/test-plugin.js`: 233 behavioral assertions against the real module (mocked MeshCentral DB/webserver):
   locations grouping & counting, manual-rating severity override, FP exclusion, host-name preference, coverage
   numbers, multi-mesh scan/`mixed` logic, all POST handlers incl. validation/rejections, routes, admin gating
-  (401), CPE table add/delete, vulns CSV header/content, toolbar button injection (simulated browser DOM), remote CPE table apply/cache/fetch/settings, NVD download-log tailing, manual NVD update trigger + concurrency guard, unknown-version matching rules, winget updater (builder/parser/queue/routes), `longTimeout` chunking, restart-proof schedule delays,
+  (401), CPE table add/delete, vulns CSV header/content, toolbar button injection (simulated browser DOM), remote CPE table apply/cache/fetch/settings, NVD download-log tailing, manual NVD update trigger + concurrency guard, unknown-version matching rules, winget updater (builder/parser/queue/routes, incl. single-package update/uninstall runs + `wg_programs`), driver/firmware classification & coverage denominator, honest CVE aggregation (`deviceList`/`versionVaried`), coexistence-aware pruning, `longTimeout` chunking, restart-proof schedule delays,
   scheduled-scan notification content in repeat and once mode, NVD-status derivation, settings overlay priority,
   save/revert/reset roundtrips incl. validation rejections, timer-generation invalidation, per-cycle collector config.
+  Two structural guards run with them: a `mockRes` object must be answered **exactly once** and every step must call
+  `next()` **exactly once** - a handler that answers twice (e.g. an exception escaping a synchronous nested test chain
+  into the route's `try/catch`) would otherwise silently replay the rest of the suite. The package run is verified
+  end to end (the real runcommands payload is gunzipped back and the whole queue drained), and every emitted
+  PowerShell comparison operator is asserted to exist - a nonexistent `-notimatch` once made the uninstall script
+  fail parsing on the client while every server-side test stayed green. Verify generated scripts with the PS
+  parser when you touch `wgBuildScript`:
+  `[System.Management.Automation.Language.Parser]::ParseFile(<script.ps1>, [ref]$t, [ref]$e)`.
 - `tools/test-views.js`: compiles all three views and renders them with mock data **and empty data**.
 
 If you change data shapes, UPDATE these tests — they are the contract.
@@ -418,3 +514,6 @@ tests. UI flow: floating location picker → one aggregated sortable/filterable 
 rating/FP → CPE Mapping tab with built-in table visibility + overrides, Settings tab (scanner/collection options, per-key override of
 config.json) → two printable reports with navigation and
 per-location pages → scheduled monthly scans with toast/event-log notifications that re-list open findings.
+Since v3.0.0 also: drivers/firmware as their own out-of-scope category (kind rows in the table + name heuristics,
+excluded from the coverage denominator) and the Updates tab's Packages view with per-package update/uninstall
+across the whole fleet (`$invOnly` restricted script runs).

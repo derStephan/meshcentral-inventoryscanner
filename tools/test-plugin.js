@@ -72,13 +72,19 @@ function check(name, cond, extra) {
     else { failures++; console.log('FAIL ' + name + (extra !== undefined ? ' -> ' + JSON.stringify(extra) : '')); }
 }
 function mockRes(done) {
+    var used = 0;
+    var dd = function (d) {
+        used++;
+        if (used > 1) { failures++; console.log('FAIL response object answered ' + used + 'x, payload=' + JSON.stringify(d).substring(0, 120)); }
+        done(d);
+    };
     return {
         type: function () { return this; },
-        json: function (d) { done(d); },
-        sendStatus: function (c) { done({ _status: c }); },
-        render: function (v, d) { done({ _view: v, _data: d }); },
+        json: function (d) { dd(d); },
+        sendStatus: function (c) { dd({ _status: c }); },
+        render: function (v, d) { dd({ _view: v, _data: d }); },
         setHeader: function (k, v) { if (!this._headers) { this._headers = {}; } this._headers[k] = v; },
-        send: function (body) { done({ _body: body, _headers: this._headers }); }
+        send: function (body) { dd({ _body: body, _headers: this._headers }); }
     };
 }
 const user = { name: 'admin', _id: 'user//u1', siteadmin: 0xFFFFFFFF };
@@ -238,7 +244,18 @@ steps.push(function (next) {
         check('csv: Comment directly after Manual Rating', /Manual Rating,Comment(,|$)/.test(csv.split('\r\n')[0]), csv.split('\r\n')[0]);
         check('csv: flagged WINDOWS-UPDATES shows false positive', csv.indexOf('false positive') >= 0);
         obj.windowsUpdates = {};
-        next();
+        var stubOld = obj.scanDeviceSoftware;
+        obj.scanDeviceSoftware = function (list, cb) {
+            cb([{ status: 'driver', outOfScope: true, isCve: false, cve: '', severity: '', cvss: '', description: 'drv', software: 'Realtek Audio Driver', version: '1.0', published: '', references: [] },
+                { status: 'firmware', outOfScope: true, isCve: false, cve: '', severity: '', cvss: '', description: 'fw', software: 'ACME BIOS Update', version: '1.0', published: '', references: [] }]);
+        };
+        obj.buildCsvForNodes([nodes[0]], 'vulns', function (err2, csv2) {
+            obj.scanDeviceSoftware = stubOld;
+            check('csv: out-of-scope rows name the reason instead of saying not assessable',
+                csv2.indexOf('drivers are not covered by CVE data') >= 0 && csv2.indexOf('firmware is not covered by CVE data') >= 0 && csv2.indexOf('not assessable') < 0,
+                (csv2 || '').split('\r\n').slice(1, 4));
+            next();
+        });
     });
 });
 
@@ -505,7 +522,7 @@ steps.push(function (next) {
 });
 // ---- remotely maintained CPE table (apply/cache/fetch/settings) ----
 steps.push(function (next) {
-    var savedRemote = obj.remoteCpeEntries, savedLoadedAt = obj.cpeTableLoadedAt, savedSettings = obj.pluginSettings, savedPath = obj.cpeTablePath;
+    var savedRemote = obj.remoteCpeEntries, savedLoadedAt = obj.cpeTableLoadedAt, savedSettings = obj.pluginSettings, savedPath = obj.cpeTablePath, savedOrigin = obj.cpeTableOrigin;
     var res1 = obj.applyCpeTableText(JSON.stringify({ entries: [
         { match: '^ZebraTool', vendor: 'Zebra', product: 'ZTool' },
         { match: '(((bad', vendor: 'x', product: 'y' },
@@ -516,16 +533,22 @@ steps.push(function (next) {
     check('cpeTable: status shows remote', obj.cpeTableStatus().source === 'remote' && obj.cpeTableStatus().entries === 2, obj.cpeTableStatus());
     check('cpeTable: non-JSON rejected', obj.applyCpeTableText('not json').ok === false);
     check('cpeTable: missing entries array rejected', obj.applyCpeTableText('{"foo":1}').ok === false);
-    obj.cpeTablePath = require('path').join(require('os').tmpdir(), 'invscanner-cpetable-' + Date.now(), 'cpe-table.json');
+    var cacheFilePath = require('path').join(require('os').tmpdir(), 'invscanner-cpetable-' + Date.now(), 'cpe-table.json');
+    obj.cpeTablePath = cacheFilePath;
     require('fs').mkdirSync(require('path').dirname(obj.cpeTablePath), { recursive: true });
     require('fs').writeFileSync(obj.cpeTablePath, JSON.stringify({ entries: [{ match: '^CacheApp', vendor: 'cv', product: 'cp' }] }));
     obj.remoteCpeEntries = null; obj.loadRemoteCpeTable();
-    check('cpeTable: loads cached file at startup', obj.cpeTableStatus().source === 'remote' && !!obj.deriveCpeProduct('', 'CacheApp 1'), obj.cpeTableStatus());
+    check('cpeTable: loads cached file at startup', obj.cpeTableStatus().source === 'remote' && obj.cpeTableStatus().origin === 'cache' && !!obj.deriveCpeProduct('', 'CacheApp 1'), obj.cpeTableStatus());
+    obj.cpeTablePath = require('path').join(require('os').tmpdir(), 'invscanner-cpetable-none-' + Date.now(), 'cpe-table.json');
+    obj.remoteCpeEntries = null; obj.loadRemoteCpeTable();
+    check('cpeTable: no cache file at the datapath -> the copy beside the code is live (installed servers already have it at the cache path, so no mirroring is ever needed)',
+        obj.cpeTableStatus().source === 'remote' && obj.cpeTableStatus().origin === 'bundled' && obj.cpeTableStatus().entries > 40, obj.cpeTableStatus());
+    obj.cpeTablePath = cacheFilePath;
     var httpCalls = 0, savedHttp = obj.cpeTableHttpGet;
     obj.cpeTableHttpGet = function (url, cb) { httpCalls++; cb(null, JSON.stringify({ entries: [{ match: '^FetchApp', vendor: 'fv', product: 'fp' }] })); };
     obj.remoteCpeEntries = null; obj.cpeTableLoadedAt = null; obj.pluginSettings = {};
     obj.maybeFetchCpeTable(function () { });
-    check('cpeTable: maybeFetch fetches when stale and enabled', httpCalls === 1 && !!obj.deriveCpeProduct('', 'FetchApp'), httpCalls);
+    check('cpeTable: maybeFetch fetches when stale and enabled', httpCalls === 1 && !!obj.deriveCpeProduct('', 'FetchApp') && obj.cpeTableStatus().origin === 'downloaded', [httpCalls, obj.cpeTableStatus().origin]);
     httpCalls = 0; obj.pluginSettings = { vulnerabilityScanner: { cpeTableEnabled: false } };
     obj.maybeFetchCpeTable(function () { });
     check('cpeTable: disabled means no HTTP at all', httpCalls === 0, httpCalls);
@@ -539,7 +562,7 @@ steps.push(function (next) {
             check('cpeTable settings: save roundtrip', d.settings && d.settings.cpeTableEnabled === false && d.settings.cpeTableUrl === 'https://example.org/cpe-table.json', d.settings);
             check('cpeTable settings: sources marked file', d.sources && d.sources.cpeTableUrl === 'file' && d.sources.revertAllowed.cpeTableUrl === true, d.sources);
         }), user);
-    obj.cpeTableHttpGet = savedHttp; obj.cpeTablePath = savedPath; obj.remoteCpeEntries = savedRemote; obj.cpeTableLoadedAt = savedLoadedAt; obj.pluginSettings = savedSettings;
+    obj.cpeTableHttpGet = savedHttp; obj.cpeTablePath = savedPath; obj.remoteCpeEntries = savedRemote; obj.cpeTableLoadedAt = savedLoadedAt; obj.pluginSettings = savedSettings; obj.cpeTableOrigin = savedOrigin;
     next();
 });
 
@@ -865,6 +888,102 @@ steps.push(function (next) {
 });
 
 
+// ---- v3.0.0: driver/firmware out-of-scope + per-package update/uninstall everywhere ----
+steps.push(function (next) {
+    check('class: driver and firmware words classify', obj.guessDriverFirmware('Realtek Audio Driver') === 'driver' && obj.guessDriverFirmware('ACME BIOS Tool') === 'firmware');
+    check('class: driver TOOLS and ordinary apps are never classified', obj.guessDriverFirmware('Driver Booster 11') === null && obj.guessDriverFirmware('Total Commander') === null);
+    var savedRemote0 = obj.remoteCpeEntries;
+    var rr0 = obj.applyCpeTableText('{"entries":[{"match":"acme virtual adapter","kind":"driver"},{"match":"^acme pdf$","vendor":"acme","product":"pdf"}]}');
+    check('table: kind entries validate and apply', rr0.ok === true && rr0.applied === 2, rr0);
+    check('table: kind row wins over guessing, CPE row still maps', obj.classifySoftware('Acme Virtual Adapter', 'Acme Inc').kind === 'driver' && obj.classifySoftware('Acme PDF', 'Acme Inc').search != null);
+    obj.remoteCpeEntries = savedRemote0;
+
+    var dpV3 = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-v3-'));
+    var obj2 = factory({ parent: { db: db, datapath: dpV3, debug: function () { }, config: { settings: {} }, webserver: { meshes: {}, wsagents: {} } } });
+    obj2.scanDeviceSoftware([{ name: 'Realtek Audio Driver', version: '1.0', publisher: 'Realtek' }], function (resX) {
+        check('scan: driver rows get the honest out-of-scope status', resX.length === 1 && resX[0].status === 'driver' && resX[0].outOfScope === true && resX[0].isCve === false, resX[0]);
+
+        var sUp = obj.wgBuildScript({ ignorePackages: [], pinSync: false }, false, { onlyId: 'Foo.Bar' });
+        check('script: single-package update gate, no uninstall text', sUp.indexOf("$invOnly = 'Foo.Bar'") >= 0 && sUp.indexOf('-ine $invOnly') >= 0 && sUp.indexOf('uninstall') < 0);
+        var sUn = obj.wgBuildScript({ ignorePackages: [], pinSync: false }, false, { mode: 'uninstall', onlyId: 'Foo.Bar' });
+        check('script: uninstall probes, reports not-installed, never upgrades', sUn.indexOf('uninstall --id $invOnly') >= 0 && sUn.indexOf('list --id $invOnly --exact') >= 0 && sUn.indexOf('not-installed') >= 0 && sUn.indexOf('upgrade --id') < 0);
+        // the probe must use a REAL PowerShell operator: -notimatch does not exist and broke
+        // parsing of the whole script (verified with the PS 5.1 parser)
+        check('script: only valid PowerShell comparison operators are emitted',
+            sUn.indexOf('-notimatch') < 0 && sUn.indexOf('-inotmatch') >= 0, sUn.substring(sUn.indexOf('$invProbe'), sUn.indexOf('$invProbe') + 90));
+        check('script: uninstall without an id refuses to build', (function () { try { obj.wgBuildScript({ ignorePackages: [], pinSync: false }, false, { mode: 'uninstall' }); return false; } catch (e) { return true; } })());
+        check('script: onlyId passes the id whitelist (injection neutralised)', obj.wgBuildScript({ ignorePackages: [], pinSync: false }, false, { onlyId: "bad';rm -x" }).indexOf("$invOnly = ''") >= 0);
+
+        obj.wgBatchRunning = false;
+        var rPost = function (b, cb) { obj.handleAdminPostReq({ body: b }, mockRes(cb), user); };
+        var runErrs = [];
+        rPost({ action: 'wg_run', mode: 'uninstall' }, function (d1x) {
+            runErrs.push(!!d1x.error);
+            rPost({ action: 'wg_run', pkgId: 'Foo.Bar', mode: 'uninstall', dry: 'true' }, function (d2x) {
+                runErrs.push(!!d2x.error);
+                rPost({ action: 'wg_run', pkgId: 'bad id' }, function (d3x) {
+                    runErrs.push(!!d3x.error);
+                    check('route: uninstall-without-id, uninstall-dry and bad-id are rejected', runErrs.join(',') === 'true,true,true' && obj.wgBatchRunning === false, runErrs);
+
+                    // end-to-end on a clean instance: ONE package uninstalled across the fleet,
+                    // from the real runcommands payload down to the package table
+                    var dpU = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-wgun-'));
+                    var sentU = [];
+                    var wsU = { meshes: { 'mesh//grp1': { name: 'HQ' } }, wsagents: { 'node//d1': { send: function (m) { sentU.push(JSON.parse(m)); } } } };
+                    var objU = factory({ parent: { db: db, datapath: dpU, debug: function () { }, config: { settings: {} }, webserver: wsU } });
+                    var stU = objU.wgStartBatch('pkg-uninstall', null, ['node//d1'], false, { mode: 'uninstall', onlyId: 'Foo.Bar' });
+                    var mmU = (sentU.length === 1) ? String(sentU[0].cmds || '').match(/FromBase64String\('([A-Za-z0-9+\/=]+)'\)/) : null;
+                    var scrU = mmU ? require('zlib').gunzipSync(Buffer.from(mmU[1], 'base64')).toString('utf8') : '';
+                    check('e2e: the agent really receives the uninstall script for that one id',
+                        stU.started === true && sentU.length === 1 && sentU[0].action === 'runcommands' &&
+                        scrU.indexOf("$invMode = 'uninstall'") >= 0 && scrU.indexOf("$invOnly = 'Foo.Bar'") >= 0 &&
+                        scrU.indexOf('uninstall --id $invOnly') >= 0 && scrU.indexOf('upgrade --id') < 0, [sentU.length, scrU.length]);
+                    objU.onAgentResponse({ action: 'msg', type: 'runcommands', sessionid: String(sentU[0].sessionid), result: objU.WINGET_MARKER + '{"winget":true,"dry":false,"mode":"uninstall","results":[{"id":"Foo.Bar","name":"","from":"","to":"","state":"not-installed","exit":null,"log":""}]}' }, '', 'node//d1');
+                    var lgU = '';
+                    try { lgU = fs.readFileSync(objU.wingetLogPath, 'utf8'); } catch (exU) { }
+                    check('e2e: not-installed drains the batch, is no failure and is worded honestly',
+                        objU.wgBatchRunning === false && objU.wgResults['node//d1'].results[0].state === 'not-installed' &&
+                        lgU.indexOf('0 uninstalled, 1 skipped/not-installed, 0 failed') >= 0, lgU.split(String.fromCharCode(10)).slice(-3));
+                    var puRes = null;
+                    objU.handleAdminPostReq({ body: { action: 'wg_programs' } }, mockRes(function (pu) { puRes = pu; }), user);
+                    var upk = (puRes && puRes.packages && puRes.packages[0]) || null;
+                    check('e2e: the package table shows the fleet result of that run',
+                        upk != null && upk.id === 'Foo.Bar' && upk.skipped === 1 && upk.failed === 0 &&
+                        upk.devices.length === 1 && upk.devices[0].state === 'not-installed', puRes && puRes.packages);
+
+                    obj.wgResults['node//d1'] = { time: 'x', winget: true, dry: true, results: [{ id: 'Foo.Bar', name: 'Foo', from: '1', to: '2', state: 'dry-run' }, { id: 'Baz.Qux', name: 'Baz', from: '3', to: '4', state: 'skipped-ignored' }] };
+                    obj.wgResults['node//d2'] = { time: 'y', winget: true, dry: false, results: [{ id: 'Foo.Bar', name: 'Foo', from: '1', to: '2', state: 'ok' }] };
+                    rPost({ action: 'wg_programs' }, function (px) {
+                        var p1 = px.packages.filter(function (x) { return x.id === 'Foo.Bar'; })[0];
+                        var p2 = px.packages.filter(function (x) { return x.id === 'Baz.Qux'; })[0];
+                        check('programs: aggregated per package with per-device states and labels', p1.ready === 1 && p1.ok === 1 && p1.devices.length === 2 && p1.devices[0].label === 'Given1' && p2.skipped === 1, px.packages);
+                        delete obj.wgResults['node//d1'];
+                        delete obj.wgResults['node//d2'];
+
+                        var stubReal = obj.scanDeviceSoftware;
+                        obj.buildOverallReport(function (e0, r0) {
+                            var xRows = [
+                                { status: 'driver', outOfScope: true, isCve: false, cve: '', severity: '', cvss: '', description: 'drv', software: 'Realtek Audio Driver', version: '1.0', published: '', references: [] },
+                                { status: 'firmware', outOfScope: true, isCve: false, cve: '', severity: '', cvss: '', description: 'fw', software: 'ACME BIOS', version: '1.0', published: '', references: [] }
+                            ];
+                            obj.scanDeviceSoftware = function (list, cb) { cb(softwareVulns.concat(xRows)); };
+                            obj.buildOverallReport(function (e1, r1) {
+                                var devX = r1.devices.reduce(function (a, d) { return a + (d.programsOutOfScope || 0); }, 0);
+                                check('report: driver/firmware rows count as out of scope, coverage denominator untouched',
+                                    devX > 0 && devX === r1.outOfScopePrograms && r1.assessablePrograms === r0.assessablePrograms &&
+                                    r1.notAssessablePrograms === r0.notAssessablePrograms && r1.coveragePercent === r0.coveragePercent,
+                                    [r0.assessablePrograms, r0.notAssessablePrograms, r0.coveragePercent, devX, r1.outOfScopePrograms, r1.assessablePrograms, r1.notAssessablePrograms, r1.coveragePercent]);
+                                obj.scanDeviceSoftware = stubReal;
+                                next();
+                            });
+                        });
+                    });
+                });
+            });
+        });
+    });
+});
+
 // ---- v2.8.0: honest CVE-row aggregation + coexistence-aware pruning ----
 steps.push(function (next) {
     var pv1 = obj.pruneSuperseded([
@@ -964,7 +1083,11 @@ steps.push(function (next) {
         console.log(failures === 0 ? '\ntest-plugin: ALL PASSED' : '\ntest-plugin: ' + failures + ' FAILURE(S)');
         process.exit(failures === 0 ? 0 : 1);
     }
-    steps[i](function () { run(i + 1); });
+    var once = false;
+    steps[i](function () {
+        if (once) { failures++; console.log('FAIL step ' + i + ' called next() twice'); return; }
+        once = true; run(i + 1);
+    });
 })(0);
 
 // ---- winget updater: script builder, queue, parser, config, status ----
@@ -1005,6 +1128,15 @@ steps.push(function (next) {
             var w3 = obj3.wingetConfig();
             check('wg cfg: effective after save', w3.enabled === true && w3.meshes.length === 1 && w3.excludeNodes[0] === 'node//d3' && w3.pinSync === false, w3);
 
+            // scope: updateMeshes gates SCHEDULED batches only; manual/package runs take every
+            // Windows node that is not excluded (that is what "everywhere" means in the Packages view)
+            var idsSch = null, idsMan = null;
+            obj3.wgTargetNodes(true, function (x) { idsSch = x; });
+            obj3.wgTargetNodes(false, function (x) { idsMan = x; });
+            check('wg scope: scheduled respects updateMeshes, a package run ignores it but keeps exclusions',
+                idsSch.slice().sort().join() === 'node//d1,node//d2' && idsMan.slice().sort().join() === 'node//d1,node//d2,node//d4',
+                [idsSch, idsMan]);
+
             // batch: d1,d2 in scope (grp1), d3 excluded, d4 in grp2 not in meshes
             obj3.WINGET_MAX_PARALLEL = 2;
             var r = obj3.wgStartBatch('scheduled', null);
@@ -1041,3 +1173,5 @@ steps.push(function (next) {
         });
     });
 });
+
+

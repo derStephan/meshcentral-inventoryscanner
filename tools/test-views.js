@@ -20,7 +20,7 @@ const viewsDir = path.join(__dirname, '..', 'views');
 
 const loc = {
     id: 'mesh//grp1', name: 'HQ & Co <b>',
-    totalSystems: 2, totalPrograms: 10, assessablePrograms: 3, notAssessablePrograms: 7, coveragePercent: 30,
+    totalSystems: 2, totalPrograms: 10, assessablePrograms: 3, notAssessablePrograms: 5, outOfScopePrograms: 2, coverageBase: 8, coveragePercent: 38,
     totalCves: 3, falsePositiveCves: 1,
     severityCounts: { CRITICAL: 1, HIGH: 1, MEDIUM: 1, LOW: 0, UNKNOWN: 0 },
     uniqueCves: 3,
@@ -44,14 +44,14 @@ const data = {
     totalCves: 61268,
     report: {
         generated: '2026-09-25T00:00:00Z', totalSystems: 2, totalPrograms: 10, assessablePrograms: 3,
-        notAssessablePrograms: 7, coveragePercent: 30, totalCves: 3, falsePositiveCves: 1,
+        notAssessablePrograms: 5, outOfScopePrograms: 2, coverageBase: 8, coveragePercent: 38, totalCves: 3, falsePositiveCves: 1,
         severityCounts: { CRITICAL: 1, HIGH: 1, MEDIUM: 1, LOW: 0, UNKNOWN: 0 }, uniqueCves: 3,
         locationCount: 1, locations: [loc], devices: loc.devices
     }
 };
 const empty = {
-    shortName: 'inventoryscanner', meshList: [], lastUpdate: '', lastScan: '', scanIntervalHours: 0, totalCves: 0, version: '9.9.9', version: '9.9.9',
-    report: { generated: 'x', totalSystems: 0, totalPrograms: 0, assessablePrograms: 0, notAssessablePrograms: 0,
+    shortName: 'inventoryscanner', meshList: [], lastUpdate: '', lastScan: '', scanIntervalHours: 0, totalCves: 0, version: '9.9.9',
+    report: { generated: 'x', totalSystems: 0, totalPrograms: 0, assessablePrograms: 0, notAssessablePrograms: 0, outOfScopePrograms: 0, coverageBase: 0,
         coveragePercent: 0, totalCves: 0, falsePositiveCves: 0,
         severityCounts: { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, UNKNOWN: 0 }, uniqueCves: 0,
         locationCount: 0, locations: [], devices: [] }

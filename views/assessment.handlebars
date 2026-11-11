@@ -307,6 +307,7 @@
 
                 <button id="wgSaveBtn">Save Configuration</button>
                 <button id="wgRunBtn" class="green">Run Now</button>
+                <button id="wgDryAllBtn">Dry run all devices</button>
                 <span id="wgRunState" class="hint"></span>
             </div>
             <div class="hint">Every change on this tab (switches, groups, ignore list, exclusions, "+ ignore" buttons) is
@@ -341,7 +342,19 @@
                 <tbody id="wgDevBody"><tr><td colspan="6" style="color:#888">Loading...</td></tr></tbody>
             </table></div>
 
-            <h3>Update log</h3>            <h3>Update log</h3>
+            <h3>Packages across all devices (from the stored last runs)</h3>
+            <div class="hint">Every winget package your devices reported in their most recent run - aggregate by
+            program instead of by machine. "Update everywhere" queues exactly this one package on every
+            non-excluded Windows device, "Uninstall everywhere" REMOVES it from every device that has it
+            (devices without it are reported as not-installed). "Skipped" counts ignored, version-less and
+            not-installed entries. Start a dry run (all) to populate this table.</div>
+            <div><button id="wgPkgRefresh" class="small">Refresh package view</button> <span id="wgPkgInfo" class="hint"></span></div>
+            <div class="table-container"><table>
+                <thead><tr><th style="width:220px;">Package</th><th style="width:230px;">Id</th><th style="width:70px;">Ready</th><th style="width:60px;">OK</th><th style="width:70px;">Failed</th><th style="width:70px;">Skipped</th><th>Devices (state, versions)</th><th style="width:330px;">Actions</th></tr></thead>
+                <tbody id="wgPkgBody"><tr><td colspan="8" style="color:#888">Not loaded yet.</td></tr></tbody>
+            </table></div>
+
+            <h3>Update log</h3>
             <div><button id="refreshWgLogBtn" class="small">Refresh log</button> <span id="wgLogInfo" class="hint"></span></div>
             <pre id="wgLog" style="max-height:260px;overflow:auto;background:#0f1720;color:#cfe3f5;padding:8px;border-radius:6px;font-size:11px;margin-top:6px;white-space:pre-wrap;">(not loaded yet)</pre>
         </div>
@@ -477,7 +490,7 @@
 
         // ---------- winget updates tab ----------
 
-        var wgApp = { cfg: null, status: null, groups: [], loaded: false, openDry: {} };
+        var wgApp = { cfg: null, status: null, groups: [], loaded: false, openDry: {}, pkgs: null };
 
         function wgGroupIds() {
             var out = [];
@@ -640,6 +653,75 @@
             else if (act === 'ign') { wgIgnoreAdd(b.getAttribute('data-pkgid'), 'added from the device table'); }
         });
 
+        function renderWgPackages() {
+            var list = wgApp.pkgs || [];
+            var igIds = (((wgApp.cfg && wgApp.cfg.config.ignorePackages) || []).map(function (x) { return String(x.id).toLowerCase(); }));
+            var html = '';
+            for (var i = 0; i < list.length; i++) {
+                var p = list[i];
+                var devs = (p.devices || []).map(function (dv) {
+                    return dv.label + ' [' + dv.state + (dv.to ? (': ' + dv.from + ' -> ' + dv.to) : '') + (dv.dry ? ' (dry)' : '') + ']';
+                });
+                html += '<tr><td>' + esc(p.name) + '</td><td><code>' + esc(p.id) + '</code></td>';
+                html += '<td>' + (p.ready > 0 ? '<span style="color:#06c;font-weight:600">' + p.ready + '</span>' : String(p.ready)) + '</td>';
+                html += '<td>' + p.ok + '</td>';
+                html += '<td>' + (p.failed > 0 ? '<span style="color:#a33;font-weight:600">' + p.failed + '</span>' : '0') + '</td>';
+                html += '<td style="color:#777">' + (p.skipped || 0) + '</td>';
+                html += '<td style="font-size:11px">' + esc(devs.join(', ')) + '</td>';
+                html += '<td style="white-space:nowrap">';
+                html += (igIds.indexOf(String(p.id).toLowerCase()) >= 0) ? '<span class="hint">on ignore list</span> ' : '<button class="small" data-pkgact="ign" data-pkgid="' + esc(p.id) + '">Ignore</button> ';
+                html += '<button class="small green" data-pkgact="upd" data-pkgid="' + esc(p.id) + '">Update everywhere</button> ';
+                html += '<button class="small red" data-pkgact="unin" data-pkgid="' + esc(p.id) + '">Uninstall everywhere</button>';
+                html += '</td></tr>';
+            }
+            if (html === '') { html = '<tr><td colspan="8" style="color:#888">No package data yet - start a dry run (all devices) first.</td></tr>'; }
+            $('wgPkgBody').innerHTML = html;
+        }
+
+        function loadWgPackages() {
+            post('wg_programs', {}).then(function (d) {
+                if (d && d.error) { $('wgPkgInfo').textContent = d.error; return; }
+                wgApp.pkgs = (d && d.packages) || [];
+                $('wgPkgInfo').textContent = (d && d.note) ? d.note : (wgApp.pkgs.length + ' package(s) - from the stored last run of each device');
+                renderWgPackages();
+            }).catch(function (ex) { $('wgPkgInfo').textContent = 'Failed: ' + ex.message; });
+        }
+
+        function wgPkgRunResult(d) {
+            if (d.error) { showMsg('wgMsg', d.error, false); return; }
+            if (d.busy) { floatMsg('Another batch is still running - try again in a moment.', false); return; }
+            floatMsg('Package run started (' + d.mode + ' ' + d.pkgId + ') - watch the devices table, the package view and the log.', true);
+            if (wgApp.status) { wgApp.status.running = true; }
+            wgPollState();
+        }
+
+        $('wgPkgBody').addEventListener('click', function (e) {
+            var b = e.target;
+            while (b && b !== this && !(b.getAttribute && b.getAttribute('data-pkgact'))) { b = b.parentNode; }
+            if (!b || b === this) { return; }
+            var act = b.getAttribute('data-pkgact'), pid = b.getAttribute('data-pkgid');
+            if (!pid) { return; }
+            if (act === 'ign') { wgIgnoreAdd(pid, 'added from the package table'); }
+            else if (act === 'upd') {
+                if (!window.confirm('Update the package "' + pid + '" on ALL non-excluded Windows devices now?')) { return; }
+                post('wg_run', { pkgId: pid, mode: 'update' }).then(wgPkgRunResult).catch(function (ex) { showMsg('wgMsg', 'Run failed: ' + ex.message, false); });
+            }
+            else if (act === 'unin') {
+                if (!window.confirm('UNINSTALL "' + pid + '" from every device that has it?\nThis REMOVES software on all non-excluded Windows devices and cannot be undone from here.')) { return; }
+                post('wg_run', { pkgId: pid, mode: 'uninstall' }).then(wgPkgRunResult).catch(function (ex) { showMsg('wgMsg', 'Run failed: ' + ex.message, false); });
+            }
+        });
+        $('wgPkgRefresh').addEventListener('click', function () { loadWgPackages(); });
+        $('wgDryAllBtn').addEventListener('click', function () {
+            if (!window.confirm('Dry run on all in-scope, non-excluded Windows devices? Nothing is installed or removed.')) { return; }
+            post('wg_run', { dry: 'true' }).then(function (d) {
+                if (d.busy) { floatMsg('A batch is already running.', false); return; }
+                floatMsg('Dry run started for all target devices - results appear in the device rows and the package table.', true);
+                if (wgApp.status) { wgApp.status.running = true; }
+                wgPollState();
+            }).catch(function (ex) { showMsg('wgMsg', 'Run failed: ' + ex.message, false); });
+        });
+
         function loadWgLog() {
             post('get_log', { type: 'winget' }).then(function (data) {
                 if (data.error) { $('wgLog').textContent = data.error; return; }
@@ -663,6 +745,7 @@
             }).then(function (s) {
                 if (s && s.devices) { wgApp.status = s; renderWgDevices(); wgPollState(); }
                 loadWgLog();
+                loadWgPackages();
                 wgApp.loaded = true;
             }).catch(function (ex) { showMsg('wgMsg', 'Failed to load update state: ' + ex.message, false); });
         }
@@ -691,7 +774,11 @@
             $('wgRunState').textContent = running ? ('batch running - ' + wgApp.status.active + ' active, ' + wgApp.status.queued + ' queued') : '';
             if (running) {
                 wgPollTimer = setTimeout(function () {
-                    post('wg_status', {}).then(function (s) { wgApp.status = s; renderWgDevices(); wgPollState(); loadWgLog(); }).catch(function () { });
+                    post('wg_status', {}).then(function (s) {
+                        var wasRunning = wgApp.status && wgApp.status.running;
+                        wgApp.status = s; renderWgDevices(); wgPollState(); loadWgLog();
+                        if (wasRunning && !s.running) { loadWgPackages(); } // batch drained - refresh the cross-device view
+                    }).catch(function () { });
                 }, 10000);
             }
         }
@@ -1116,7 +1203,7 @@
                 var ct = data.cpeTable || {};
                 var csi = $('cpeTableSourceInfo');
             if (csi) { csi.innerHTML = (ct.source === 'remote')
-                    ? ('Active table: remote copy from ' + esc(ct.url || '') + ' (updated ' + esc(ct.updated || '?') + ')' + (ct.enabled ? '' : ' - automatic refresh is OFF'))
+                    ? ('Active table: maintained CPE table - ' + (ct.origin === 'downloaded' ? 'downloaded from ' + esc(ct.url || '') : (ct.origin === 'bundled' ? 'copy shipped with the plugin' : 'local copy on this server (refreshed from ' + esc(ct.url || '') + ')')) + ' (updated ' + esc(ct.updated || '?') + ')' + (ct.enabled ? '' : ' - automatic refresh is OFF'))
                     : ('Active table: built-in fallback' + (ct.enabled ? ' (remote copy not fetched yet - retried with every feed update)' : ' (automatic refresh is OFF)')); }
                 renderCpeTable();
             }).catch(function (e) { showMsg('cpeMsg', 'Failed to load the CPE table: ' + e.message, false); });

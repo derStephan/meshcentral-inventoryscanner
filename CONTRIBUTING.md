@@ -41,8 +41,11 @@ where the active table came from). No plugin version bump, no new release.
 
 ### What this file is not
 
-* Not the place for OEM/driver components without a NVD entry ("Dell Optimizer UI", "Realtek Audio
-  Driver", BIOS/firmware) - they are patched by vendor tools, and the README states that honestly.
+* Not the place for pretending that OEM components have an NVD product. A driver/firmware display name
+  ("Realtek Audio Driver", "ACME BIOS Update") that shows up as `not assessable` is still NOT a CPE mapping
+  candidate - if you are sure it is a driver or firmware, add `{"match":"^Realtek Audio Driver$","kind":"driver"}`
+  (or `"kind":"firmware"`) instead: the scanner then reports it in its own honest out-of-scope category, which
+  needs no vendor/product verification. Never mark an application as `kind` - that would hide real CVEs.
 * Do not add `inventoryScanner`/`vulnerabilityScanner`/`wingetUpdater` config here; settings live in the
   panel (see README).
 * Changes to any other file (plugin code, views, this guide) go through the normal code path:

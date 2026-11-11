@@ -2,299 +2,133 @@
 
 > **Transparency**: Created with **Qwen 3.6 27B** & **Qwen 3.8 Flash Next** • Audited by **NVIDIA Nemotron 3 550B A55B** (2026-11-06)
 
-A [MeshCentral](https://github.com/Ylianst/MeshCentral) plugin that turns your MeshCentral server into an offline
-software/vulnerability inventory: CSV exports for audits, an NVD-based CVE scanner that works without sending any
-inventory data to the internet, a group-wide vulnerability assessment panel, printable audit reports and automatic
-scheduled scans with admin notifications.
+Turns your MeshCentral server into a software inventory and vulnerability scanner that works **offline**: CSV
+exports for audits, an NVD-based CVE scan of everything your devices have installed, a shared assessment panel
+where the team rates findings per location, printable audit reports, scheduled scans with notifications - and an
+opt-in software updater based on the official **winget** package manager.
 
-**Audience:** MeshCentral site administrators who need to know *which software is installed where, which of it has
-known CVEs, which findings have already been assessed by the team, and what is left to do* — without buying a
-commercial vulnerability scanner.
-
----
-
-## Features
-
-### 1. Inventory CSV exports
-
-Two ways to export, depending on what you need:
-
-* **Device-list toolbar** — appears automatically, nothing to configure; select devices in any group and export exactly those:
-
-  | Button (`logmsg`) | Result |
-  |---|---|
-  | **Hardware Inventory** (`hardware`) | CSV: CPU, GPU, memory (banks), disks, network, BIOS/UEFI, mainboard, chassis, TPM — from the stored sysinfo, so it works offline |
-  | **Software Inventory** (`software`) | CSV: one row per installed application: name, version, publisher, location, install date |
-  | **Vulnerability Assessment** (`assessment`) | Opens the assessment panel in a new tab (no CSV) — works without any device selection |
-
-* **Direct links (all devices, no selection needed)** — in the panel navigation, as bookmarks, or via the
-  always-enabled **Vulnerability Assessment** toolbar button:
-
-  ```
-  /pluginadmin.ashx?pin=inventoryscanner&action=export&type=hardware|software|vulns
-  ```
-
-  The `vulns` export has one row per software/OS finding with a `Status` column:
-  `CVE`, `no CVE for <product>`, `not assessable` or `false positive`.
-
-    Software entries without a version number (hotfixes, add-ons) are handled conservatively: only
-    CVEs applying to ALL versions are asserted for them, so historical version-bounded findings never
-    flood the list.
-
-CSVs are Excel-safe (UTF-8 BOM) and neutralized against CSV formula injection (CWE-1236).
-
-### 2. Offline CVE scanner (NVD 2.0)
-* The plugin downloads the public NVD JSON feeds (all years, ~2002 to current) **once** into `<datapath>/nvd/`, verifies SHA-256 against the official `.meta` files and refreshes the current year weekly.
-* CVE matching is **fully local** — no inventory data ever leaves your server. Only the public feed is fetched.
-* Matching works on two levels, both fully offline: a curated CPE table (built-in entries for common products,
-  your own additions) maps tricky display names exactly; everything else is mapped by an **automatic evidence
-  matcher** - display names are normalized and only accepted when the resulting CPE product token provably
-  exists in the downloaded NVD data, the publisher resolves the vendor, and every version is re-checked
-  against the CVE range. This mirrors how OWASP Dependency-Check matches evidence to CPEs, just without any
-  API call or configuration. Names that prove nothing stay `not assessable` - no guessing, so false
-  positives stay rare while coverage rises; the blind spot is quantified in every report (CPE coverage %). software is only checked if a curated, NVD-feed-verified CPE mapping exists (built-in table for ~50 common products + your own additions). Everything else is honestly reported as `not assessable` instead of being guessed — so you get almost no false positives, and the blind spot is quantified in every report (CPE coverage %).
-* Windows clients (10/11) have no OS CVEs in the NVD; for Windows devices the plugin instead collects the **number of missing Critical/Important updates** from each agent and reports a pending-update state as a `WINDOWS-UPDATES` critical finding.
-
-### 3. Vulnerability assessment panel
-Open `https://<server>/pluginadmin.ashx?pin=inventoryscanner&action=show`:
-
-* **Floating location selector** — check the device groups (locations) you want to work on; the selection persists per browser. No click-through per group anymore.
-* One aggregated, **sortable and filterable** table of all unique findings across the selected locations (click any column header to sort; text + severity + status filters).
-* Rate a CVE (Critical/High/Medium/Low/Unknown) **once** — the rating is saved for *every selected location where the finding occurs* (stored per location, because mitigations are a group decision). A comment is mandatory for ratings.
-* **Mark as false positive** (no comment required) — the finding stops counting everywhere (panel, reports, scheduled notifications, CSV shows `false positive`). Undo restores normal counting.
-* **Affected locations and devices (admin-given names, falling back to host names)** are shown per finding; a *mixed* badge marks findings whose locations carry different ratings. The table keeps finding data tight: software and version share one column, and rating select + comment + buttons live in a single "Manual Rating & Comment" column. (Printable reports deliberately keep showing raw host names.)
-* **A CVE row never claims a version that is not on every listed device.** Software name and installed version are per-device facts: when the affected devices run different versions, the row shows a **varies (N)** badge (hover = the real per-device breakdown, also in the printable report) instead of one arbitrary device's version; device names get inline `(1.2.6.0)` / `(2.3.3.0)` suffixes. The per-device truth is always the **software/vulnerability CSV export**. Note: the plugin's list intentionally merges registry leftovers ("…(Machine)" + "…(Machine - MSI)" of one program → newest), so it can be shorter than MeshCentral's raw Software tab - but distinct programs (Edge vs Edge WebView2, VC++ x86 vs x64) are never dropped since v2.8.0.
-* **CPE Mapping tab** - the table actually in use is visible in the UI: the mapping table maintained in this
-  repository (`cpe-table.json`, auto-refreshed) or its built-in fallback, plus your custom entries (always
-  checked first). Improving a mapping is a one-line repository change - no plugin release, no server edit.
-* **Updates tab** - winget auto-update control: groups, ignore list, Windows device dropdown (given names first),
-  per-device exclusion, single-device runs and dry runs, a per-device results table listing **every package
-  with its outcome** (failures show exit code and reason; one-click move to the ignore list) and the full log.
-  Every change on the tab persists immediately.
-* **Settings tab** - configure everything from the UI: scan interval, which groups are scanned, notification threshold (global + per group), notify mode, feed refresh and inventory collection. Saved to `scanner-settings.json`, effective **immediately without a restart**, and these values **override the same keys in config.json** — the plugin never writes config.json, it only reads it as fallback.
-
-### 4. Printable audit reports (HTML, Print/Save-as-PDF)
-A top navigation connects all pages (Assessment Panel / Settings / CPE Mapping / Updates / Vulnerability
-Report / Device Report). Both reports start with an overview page, then **one page per location** (real page breaks for printing), and state their own blind spot (**CPE coverage**) so a low finding count can never be misread as "everything is clean".
-
-* **Vulnerability Report** (`action=report`) — executive summary KPIs, severity distribution, per-location findings (CVE, severity, CVSS, software, version, rating, comment, affected devices). No device list — that is in the Device Report.
-* **Device Report** (`action=deviceReport`) — device inventory per location with **host names** (not display names), OS, program counts and per-severity finding counts.
-
-### 5. Scheduled scans with notifications (server-side, no browser needed)
-On a configurable interval (e.g. monthly) the server re-scans all groups, stores the result in `<datapath>/nvd/scans.json` and notifies all full site admins via a MeshCentral toast + the server event log listing findings **at or above a per-group severity threshold**:
-
-* Newly appeared findings are marked `(SEVERITY, new)`.
-* With "Repeat unrated findings every scan" enabled (`notifyUnratedRepeat`) everything still **without a rating** is repeated every run as `(SEVERITY, open)` — the notification becomes a recurring to-do list that shrinks as you work it.
-* Findings with a group rating (or false-positive flag) are never reported again.
-* Scheduling is restart-proof (computed from the persisted last-scan timestamp) and safe for intervals beyond 24.8 days.
+**Who it is for:** MeshCentral site administrators who need to answer *which software is installed where, what has
+known CVEs, what has the team already reviewed, and what is left to do* - without buying a commercial scanner and
+without sending inventory data to anyone.
 
 ---
 
-### 6. Automatic software updates via winget (opt-in)
+## What you get
 
-The plugin can keep Windows endpoints patched through the official **winget** package manager -
-automatically or on demand from the panel's **Updates** tab. It is completely opt-in: nothing runs until you
-enable it *and* tick at least one device group. Browsing devices, editing exclusions and running dry
-runs works with the switch off - only actual upgrades require it.
-
-* **Two-phase per device, package by package**: one script run lists everything with an available upgrade
-  (`winget list --upgrade-available`), then upgrades the applicable ones individually
-  (`winget upgrade --id <id> --exact --silent --accept-package-agreements ...`). No `--all` is ever
-  issued, so nothing outside the plan gets touched. Installers run silently; a device is never rebooted.
-* **Ignore list (license protection)**: package ids you add (e.g. `Adobe.Acrobat.Reader.64-bit`) are
-  skipped in every batch - and additionally pinned on the client with `winget pin add --installed`, so
-  even a manual `winget upgrade --all` by a user leaves the licensed version in place. Remove an entry
-  from the list to let updates flow again. Use the exact ids from the device lists - if an upgrade still
-  touches an ignored or nearly-ignored id, `winget-update.log` shows a `WARNING` line about it.
-* **Per-device control**: the device dropdown holds every machine (sorted by location, then name).
-  *Exclude* keeps a device out of every automatic and manual batch (kiosk PCs, presentation laptops),
-  *Include again* puts it back, *Update this device now* patches exactly that one machine.
-  A dry run shows what would happen first, without touching anything.
-* **Per-package outcome after every run (dry or real)**: the device row's *list* button opens all packages
-  (id, installed → available, state) - failed rows show the exit code (decimal + hex) and winget's own
-  message inline, and the same line is written to the server-side `winget-update.log` as `FAILED <id> ...`,
-  so the client transcript is never needed to answer "which one failed and why". *+ ignore* puts a package
-  on the ignore list **and saves immediately**; from the next run on it is skipped as `skipped-ignored`.
-* **Everything saves immediately**: switches, group ticks, exclusions and ignore changes on the Updates tab
-  persist the moment you change them - the *Save Configuration* button just re-applies the whole form.
-* **Per-device actions**: every row of the device table carries its own *Dry run*, *Update now* and
-  *Exclude/Include* buttons - no separate selector needed.
-* **Device events**: finished runs (also dry runs, timeouts and offline skips) appear on the
-  device's own events page in MeshCentral, visible to everyone with rights on that machine.
-* **Scheduling without intervals**: a device is updated as soon as it connects on a calendar day it has
-  not been updated on yet - and at the latest 24 h after its previous run if the connection never dropped.
-  Batches run two devices in parallel; offline devices are simply picked up at the next connect.
-* **Full audit trail**: every batch is logged line by line (`winget-update.log`, tailable in the UI) AND every
-  script writes a PowerShell transcript to `invscanner-winget.log` in the agent's install folder on the
-  device itself (falls back to `C:\ProgramData` when that folder is not writable) -
-  that is where to look if the server side stays silent, and
-  the per-device result table shows which package went from which version to which - or why it failed
-  (exit code + last installer output).
-* **Requirements on the client**: Windows 10 1809+/11 with winget available (App Installer). Scripts run
-  as SYSTEM, where `winget` is neither in the PATH nor findable in the (non-enumerable) WindowsApps
-  folder - the plugin resolves it through the machine-wide App Paths registry entry instead. Devices
-  without it are reported as such per run - nothing else about the batch changes.
+* **Inventory exports** - hardware and software lists as Excel-safe CSV, for selected devices or for the whole
+  fleet with one bookmarkable URL.
+* **Offline CVE scan** - matches installed software against the public NVD feeds stored on your server. Nothing
+  leaves the machine except the feed download itself.
+* **Honest coverage numbers** - every report says how much of the inventory could actually be checked, and names
+  the two reasons it could not: no verified CPE mapping (*not assessable*) or out of scope by nature
+  (**drivers and firmware** are patched by the hardware vendor and Windows Update, not by NVD application data -
+  they are reported in their own category and do not distort the coverage percentage).
+* **Assessment panel** - one sortable table of all findings across selected locations; a rating (with comment) is
+  saved per location, false positives stop counting everywhere.
+* **Printable reports** - vulnerability report and device report, one page per location, ready for Print/Save-as-PDF.
+* **Scheduled scans** - monthly (or any interval) with admin notifications that list what is new and, if you want,
+  everything still unrated.
+* **Software updates via winget** - opt-in, dry runs first, per device or per package across the whole fleet,
+  with an ignore list for licensed packages and a full audit trail.
 
 ## Requirements
 
-* MeshCentral (any current release; tested against 1.x). Works in Docker and bare-metal installs.
-* **Full site administrator** (`siteadmin`) — every plugin endpoint is gated; there is no viewer role.
-* Outbound HTTPS to `nvd.nist.gov` for the initial feed download (then weekly, current year only). All matching runs offline.
-* Disk space for the NVD feed data under `<datapath>/nvd/` (several GB uncompressed).
-* Agents connected at least once so software/Windows-update inventory can be collected (the plugin queries online agents and caches results per device; offline devices keep their last known state).
+* MeshCentral 1.x (Docker or bare metal).
+* You must be a **full site administrator** - every screen and endpoint is admin-only.
+* Outbound HTTPS to `nvd.nist.gov` for the feed download (then roughly weekly). All matching runs locally.
+* Several GB of free disk under `<datapath>/nvd/` for the feed data.
+* Agents that have been online at least once, so their software list can be collected.
 
 ## Installation
 
-The plugin installs from this repository directly in the MeshCentral web UI. The one and only manual file
-edit is enabling plugins itself - without it MeshCentral does not show a plugin page at all:
-
-1. **Enable plugins (one time)** - add under `"settings"` in `<datapath>/config.json`:
+1. **Enable plugins (one time)** - in `<datapath>/config.json`, under `"settings"`:
 
    ```json
    "settings": { "plugins": { "enabled": true } }
    ```
 
-   Do **not** add a `"list"` here: that is MeshCentral's development mode and it ignores DB-installed
-   plugins. Restart the server once (`docker compose restart meshcentral`).
-
-2. **Add the plugin** - log in as full administrator, go to **My Server -> Plugins**, click **Download
-   plugin** and paste exactly this URL:
+   Do **not** add a `"list"` there - that is MeshCentral's development mode and it ignores installed plugins.
+   Restart the server once.
+2. **Add the plugin** - **My Server → Plugins → Download plugin** and paste:
 
    ```
    https://raw.githubusercontent.com/derStephan/meshcentral-inventoryscanner/main/config.json
    ```
+3. **Enable it** in the plugin list, then obey the restart notice and restart once more.
+4. **Hard-reload the browser** (Ctrl+F5). The toolbar buttons above the device list appear by themselves, and the
+   first NVD download starts in the background (several GB - watch the tail of the download log in the Settings
+   tab, no shell needed).
 
-3. **Install it** - the plugin appears in the list below, still disabled. Enable it there; MeshCentral
-   downloads the files into `<datapath>/plugins/inventoryscanner/` (data volume - survives MeshCentral
-   updates) and registers them in its database. Obey the yellow restart notice and restart the server
-   once more - that is all.
+Updates need no ceremony: push a new version here and every server offers **Upgrade** on the Plugins page.
+Uninstall: remove the plugin on that page and delete `<datapath>/plugins/inventoryscanner/` plus `<datapath>/nvd/`
+if you want the collected data gone too.
 
-4. **Hard-reload the browser** (Ctrl+F5). Done: the toolbar buttons above the device list appear
-   automatically (the plugin injects them itself), the assessment panel opens, and first run starts the
-   NVD feed download (all years, several GB - the panel Settings tab tails `nvd-download.log` live, no shell needed). Scanning and
-   reports work as soon as the feeds are indexed.
+## Day-to-day use
 
-Updates appear on the same **Plugins** page without any release ceremony: bump the version in
-this repository's config.json and push - every server checks that file and offers an update
-(the install always pulls the current downloadUrl ZIP). Git tags are not used; a "downgrade to a
-specific version" picker is deliberately not offered.
+**Panel** - `My Server → Plugins → Inventory & Vulnerability Scanner`, or the *Vulnerability Assessment* toolbar
+button. Pick the locations you work on (floating *Locations* button, remembered per browser), then use one
+aggregated table of unique findings: sort by any column, filter by text/severity/status, rate a finding for all
+affected locations in one action, or mark it a false positive (with undo). The **Settings**, **CPE Mapping** and
+**Updates** tabs live on the same page.
 
-After **Upgrade**, MeshCentral unpacks the new files and calls the plugin's startup hook; the
-plugin then detects the newer manifest on disk and hot-swaps the fresh instance into the plugin
-loader (require-cache bust) - normally one click, no server restart. Two honest caveats:
+**A finding never claims a version that is not on every device.** If the affected machines run different
+versions, the row shows *varies (N)* and the per-device truth is one hover away - the exact per-device list is
+always the software/vulnerability CSV.
 
-* The Plugins page shows **no progress** while downloading/unpacking (that is MeshCentral's own
-  UI; large ZIPs on slow links can take minutes) and the table may still print the old version
-  until the page is refreshed. The plugin's own log (`winget-update.log`) shows
-  `upgrade detected ... reloading without server restart` and `hot reload complete` when done.
-* If the running MeshCentral never calls the startup hook again (older loaders), the new code
-  activates with the next server restart instead. Deliberately, the plugin does NOT poll for
-  upgrades - checking the disk on a timer is not a plugin's job.
+**CSV exports** - tick devices and use the toolbar buttons, or export everything with a URL you can bookmark:
 
-### Install & startup timings (what to expect)
-
-Installation and the first start are **asynchronous** - a freshly installed plugin can look "incomplete"
-for a while, and that is normal:
-
-1. **ZIP extraction** (seconds to a few minutes - slower on small VMs or with aggressive antivirus
-   scanning): files land in alphabetical order, so the root files appear first and `tools/` + `views/`
-   **last**. While extraction is still running, `inventoryscanner.js` may briefly exist as a 0-byte file
-   and the Plugins page still shows **Disabled** - the status flips to Enabled only once the archive is
-   completely unpacked. Do not inspect, restart or re-install during this phase.
-2. **Server restart** (the yellow notice): the plugin code is loaded with the server, not before.
-3. **NVD feed download on first start**: all years, several GB - typically 10-60 minutes depending on
-   the connection. The Settings tab shows the tail of `<datapath>/nvd/nvd-download.log` (last 200
-
-   lines, refresh button), so no server shell is needed. Until the feeds are indexed, the panel
-   shows "NVD database: not downloaded yet" and scans cannot report CVEs. The first full scan of all
-   locations runs automatically right after (baseline).
-4. **Inventory collection**: software lists and the Windows-update state arrive per device when the
-   agent connects (default) and on the collection interval. A device that never reported shows an
-   empty software list - that means "not collected yet", **not** "clean". Offline devices keep their
-   last cached inventory.
-
-Reports, CSVs and coverage numbers are only meaningful after steps 3 and 4 have completed at least once.
-
-## Configuration
-
-**Everything is configured in the panel Settings tab** - no file editing, and changes take effect immediately
-without a restart. Values are stored in `<datapath>/plugins/inventoryscanner/scanner-settings.json` and
-**override the same keys in `config.json`** (which the plugin never writes). Per-field "revert to config.json"
-and a global "Reset all" hand control back to the file.
-
-The Settings tab covers: scan interval + which device groups are scanned, notification switch, threshold
-(global and per group) and repeat mode, NVD feed refresh (+ "Update NVD database now" button; progress in the download
-log below), suppression of ancient "any version" CVEs, and the
-inventory collection interval / on-connect behavior, the automatic CPE-matching switch and the repository
-
-### config.json (optional)
-
-Only the `plugins` block is required (see [Installation](#installation)). The scanner keys are a fallback for
-file-based setups or unattended installs - MeshCentral supports `//` comments. Anything saved in the Settings
-tab wins over these values until you revert it.
-
-| Key (under `settings.vulnerabilityScanner`) | Default | Equivalent in the Settings tab |
-|---|---|---|
-| `scanIntervalHours` | `24` | Scan interval in hours (`0` = off); timed from the end of the last scan, restart-proof |
-| `scanMeshes` | all | Group table "Scan" checkboxes (empty selection = all groups) |
-| `notifyOnScan` | `true` | "Notify admins after scans" |
-| `notifyThreshold` | `"HIGH"` | Global notify threshold (CRITICAL/HIGH/MEDIUM/LOW/UNKNOWN) |
-| `notify` (`meshId` -> severity) | - | Group table per-group threshold (empty = global) |
-| `notifyUnratedRepeat` | `false` | "Repeat unrated findings every scan" (`open` instead of only `new`) |
-| `updateHours` | `168` | NVD feed refresh in hours |
-| `autoProductMatch` | `true` | Automatic evidence matching for names without a table entry (Settings: "Auto-map") |
-| `cpeTableEnabled` | `true` | Re-download the curated table from the repository with every NVD refresh |
-| `cpeTableUrl` | (this repo's `cpe-table.json`) | https URL of the maintained table (own fork/copy allowed) |
-| `anyCveMaxAgeYears` | `5` | "Suppress version-less CVEs older than N years" (`0` = never) |
-| `collectIntervalMinutes` (*`inventoryScanner`* section) | `1440` | Collect inventory every N minutes (`0` = off) |
-| `collectOnAgentConnect` (*`inventoryScanner`* section) | `true` | "Collect when an agent connects" |
-| `enabled` (*`wingetUpdater`* section) | `false` | Automatic winget updates on/off (Updates tab) |
-| `updateMeshes` (*`wingetUpdater`* section) | none | Device groups that receive automatic updates |
-| `excludeNodes` (*`wingetUpdater`* section) | none | Node ids permanently excluded from batches |
-| `ignorePackages` (*`wingetUpdater`* section) | none | `[{id, note}]` package ids never upgraded (also client-pinned) |
-| `pinSync` (*`wingetUpdater`* section) | `true` | Keep the client-side pins in sync with the ignore list |
-
-Group ids are MeshCentral mesh `_id`s formatted `mesh/<domain>/<name>` - in the default domain that means a
-double slash, e.g. `mesh//Server1`. Easiest lookup: the checkbox `value`s in the panel (view page source) or
-the `meshes` collection in the database.
-
-### Maintaining the CPE mapping table
-
-The curated display-name-to-CPE table is maintained in **this repository** as [cpe-table.json](cpe-table.json).
-Every server running the plugin re-downloads it with each NVD feed refresh (and at startup when stale) and caches
-it locally - so a new or corrected mapping shows up everywhere without shipping a new plugin version.
-
-```json
-{ "entries": [ { "match": "^Example App", "vendor": "example", "product": "example_app" } ] }
+```
+/pluginadmin.ashx?pin=inventoryscanner&action=export&type=hardware   (or: software, vulns)
 ```
 
-* `match` is a JavaScript regex matched case-insensitively against the display name; `vendor`/`product` must be
-  real CPE codes from the NVD. Invalid entries or a broken file are rejected - the previous table stays active.
-* Air-gapped servers keep working on the built-in fallback table; the CPE Mapping tab always states which table
-  is in force and when it was last fetched.
-* Want your own table? Set the URL in the Settings tab (https only) or turn the auto-update off there.
+The `vulns` export carries one row per finding with a `Status` column: `CVE`, `no CVE for <product>`,
+`not assessable`, `drivers are not covered by CVE data`, `firmware is not covered by CVE data` or `false positive`.
+Software entries without a version number are handled conservatively: only CVEs that apply to *all* versions are
+asserted, so historical findings never flood the list.
 
-### Toolbar buttons (recap)
+**Reports** - *Vulnerability Report* (findings per location, no device list) and *Device Report* (device inventory
+with host names, OS, program and finding counts). Both state their own blind spot, so a low finding count can
+never be misread as "everything is clean".
 
-The plugin adds its three buttons to MeshCentral's own device-list button slot (`devsCustomUIBar`) when the
-page finishes loading - no configuration, and nothing to keep in sync. The click handlers mirror the built-in
-behavior: checked devices are collected from the list and handed to the plugin's server code; without a
-selection the CSV buttons ask for one and the assessment button opens the panel anyway. If a slot shows
-another plugin's buttons, ours are left out (no duplicates).
+**Scheduled scans** - set the interval and the notification threshold in the Settings tab. After each run all
+site admins get a toast plus a server event listing findings at or above the threshold, marked `new`; with
+*Repeat unrated findings* enabled, everything still unrated is repeated every time, so the notification works as
+a to-do list that shrinks as you rate. Rated and false-positive findings are never reported again.
 
-### Notes
+**Software updates (Updates tab)** - completely opt-in: nothing happens until you turn it on *and* tick at least
+one device group. Two views on the same fleet:
 
-* `vulnerabilityScanner` and `inventoryScanner` are **siblings of `plugins`** directly under `settings`. The two
-  section names differ by one letter; a typo silently keeps defaults.
-* Settings-tab changes need **no restart**; `config.json` changes need a server restart (and Ctrl+F5, the
-  browser caches the UI scripts).
-* Ratings, comments, CPE mappings and UI settings live under `<datapath>/nvd/` and
-  `<datapath>/plugins/inventoryscanner/` - see [Data written](#data-written-by-the-plugin).
-* Stale registry duplicates: when the same program appears twice (upgrader leftovers like a
-  "Firefox 3.6.24" row next to "Firefox 121.0.1", or a chain of "Java 8 Update NNN" rows), only the
-  newest version per product is scanned - years-old CVEs are not reported against patched software.
-  Products that genuinely install side by side (Java major releases, Python/.NET minors, VC++
-  runtimes) are kept separate on purpose.
+* **By device** - every Windows machine with its last result; per row *Dry run*, *Update now*, *Exclude*/*Include*,
+  and a *list* button that opens **every package with its outcome** (failed rows show the exit code and winget's own
+  message, plus a one-click *+ ignore*).
+* **By package** - every package your devices reported, aggregated across the fleet, with two fleet-wide actions:
+  **Update everywhere** and **Uninstall everywhere** (both ask for confirmation and only ever touch that one
+  package id; a device that does not have it reports *not installed* instead of failing).
+
+Ignored packages are skipped in every run and pinned on the client, so even a user's own
+`winget upgrade --all` leaves a licensed version alone. Offline devices are picked up when they connect;
+a device is never rebooted.
+
+## Settings
+
+Everything is configured in the **Settings tab** - no file editing, effective immediately without a restart. The
+values are stored in the plugin's own folder and **override the same keys in `config.json`**, which the plugin
+only reads (it never writes it). Per field you can revert to the `config.json` value, and *Reset all* hands
+control back to the file completely.
+
+File-based fallback keys (for unattended setups) are listed in [AGENTS.md](AGENTS.md) under
+*Configuration keys & precedence*. Group ids look like `mesh/<domain>/<name>` - in the default domain that is
+`mesh//YourServerName`; the easiest lookup is the *Locations* picker in the panel.
+
+## Improving the software mapping
+
+The name-to-CPE table that drives matching is maintained in this repository as
+[cpe-table.json](cpe-table.json). Every server re-downloads it with each feed refresh, so a new or corrected
+mapping reaches you **without a plugin update** (and a fresh install already ships the current copy). Rows can
+also mark a name as a driver or firmware component. Contributions are pull requests that touch only that file -
+the rules (including how to verify a CPE against the NVD, because guessing is not allowed) are in
+[CONTRIBUTING.md](CONTRIBUTING.md). Your own entries added in the CPE Mapping tab always win, and the tab states
+which table is in force.
 
 ## URLs
 
@@ -303,86 +137,65 @@ another plugin's buttons, ours are left out (no duplicates).
 | Assessment panel | `/pluginadmin.ashx?pin=inventoryscanner&action=show` |
 | Vulnerability report | `/pluginadmin.ashx?pin=inventoryscanner&action=report` |
 | Device report | `/pluginadmin.ashx?pin=inventoryscanner&action=deviceReport` |
-| CSV download (all devices) | `/pluginadmin.ashx?pin=inventoryscanner&action=export&type=hardware` (or `software`, `vulns`) |
-
-## Data written by the plugin
-
-```
-<datapath>/nvd/nvdcve-2.0-<year>.json      NVD feed cache (offline matching)
-<datapath>/nvd/assessments.json            group ratings + false-positive flags
-<datapath>/nvd/scans.json                  scheduled scan snapshots
-<datapath>/nvd/nvd-download.log            feed download log
-<datapath>/plugins/inventoryscanner/custom-cpe.json      your CPE mappings
-<datapath>/plugins/inventoryscanner/cpe-table.json       cached copy of the repository CPE table
-<datapath>/plugins/inventoryscanner/scanner-settings.json  values saved in the Settings tab
-<datapath>/plugins/inventoryscanner/winget-results.json        last winget batch result per device
-<datapath>/plugins/inventoryscanner/winget-update.log          winget batch log (rotated at ~5 MB)
-<datapath>/plugins/inventoryscanner/data/<nodeid>/       collected software + Windows-update state per device
-```
+| CSV (all devices) | `...&action=export&type=hardware\|software\|vulns` |
 
 ## Privacy & security
 
-* No inventory data is ever transmitted anywhere — the only outbound request is the public NVD feed.
-  The automatic CPE matching runs entirely against the already-downloaded feed data; no dictionary API exists.
-* Full-site-admin only; all endpoints re-check `user.siteadmin` on the server.
-* Device selection for exports uses MeshCentral's own rights-validated node ids.
-* Output hardening: HTML escaping at render time, CSV formula-injection neutralization, strict id validation on
-  write endpoints (key-poisoning guard for `assessments.json`).
-
-## Known limitations (by design)
-
-* **Windows clients 10/11:** the NVD carries no OS CVEs for them — the missing-updates count is the indicator instead.
-* **Coverage:** software is CVE-checked when a curated/custom mapping matches or the automatic evidence matcher
-  proves a real NVD product; OEM drivers/utilities usually stay `not assessable` (they are patched via vendor
-  channels, not NVD/MSRC). Every report states its CPE coverage percentage.
-* **Linux snap/DEB versions:** Debian and Ubuntu backport security fixes into the SAME upstream
-  version (e.g. ghostscript '10.02.1~dfsg1-0ubuntu7.10'), so the NVD's upstream ranges would
-  report already-fixed CVEs. Any version carrying distro decoration (ubuntu, dfsg, +exp, bzr,
-  ~, debN, snap wrappers) is therefore treated as unknown: no bounded-range findings are
-  reported for it, and the row explains 'version not assessable'. For snap apps, 'snap list'
-  on the device shows the real upstream release.
-* **Offline devices** show their last collected state; check the inventory age before trusting a device row.
-* **A batch or dry run that never completes**: check the client transcript first - it is written next to
-  `meshagent.exe` (falling back to `C:\ProgramData`, then TEMP if that path is locked). The plugin also
-  consumes answers that arrive without session ids and console-channel output (the console answer line
-  is only accepted once it fully parses, so split chunks never corrupt a result), so with current builds
-  every run ends in a result or an explicit timeout. The agent answers a runcommands script only when the
-  PowerShell process exits. While the device is running any other command session (MeshCentral
-  terminal, another script), the agent reports 'already busy' only on its console - the plugin mirrors
-  such agent console lines into `winget-update.log`, and the device row shows 'waiting for answer'
-  until the watchdog (10 min dry runs, 2 h batches) closes the session.
-* The toast notification is ephemeral — if no admin is logged in at scan time, read it in **My Server → Events**
-  (event retention applies, default ~30 days).
+* No inventory data is ever transmitted anywhere; the only outbound requests go to `nvd.nist.gov` (feeds and the
+  mapping table).
+* Admin-only: every endpoint re-checks your site-administr rights server-side.
+* Output is hardened: HTML escaping on render, CSV formula-injection neutralization, strict id validation on
+  every write.
+* The updater runs one self-logging PowerShell script per device; every run ends up in a server-side log and in the
+  device's own event list in MeshCentral.
 
 ## Troubleshooting
 
-* **Panel/reports say "NVD database: not downloaded"** with 0 indexed CVEs → the feed download failed; inspect
-  `<datapath>/nvd/nvd-download.log` (rate limits, proxy) and restart the server to retry.
-* **HTTP 401 on the admin panel** → `shortName`/folder must be alphanumeric (`inventoryscanner`), and you must be a
-  full site admin.
-* **Toolbar buttons missing** — plugins are not enabled (Installation step 1), the server was not
-  restarted, or the browser cached the UI scripts: hard-reload (Ctrl+F5).
-* **Empty software lists** → agents were never online since installation, or collection is disabled
-  (`inventoryScanner.collectIntervalMinutes: 0` + connect-time collection).
+* **"NVD database: not downloaded"** - the feed download failed (rate limit or proxy). Look at the download log in
+  the Settings tab, then restart the server to retry.
+* **401 on the panel** - you need full site-admin rights, and the plugin folder/shortName must stay
+  `inventoryscanner` (letters and digits only).
+* **No toolbar buttons** - plugins are not enabled, the server was not restarted, or your browser cached the UI:
+  hard-reload with Ctrl+F5.
+* **Empty software lists** - the device has not been online since installation, or collection is switched off in
+  the Settings tab. An empty list means *not collected*, never *clean*.
+* **A device row stays "waiting for answer"** - another command session on that machine (a MeshCentral terminal,
+  another script) has the agent busy; the run closes with an explicit timeout instead of hanging forever. The
+  device also keeps a transcript of every updater run next to `meshagent.exe` (or in `C:\ProgramData`) - that is
+  the place to look when the server side stays silent.
+* **Reports look wrong** - check the inventory age first: offline devices show their last collected state.
 
-## Development / testing
+## Known limitations
 
-`tools/` contains dependency-light checks for the repo itself:
+* **Windows 10/11 clients** have no OS CVEs in the NVD - for those devices the count of missing
+  Critical/Important Windows updates is the indicator instead.
+* **Coverage is never 100%** by design: a program is only checked when a verified mapping exists. Unknown names
+  stay *not assessable* instead of being guessed, which keeps false positives rare - the percentage in every
+  report tells you how much was actually looked at.
+* **Linux versions with distro decoration** (ubuntu/dfsg/snap suffixes) are treated as unknown, because Debian and
+  Ubuntu backport fixes into the same upstream version; only all-version CVEs are reported for them.
+* **Duplicate leftovers** from upgraders ("Firefox 3.6" next to "Firefox 121") are collapsed to the newest row, so
+  years-old CVEs are not reported against patched software. Programs that genuinely coexist (Edge and the WebView2
+  runtime, VC++ x86 and x64, side-by-side Java/Python versions) stay separate.
+* **Notifications** are a toast plus a server event; there is no built-in email. If no admin is logged in during a
+  scan, read it under **My Server → Events**.
+
+## Development
 
 ```bash
-npm install          # pulls handlebars (dev dependency) for the view tests
-npm test             # node --check + logic tests + view render tests
+npm install    # dev dependency: handlebars (for the view tests)
+npm test       # syntax/consistency checks + behavioral tests + view render tests
 ```
 
-See [AGENTS.md](AGENTS.md) for the full technical description aimed at AI agents.
+Agents and contributors: [AGENTS.md](AGENTS.md) documents the verified contracts, and
+[CONTRIBUTING.md](CONTRIBUTING.md) the mapping-table process.
 
 ## Security & Audit
 
-- **Security Policy**: See [SECURITY.md](SECURITY.md) for supported versions, reporting, and architecture.
-- **Audit Report**: Full formal & functional verification in [AUDIT.md](AUDIT.md) (2026-11-06).
-- **Changelog**: the [commit history](https://github.com/derStephan/meshcentral-inventoryscanner/commits/main) - every change is described there.
-
-Latest audit: **78/78 tests pass**, 1 critical bug fixed (`anyCveMaxAgeYears` settings overlay), ~466 lines dead code removed, all security controls verified.
+* **Security Policy**: [SECURITY.md](SECURITY.md)
+* **Audit Report**: [AUDIT.md](AUDIT.md) (2026-11-06)
+* **Changelog**: the [commit history](https://github.com/derStephan/meshcentral-inventoryscanner/commits/main) -
+  every version is described there in full.
 
 ## License
 
