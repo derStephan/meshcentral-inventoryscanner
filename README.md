@@ -18,11 +18,20 @@ without sending inventory data to anyone.
 * **Inventory exports** - hardware and software lists as Excel-safe CSV, for selected devices or for the whole
   fleet with one bookmarkable URL.
 * **Offline CVE scan** - matches installed software against the public NVD feeds stored on your server. No
-  inventory data leaves the machine; the server only downloads the feeds and the mapping table.
+  inventory data leaves the machine; the server only downloads the feeds, the mapping table and OS support dates.
 * **Honest coverage numbers** - every report says how much of the inventory could actually be checked, and names
   the two reasons it could not: no verified CPE mapping (*not assessable*) or out of scope by nature
   (**drivers and firmware** are patched by the hardware vendor and Windows Update, not by NVD application data -
   they are reported in their own category and do not distort the coverage percentage).
+* **Linux packages handled honestly** - packages of the distribution itself (Ubuntu, Debian, Red Hat, ...) get
+  their fixes as backports into the same upstream version, so an NVD version check would only raise false alarms.
+  They are reported as *patched by the distribution* while the OS release still receives security updates, and the
+  device gets an **OS-EOL** finding once it does not. The support dates are downloaded from the public
+  [endoflife.date](https://endoflife.date) API (nothing hard-coded); packages from third-party repositories (Docker,
+  NVIDIA, ...) are still checked against the NVD.
+* **Windows OS findings by exact build** - the OS check uses the release-specific NVD product (e.g. Windows 11 25H2)
+  and the installed build including the update revision, so a patched machine shows no OS CVEs and an unpatched one
+  shows exactly what its missing cumulative updates fix.
 * **Assessment panel** - one sortable table of all findings across selected locations; a rating (with comment) is
   saved per location, false positives stop counting everywhere.
 * **Printable reports** - vulnerability report and device report, one page per location, ready for Print/Save-as-PDF.
@@ -36,8 +45,8 @@ without sending inventory data to anyone.
 * MeshCentral 1.x (Docker or bare metal).
 * You must be a **full site administrator** of the default domain - every screen and endpoint is admin-only (on
   multi-domain servers, administrators of sub-domains are refused because the plugin covers all devices).
-* Outbound HTTPS to `nvd.nist.gov` (feed download, then roughly weekly) and to `raw.githubusercontent.com` (the
-  maintained mapping table). All matching runs locally.
+* Outbound HTTPS to `nvd.nist.gov` (feed download, then roughly weekly), `raw.githubusercontent.com` (the
+  maintained mapping table) and `endoflife.date` (OS support dates). All matching runs locally.
 * Several GB of free disk under `<datapath>/nvd/` for the feed data.
 * Agents that have been online at least once, so their software list can be collected.
 
@@ -86,7 +95,10 @@ always the software/vulnerability CSV.
 ```
 
 The `vulns` export carries one row per finding with a `Status` column: `CVE`, `no CVE for <product>`,
-`not assessable`, `drivers are not covered by CVE data`, `firmware is not covered by CVE data` or `false positive`.
+`not assessable`, `drivers are not covered by CVE data`, `firmware is not covered by CVE data`,
+`patched by the distribution (OS supported)`, `distribution package - OS end of life`,
+`distribution package - OS support unknown` or `false positive`. Two synthetic findings exist besides real CVEs:
+`WINDOWS-UPDATES` (missing Critical/Important updates) and `OS-EOL` (operating system release out of support).
 Software entries without a version number are handled conservatively: only CVEs that apply to *all* versions are
 asserted, so historical findings never flood the list.
 
@@ -146,8 +158,9 @@ which table is in force.
 
 ## Privacy & security
 
-* No inventory data is ever transmitted anywhere; the only outbound requests go to `nvd.nist.gov` (feeds) and
-  `raw.githubusercontent.com` (mapping table - https only, size-capped, every regex checked before use).
+* No inventory data is ever transmitted anywhere; the only outbound requests go to `nvd.nist.gov` (feeds),
+  `raw.githubusercontent.com` (mapping table - https only, size-capped, every regex checked before use) and
+  `endoflife.date` (public OS support dates - a fixed list of product names is requested, nothing about your devices).
 * Admin-only: every endpoint and the toolbar export re-check your site-administrator rights server-side; every
   changing request must come from the plugin's own page (request-header check against cross-site requests).
 * The updater writes its client transcript only to folders that standard users cannot write to.
@@ -174,13 +187,15 @@ which table is in force.
 
 ## Known limitations
 
-* **Windows 10/11 clients** have no OS CVEs in the NVD - for those devices the count of missing
-  Critical/Important Windows updates is the indicator instead.
+* **Windows OS CVEs need the full build** (`10.0.26200.9711`, reported by current MeshCentral agents). Without it no
+  OS CVE is asserted; the count of missing Critical/Important Windows updates remains the indicator.
 * **Coverage is never 100%** by design: a program is only checked when a verified mapping exists. Unknown names
   stay *not assessable* instead of being guessed, which keeps false positives rare - the percentage in every
   report tells you how much was actually looked at.
-* **Linux versions with distro decoration** (ubuntu/dfsg/snap suffixes) are treated as unknown, because Debian and
-  Ubuntu backport fixes into the same upstream version; only all-version CVEs are reported for them.
+* **Linux distribution packages are trusted while the OS release is supported** (see above). This assumes the
+  machine actually installs its updates - check that with the distribution's own tools (e.g. `apt list --upgradable`).
+  Without lifecycle data (offline, switched off) their state is shown as *unknown*, never as safe. Software installed
+  outside the package manager is matched like on Windows.
 * **Duplicate leftovers** from upgraders ("Firefox 3.6" next to "Firefox 121") are collapsed to the newest row, so
   years-old CVEs are not reported against patched software. Programs that genuinely coexist (Edge and the WebView2
   runtime, VC++ x86 and x64, side-by-side Java/Python versions) stay separate.

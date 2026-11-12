@@ -21,6 +21,7 @@ const viewsDir = path.join(__dirname, '..', 'views');
 const loc = {
     id: 'mesh//grp1', name: 'HQ & Co <b>',
     totalSystems: 2, totalPrograms: 10, assessablePrograms: 3, notAssessablePrograms: 5, outOfScopePrograms: 2, coverageBase: 8, coveragePercent: 38,
+    distroManagedPrograms: 7, distroEolPrograms: 4, distroUnknownPrograms: 1,
     totalCves: 3, falsePositiveCves: 1,
     severityCounts: { CRITICAL: 1, HIGH: 1, MEDIUM: 1, LOW: 0, UNKNOWN: 0 },
     uniqueCves: 3,
@@ -33,7 +34,7 @@ const loc = {
             devices: ['host1'] }
     ],
     devices: [
-        { hostName: 'host1', name: 'Given1', group: 'HQ', os: 'Win 11', programs: 5, cveCount: 2, critical: 1, high: 1, medium: 0, low: 0, unknown: 0 },
+        { hostName: 'host1', name: 'Given1', group: 'HQ', os: 'Win 11', osSupport: 'supported', programs: 5, cveCount: 2, critical: 1, high: 1, medium: 0, low: 0, unknown: 0 },
         { hostName: 'host2', name: 'Given2', group: 'HQ', os: 'Ubuntu', programs: 5, cveCount: 1, critical: 0, high: 0, medium: 1, low: 0, unknown: 0 }
     ]
 };
@@ -45,6 +46,7 @@ const data = {
     report: {
         generated: '2026-09-25T00:00:00Z', totalSystems: 2, totalPrograms: 10, assessablePrograms: 3,
         notAssessablePrograms: 5, outOfScopePrograms: 2, coverageBase: 8, coveragePercent: 38, totalCves: 3, falsePositiveCves: 1,
+        distroManagedPrograms: 7, distroEolPrograms: 4, distroUnknownPrograms: 1,
         severityCounts: { CRITICAL: 1, HIGH: 1, MEDIUM: 1, LOW: 0, UNKNOWN: 0 }, uniqueCves: 3,
         locationCount: 1, locations: [loc], devices: loc.devices
     }
@@ -77,7 +79,9 @@ try {
     const rep = fs.readFileSync(path.join(outDir, 'report-data.html'), 'utf8');
     console.log((rep.indexOf('HQ &amp; Co &lt;b&gt;') >= 0 ? 'PASS ' : (failed++, 'FAIL ')) + 'report escapes location names');
     console.log((rep.indexOf('mitigated &amp; &lt;i&gt;approved&lt;/i&gt;') >= 0 ? 'PASS ' : (failed++, 'FAIL ')) + 'report escapes comments');
+    console.log((rep.indexOf('7 <em>Linux distribution packages</em>') >= 0 && rep.indexOf('4 distribution packages run on an end-of-life OS release') >= 0 && rep.indexOf('Distribution packages:</b> 7') >= 0 ? 'PASS ' : (failed++, 'FAIL ')) + 'report states distro-managed and end-of-life package counts');
     const dev = fs.readFileSync(path.join(outDir, 'deviceReport-data.html'), 'utf8');
+    console.log((dev.indexOf('<td>supported</td>') >= 0 ? 'PASS ' : (failed++, 'FAIL ')) + 'device report shows the OS support state');
     console.log(((dev.indexOf('host1') >= 0 && dev.indexOf('Given1') < 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'device report shows host names, not given names');
 } catch (e) { failed++; console.log('FAIL spot checks: ' + e.message); }
 

@@ -115,6 +115,8 @@
             CPE coverage: {{report.assessablePrograms}} of {{report.coverageBase}} applications ({{report.coveragePercent}}%) have a verified CPE mapping and were checked against the NVD;
             {{report.notAssessablePrograms}} programs without a mapping are <em>not assessable</em> (see the Vulns CSV export).
             {{#if report.outOfScopePrograms}}{{report.outOfScopePrograms}} driver / firmware entries are outside the NVD application scope (hardware vendor / Windows Update).{{/if}}
+            {{#if report.distroManagedPrograms}}<br>{{report.distroManagedPrograms}} Linux distribution packages are patched by their distribution (OS release still supported, source endoflife.date).{{/if}}
+            {{#if report.distroEolPrograms}}<br><strong>{{report.distroEolPrograms}} distribution packages run on an end-of-life OS release.</strong>{{/if}}
         </div>
     </div>
 
@@ -133,7 +135,7 @@
         <h2>Devices</h2>
         <table>
             <tr>
-                <th>Host Name</th><th>OS</th>
+                <th>Host Name</th><th>OS</th><th>OS support</th>
                 <th class="num">Programs</th>
                 <th class="num">Critical</th><th class="num">High</th><th class="num">Medium</th><th class="num">Low</th><th class="num">Unknown</th>
                 <th class="num">Total Findings</th>
@@ -142,6 +144,7 @@
             <tr>
                 <td><b>{{this.hostName}}</b></td>
                 <td>{{this.os}}</td>
+                <td>{{#if this.osSupport}}{{this.osSupport}}{{/if}}</td>
                 <td class="num">{{this.programs}}</td>
                 <td class="num">{{this.critical}}</td>
                 <td class="num">{{this.high}}</td>
@@ -151,7 +154,7 @@
                 <td class="num"><b>{{this.cveCount}}</b></td>
             </tr>
             {{else}}
-            <tr><td colspan="9" style="color:#888">No devices in this location.</td></tr>
+            <tr><td colspan="10" style="color:#888">No devices in this location.</td></tr>
             {{/each}}
         </table>
 

@@ -201,6 +201,24 @@
                     <select id="setCpeTableUrlSrc" class="srcsel"></select>
                     <div class="hint">https only. Only change this if you maintain your own table copy.</div></div>
 
+                <label for="setDistroManaged">Linux distribution packages: trust the distribution while the OS is supported</label>
+                <div><input type="checkbox" id="setDistroManaged">
+                    <div class="hint">Packages installed from the distribution (dpkg/rpm/apk/pacman, maintained by Ubuntu/Debian/Red Hat/...)
+                    get their security fixes as backports into the SAME upstream version, so an NVD version check only produces false
+                    alarms. With this on they are reported as "patched by the distribution" while the OS release is supported, and as
+                    end-of-life (finding OS-EOL) once it is not. Third-party repositories (Docker, NVIDIA, ...) are still checked normally.</div></div>
+
+                <label for="setOsLifecycleEnabled">Fetch OS support dates</label>
+                <div><input type="checkbox" id="setOsLifecycleEnabled">
+                    <span id="osLifecycleInfo" class="hint"></span>
+                    <div class="hint">Support/end-of-life dates of OS releases are downloaded from the public endoflife.date API with every NVD
+                    refresh and cached; nothing about your devices is sent. Off or offline: the support state is "unknown" and no OS-EOL finding is raised.</div></div>
+
+                <label for="setOsLifecycleUrl">Lifecycle API URL</label>
+                <div><input type="text" id="setOsLifecycleUrl" style="width:420px">
+                    <select id="setOsLifecycleUrlSrc" class="srcsel"></select>
+                    <div class="hint">https, ending with "/" (the product slug + ".json" is appended). Only change this for a mirror.</div></div>
+
                 <label for="setNotifyOnScan">Notify admins after scans</label>
                 <div><input type="checkbox" id="setNotifyOnScan"></div>
 
@@ -1302,6 +1320,12 @@
                 setBool('setCollectOnConnect', s.collectOnAgentConnect);
                 setBool('setAutoMatch', s.autoProductMatch);
                 setBool('setCpeTableEnabled', s.cpeTableEnabled);
+                setBool('setDistroManaged', s.distroManaged);
+                setBool('setOsLifecycleEnabled', s.osLifecycleEnabled);
+                if (s.osLifecycleUrl !== undefined) $('setOsLifecycleUrl').value = s.osLifecycleUrl;
+                applyConfigSourceUi($('setOsLifecycleUrlSrc'), src.osLifecycleUrl, 'revertOsLifecycleUrl');
+                var oli = data.osLifecycle || {};
+                $('osLifecycleInfo').textContent = oli.products ? ('data for ' + oli.products + ' OS families, fetched ' + fmtLocal(oli.fetched)) : 'no data yet (fetched with the next NVD refresh)';
                 if (s.cpeTableUrl !== undefined) $('setCpeTableUrl').value = s.cpeTableUrl;
                 applyConfigSourceUi($('setCpeTableUrlSrc'), src.cpeTableUrl, 'revertCpeTableUrl');
                 if (s.scanIntervalHours !== undefined) $('setInterval').value = s.scanIntervalHours;
@@ -1375,6 +1399,9 @@
                 autoProductMatch: $('setAutoMatch').checked ? 'true' : 'false',
                 cpeTableEnabled: $('setCpeTableEnabled').checked ? 'true' : 'false',
                 cpeTableUrl: $('setCpeTableUrl').value.trim(),
+                distroManaged: $('setDistroManaged').checked ? 'true' : 'false',
+                osLifecycleEnabled: $('setOsLifecycleEnabled').checked ? 'true' : 'false',
+                osLifecycleUrl: $('setOsLifecycleUrl').value.trim(),
                 scanMeshes: (allChecked || !anyChecked) ? '' : scanIds.join(','),
                 notifyMeshIds: notifyIds.join(','),
                 notifySeverities: notifySevs.join(',')

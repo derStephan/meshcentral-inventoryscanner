@@ -1,5 +1,5 @@
 {
-  "updated": "2026-11-11",
+  "updated": "2026-11-12",
   "entries": [
     {
       "match": "mozilla firefox",
@@ -25,6 +25,11 @@
       "match": "microsoft edge",
       "vendor": "microsoft",
       "product": "edge"
+    },
+    {
+      "match": "teams meeting add-in",
+      "vendor": "microsoft",
+      "product": "teams_meeting_add-in"
     },
     {
       "match": "microsoft teams",
@@ -60,6 +65,16 @@
       "match": "microsoft visual studio code",
       "vendor": "microsoft",
       "product": "visual_studio_code"
+    },
+    {
+      "match": "^visual studio build tools 2019|^microsoft visual studio (community|professional|enterprise) 2019",
+      "vendor": "microsoft",
+      "product": "visual_studio_2019"
+    },
+    {
+      "match": "^visual studio build tools 2022|^microsoft visual studio (community|professional|enterprise) 2022",
+      "vendor": "microsoft",
+      "product": "visual_studio_2022"
     },
     {
       "match": "microsoft visual studio",
@@ -117,7 +132,7 @@
       "product": "vlc_media_player"
     },
     {
-      "match": "^python",
+      "match": "^python \\d+\\.\\d+",
       "vendor": "python",
       "product": "python"
     },
@@ -247,14 +262,9 @@
       "product": "php"
     },
     {
-      "match": "^nextcloud talk",
+      "match": "^nextcloud( desktop)?( \\d|$)",
       "vendor": "nextcloud",
-      "product": "talk"
-    },
-    {
-      "match": "^nextcloud",
-      "vendor": "nextcloud",
-      "product": "nextcloud"
+      "product": "desktop"
     },
     {
       "match": "^git(?!hub)",
@@ -340,6 +350,171 @@
       "match": "^docker(\\.io|-ce|-cli|-buildx-plugin|-compose-plugin)",
       "vendor": "docker",
       "product": "docker"
+    },
+    {
+      "match": "dell display manager",
+      "vendor": "dell",
+      "product": "display_manager"
+    },
+    {
+      "match": "^dell peripheral manager",
+      "vendor": "dell",
+      "product": "peripheral_manager"
+    },
+    {
+      "match": "^dell power manager",
+      "vendor": "dell",
+      "product": "power_manager"
+    },
+    {
+      "match": "^dell pair$",
+      "vendor": "dell",
+      "product": "pair"
+    },
+    {
+      "match": "^dell digital delivery",
+      "vendor": "dell",
+      "product": "digital_delivery"
+    },
+    {
+      "match": "^dell trusted device",
+      "vendor": "dell",
+      "product": "trusted_device_agent"
+    },
+    {
+      "match": "^dell update( for windows| - supportassist|$)",
+      "vendor": "dell",
+      "product": "update"
+    },
+    {
+      "match": "^dell precision optimizer",
+      "vendor": "dell",
+      "product": "precision_optimizer"
+    },
+    {
+      "match": "integrated sensor solution",
+      "vendor": "intel",
+      "product": "integrated_sensor_solution"
+    },
+    {
+      "match": "connectivity performance suite",
+      "vendor": "intel",
+      "product": "connectivity_performance_suite"
+    },
+    {
+      "match": "^lenovo vantage",
+      "vendor": "lenovo",
+      "product": "vantage"
+    },
+    {
+      "match": "^logi options\\+",
+      "vendor": "logitech",
+      "product": "options\\+"
+    },
+    {
+      "match": "^jetbrains teamcity",
+      "vendor": "jetbrains",
+      "product": "teamcity"
+    },
+    {
+      "match": "^jetbrains youtrack",
+      "vendor": "jetbrains",
+      "product": "youtrack"
+    },
+    {
+      "match": "^intellij idea",
+      "vendor": "jetbrains",
+      "product": "intellij_idea"
+    },
+    {
+      "match": "^pycharm",
+      "vendor": "jetbrains",
+      "product": "pycharm"
+    },
+    {
+      "match": "^jetbrains rider",
+      "vendor": "jetbrains",
+      "product": "rider"
+    },
+    {
+      "match": "^pl/sql developer",
+      "vendor": "allroundautomations",
+      "product": "pl\\/sql_developer"
+    },
+    {
+      "match": "^xampp",
+      "vendor": "apachefriends",
+      "product": "xampp"
+    },
+    {
+      "match": "^adobe lightroom",
+      "vendor": "adobe",
+      "product": "lightroom"
+    },
+    {
+      "match": "^adobe photoshop",
+      "vendor": "adobe",
+      "product": "photoshop"
+    },
+    {
+      "match": "^adobe creative cloud",
+      "vendor": "adobe",
+      "product": "creative_cloud_desktop_application"
+    },
+    {
+      "match": "^adobe genuine service",
+      "vendor": "adobe",
+      "product": "genuine_service"
+    },
+    {
+      "match": "^hmailserver",
+      "vendor": "hmailserver",
+      "product": "hmailserver"
+    },
+    {
+      "match": "^k-lite codec pack",
+      "vendor": "codecguide",
+      "product": "k-lite_codec_pack"
+    },
+    {
+      "match": "edrawmax",
+      "vendor": "wondershare",
+      "product": "edraw-max"
+    },
+    {
+      "match": "^gnu privacy guard",
+      "vendor": "gnupg",
+      "product": "gnupg"
+    },
+    {
+      "match": "^gpg4win",
+      "vendor": "gpg4win",
+      "product": "gpg4win"
+    },
+    {
+      "match": "^nero burning rom",
+      "vendor": "nero",
+      "product": "nero"
+    },
+    {
+      "match": "^nero mediahome",
+      "vendor": "nero",
+      "product": "mediahome"
+    },
+    {
+      "match": "^wix toolset",
+      "vendor": "firegiant",
+      "product": "wix_toolset"
+    },
+    {
+      "match": "^epsonnet print",
+      "vendor": "epson",
+      "product": "net_print"
+    },
+    {
+      "match": "^sas 9\\.",
+      "vendor": "sas",
+      "product": "base_sas"
     }
   ]
 }

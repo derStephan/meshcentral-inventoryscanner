@@ -1343,6 +1343,128 @@ steps.push(function (next) {
     next();
 });
 
+// ---- v3.1.0: big NVD feeds, distro-managed packages, OS lifecycle, Windows release CPEs ----
+steps.push(function (next) {
+    // splitter == whole parse; a feed above the whole-parse limit is indexed (2026 feed is ~520 MB)
+    var feed = { format: 'NVD_CVE', vulnerabilities: [] };
+    for (var i = 0; i < 40; i++) {
+        feed.vulnerabilities.push({ cve: { id: 'CVE-2026-' + (10000 + i), published: '2026-01-01T00:00:00', descriptions: [{ lang: 'en', value: 'a "quoted" {brace} \\ and } text ' + i }],
+            configurations: [{ nodes: [{ cpeMatch: [{ vulnerable: true, criteria: 'cpe:2.3:a:acme:tool' + (i % 3) + ':*:*:*:*:*:*:*:*', versionEndExcluding: '2.0' }] }] }] } });
+    }
+    var dir = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-feed-'));
+    var fp = path.join(dir, 'nvdcve-2.0-2026.json');
+    fs.writeFileSync(fp, JSON.stringify(feed, null, 1));
+    var mk = function () { return factory({ parent: { db: db, datapath: fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-f2-')), debug: function () { }, config: { settings: {} }, webserver: {} } }); };
+    var a = mk(), b = mk();
+    a.loadNvdFromFile(fp);
+    b.NVD_WHOLE_PARSE_MAX = 10; // force the splitter
+    var nb = b.loadNvdFromFile(fp);
+    check('nvd: big-feed splitter indexes exactly what the whole parse indexes (strings with braces/quotes/escapes)',
+        nb === 40 && a.allCves.length === 40 && b.allCves.length === 40 && JSON.stringify(Object.keys(a.productIndex).sort()) === JSON.stringify(Object.keys(b.productIndex).sort()) &&
+        b.allCves[3].description === a.allCves[3].description, [nb, a.allCves.length, b.allCves.length]);
+    var bad = mk(); bad.NVD_WHOLE_PARSE_MAX = 10;
+    fs.writeFileSync(fp, '{"vulnerabilities":[{"cve":{"id":"CVE-2026-1"}}');
+    check('nvd: a truncated big feed is reported, never half-indexed silently', bad.loadNvdFromFile(fp) === 0);
+    next();
+});
+
+steps.push(function (next) {
+    var o5 = factory({ parent: { db: db, datapath: fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-lc-')), debug: function () { }, config: { settings: {} }, webserver: {} } });
+    var now = Date.parse('2026-11-12T00:00:00Z');
+    o5.osLifecycle = {
+        ubuntu: { fetched: new Date(now).toISOString(), cycles: o5.sanitizeLifecycleCycles([{ cycle: '24.04', eol: '2029-05-31', lts: true }, { cycle: '20.04', eol: '2025-05-29' }, { cycle: 'x;rm', eol: '2099-01-01' }]) },
+        windows: { fetched: new Date(now).toISOString(), cycles: o5.sanitizeLifecycleCycles([{ cycle: '11-25h2-w', eol: '2027-10-12' }, { cycle: '11-23h2-w', eol: '2025-11-11' }, { cycle: '11-23h2-e', eol: '2026-11-10' }]) }
+    };
+    check('lifecycle: hostile cycle names are dropped by the sanitizer', o5.osLifecycle.ubuntu.cycles.length === 2);
+    check('lifecycle: Ubuntu 24.04 supported, 20.04 end of life, unknown distro unknown',
+        o5.osSupportState('Ubuntu 24.04.5 LTS', now).state === 'supported' && o5.osSupportState('Ubuntu 20.04.6 LTS', now).state === 'eol' && o5.osSupportState('Gentoo', now).state === 'unknown');
+    check('lifecycle: Windows release + edition resolve to the right cycle (Pro = W, Enterprise = E)',
+        o5.osSupportState('Microsoft Windows 11 Pro - 25H2/26200', now).state === 'supported' && o5.osSupportState('Microsoft Windows 11 Pro - 23H2/22631', now).state === 'eol' &&
+        o5.osSupportState('Microsoft Windows 11 Enterprise - 23H2/22631', now).state === 'eol' && o5.osSupportState('Microsoft Windows 11 Enterprise - 23H2/22631', Date.parse('2026-11-01T00:00:00Z')).state === 'supported');
+    check('lifecycle: no data means unknown, never "supported"', factory({ parent: { db: db, datapath: fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-lc0-')), debug: function () { }, config: { settings: {} }, webserver: {} } }).osSupportState('Ubuntu 24.04.5 LTS').state === 'unknown');
+
+    var pkgs = [
+        { name: 'python3-six', version: '1.16.0-4', publisher: 'Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>', location: 'dpkg' },
+        { name: 'openssh-server', version: '1:9.6p1-3ubuntu13.20', publisher: 'Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>' },
+        { name: 'docker-ce', version: '5:29.6.2-1~ubuntu.24.04~noble', publisher: 'Docker <support@docker.com>', location: 'dpkg' },
+        { name: 'Mozilla Firefox', version: '121.0', publisher: 'Mozilla' }
+    ];
+    o5.scanDeviceSoftware(pkgs, function (rs) {
+        var st = rs.map(function (x) { return x.software + '=' + x.status; });
+        check('distro: distribution packages are "distro-managed" on a supported OS (also without the location field)',
+            rs[0].status === 'distro-managed' && rs[1].status === 'distro-managed' && rs[0].isCve === false && /Ubuntu 24\.04/.test(rs[0].description), st);
+        check('distro: third-party repository packages (docker.com) and Windows apps are NOT exempted',
+            rs.filter(function (x) { return x.software === 'docker-ce'; })[0].status.indexOf('distro') < 0 && rs.filter(function (x) { return x.software === 'Mozilla Firefox'; })[0].status.indexOf('distro') < 0, st);
+        o5.scanDeviceSoftware(pkgs.slice(0, 1), function (rEol) {
+            check('distro: same package on an end-of-life release is "distro-eol"', rEol[0].status === 'distro-eol' && rEol[0].distro === 'eol', rEol[0].status);
+            var eolF = o5.osEolFinding({ osdesc: 'Ubuntu 20.04.6 LTS' });
+            check('distro: an end-of-life OS raises exactly one OS-EOL finding, a supported one none',
+                eolF != null && eolF.cve === 'OS-EOL' && eolF.severity === 'CRITICAL' && o5.osEolFinding({ osdesc: 'Ubuntu 24.04.5 LTS' }) === null);
+            o5.pluginSettings = { vulnerabilityScanner: { distroManaged: false } };
+            o5.scanDeviceSoftware(pkgs.slice(0, 1), function (rOff) {
+                check('distro: the rule can be switched off (then the package goes through normal matching)', rOff[0].status.indexOf('distro') < 0, rOff[0].status);
+                o5.pluginSettings = {};
+                next();
+            }, { osDesc: 'Ubuntu 24.04.5 LTS' });
+        }, { osDesc: 'Ubuntu 20.04.6 LTS' });
+    }, { osDesc: 'Ubuntu 24.04.5 LTS' });
+});
+
+steps.push(function (next) {
+    // lifecycle fetch: https only via the indirection, one request per product, cache written, failures kept
+    var o6 = factory({ parent: { db: db, datapath: fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-lf-')), debug: function () { }, config: { settings: {} }, webserver: {} } });
+    var urls = [];
+    o6.osLifecycleHttpGet = function (u, cb) { urls.push(u); if (/ubuntu\.json$/.test(u)) { cb(null, JSON.stringify([{ cycle: '24.04', eol: '2029-05-31' }])); } else { cb(new Error('offline')); } };
+    o6.maybeFetchOsLifecycle(function (e, r) {
+        check('lifecycle fetch: one https request per product from the default endoflife.date API', urls.length === o6.OS_LIFECYCLE_SLUGS.length && urls.every(function (u) { return u.indexOf('https://endoflife.date/api/') === 0; }) && r.ok === 1 && r.failed === urls.length - 1, [urls.length, r]);
+        check('lifecycle fetch: cache written and reloadable', fs.existsSync(o6.osLifecyclePath) && (function () { o6.osLifecycle = {}; o6.loadOsLifecycle(); return o6.osLifecycle.ubuntu && o6.osLifecycle.ubuntu.cycles[0].eol === '2029-05-31'; })());
+        urls.length = 0;
+        o6.maybeFetchOsLifecycle(function (e2, r2) {
+            check('lifecycle fetch: fresh products are not fetched again, failed ones are retried', urls.indexOf('https://endoflife.date/api/ubuntu.json') < 0 && urls.length === o6.OS_LIFECYCLE_SLUGS.length - 1, urls.length);
+            o6.pluginSettings = { vulnerabilityScanner: { osLifecycleEnabled: false } }; urls.length = 0;
+            o6.maybeFetchOsLifecycle(function () {
+                check('lifecycle fetch: disabled means no request at all', urls.length === 0);
+                o6.handleAdminPostReq({ headers: XHDR, body: { action: 'save_settings', scanIntervalHours: '24', updateHours: '168', anyCveMaxAgeYears: '5', collectIntervalMinutes: '1440', notifyThreshold: 'HIGH', osLifecycleUrl: 'http://insecure.example/api/' } },
+                    mockRes(function (d) { check('lifecycle settings: non-https API URL rejected', !!d.error && /lifecycle/i.test(d.error), d); next(); }), user);
+            });
+        });
+    });
+});
+
+steps.push(function (next) {
+    // Windows OS matching: release-specific CPE + full build; no blanket "all versions" findings
+    var o7 = factory({ parent: { db: db, datapath: fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-win-')), debug: function () { }, config: { settings: {} }, webserver: {} } });
+    var cve = function (id) { return { id: id, severity: 'HIGH', cvss: 8, description: 'x', published: '2026-10-01', references: [] }; };
+    o7.productIndex['microsoft|windows_11'] = [{ part: 'o', kind: 'any', cves: [cve('CVE-2021-0001')] }];
+    o7.productIndex['microsoft|windows_11_25h2'] = [{ part: 'o', kind: 'range', endExc: '10.0.26200.9711', cves: [cve('CVE-2026-0001')] }];
+    check('winos: target uses the release CPE and the full build', JSON.stringify(o7.windowsOsTarget('Microsoft Windows 11 Pro - 25H2/26200', '10.0.26200.9711')) === JSON.stringify({ product: 'windows_11_25h2', build: '10.0.26200.9711' }));
+    check('winos: patched build -> no OS CVE; older build -> the bounded CVE; generic all-version entries never reported',
+        o7.scanDeviceOs('Microsoft Windows 11 Pro - 25H2/26200', '10.0.26200.9711').length === 0 &&
+        o7.scanDeviceOs('Microsoft Windows 11 Pro - 25H2/26200', '10.0.26200.6899').map(function (x) { return x.cve; }).join() === 'CVE-2026-0001');
+    check('winos: without the full build (old agent, bare "26200") nothing is asserted', o7.scanDeviceOs('Microsoft Windows 11 Pro - 25H2/26200', '26200').length === 0);
+    next();
+});
+
+steps.push(function (next) {
+    // generic publisher -> vendor evidence: only vendors that exist in the loaded NVD application data
+    var o8 = factory({ parent: { db: db, datapath: fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-pv-')), debug: function () { }, config: { settings: {} }, webserver: {} } });
+    o8.cpeVendorTokens = { jetbrains: 1, apache_friends: 1, nero: 1 };
+    check('vendor: legal forms stripped, accepted only when the vendor exists in NVD',
+        o8.deriveVendorFromPublisher('JetBrains s.r.o.') === 'jetbrains' && o8.deriveVendorFromPublisher('Apache Friends') === 'apache_friends' &&
+        o8.deriveVendorFromPublisher('Nero AG') === 'nero' && o8.deriveVendorFromPublisher('Unknown Widgets GmbH') === '' &&
+        o8.deriveVendorFromPublisher('Ubuntu Developers <x@lists.ubuntu.com>') === '');
+    // shipped table: python row no longer swallows python3-* package names; Teams add-in is not the Teams client
+    var tbl = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'cpe-table.json'), 'utf8'));
+    var first = function (n) { var e = tbl.entries.filter(function (x) { return new RegExp(x.match, 'i').test(n); })[0]; return e ? e.vendor + ':' + e.product : null; };
+    check('table: python3-* library packages and "Python Launcher" are not the interpreter; "Python 3.12.4 (64-bit)" is',
+        first('python3-six') === null && first('Python Launcher') === null && first('Python 3.12.4 (64-bit)') === 'python:python', [first('python3-six'), first('Python 3.12.4 (64-bit)')]);
+    check('table: Teams Meeting Add-in is not reported with Teams client CVEs; Nextcloud desktop client is not the server',
+        first('Microsoft Teams Meeting Add-in for Microsoft Office') === 'microsoft:teams_meeting_add-in' && first('Microsoft Teams') === 'microsoft:teams' &&
+        first('Nextcloud 3.17.3.20251009') === 'nextcloud:desktop' && first('Nextcloud Talk (Machine - MSI)') === null);
+    check('table: new verified rows resolve (examples)', first('Dell Display Manager 2.1') === 'dell:display_manager' && first('JetBrains TeamCity 2019.1.4') === 'jetbrains:teamcity' && first('Visual Studio Build Tools 2019') === 'microsoft:visual_studio_2019');
+    next();
+});
+
 console.log('registered steps: ' + steps.length);
 (function run(i) {
     if (i >= steps.length) {

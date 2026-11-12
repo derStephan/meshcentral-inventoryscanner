@@ -141,6 +141,9 @@
             Coverage: {{report.assessablePrograms}} of {{report.coverageBase}} applications ({{report.coveragePercent}}%) have a verified CPE mapping and were checked against the NVD.
             {{report.notAssessablePrograms}} further applications have no mapping, are listed as <em>not assessable</em> in the CSV exports and are <strong>not covered by this scan</strong>.
             {{#if report.outOfScopePrograms}}Separately counted: {{report.outOfScopePrograms}} <em>driver / firmware</em> entries &mdash; the NVD CVE application data does not cover them, they are patched via the hardware vendor and Windows Update.{{/if}}
+            {{#if report.distroManagedPrograms}}<br>{{report.distroManagedPrograms}} <em>Linux distribution packages</em> on operating systems that still receive security updates are counted as <strong>patched by the distribution</strong>: distributions backport fixes into the same upstream version, so NVD version ranges do not apply to them (support dates: endoflife.date).{{/if}}
+            {{#if report.distroEolPrograms}}<br><strong>{{report.distroEolPrograms}} distribution packages run on an end-of-life OS release and no longer get security fixes</strong> (finding OS-EOL per device).{{/if}}
+            {{#if report.distroUnknownPrograms}}<br>{{report.distroUnknownPrograms}} distribution packages could not be judged because the OS support state is unknown (lifecycle data missing or release not recognized).{{/if}}
         </div>
     </div>
 
@@ -158,6 +161,9 @@
             <div><b>False Positives:</b> {{this.falsePositiveCves}}</div>
             <div><b>CPE coverage:</b> {{this.assessablePrograms}}/{{this.coverageBase}} applications ({{this.coveragePercent}}%)</div>
             <div><b>Drivers / firmware:</b> {{this.outOfScopePrograms}} (outside NVD scope)</div>
+            {{#if this.distroManagedPrograms}}<div><b>Distribution packages:</b> {{this.distroManagedPrograms}} (patched by the distribution)</div>{{/if}}
+            {{#if this.distroEolPrograms}}<div><b>Packages on end-of-life OS:</b> {{this.distroEolPrograms}}</div>{{/if}}
+            {{#if this.distroUnknownPrograms}}<div><b>Packages, OS support unknown:</b> {{this.distroUnknownPrograms}}</div>{{/if}}
         </div>
 
         <h2>Severity Distribution</h2>

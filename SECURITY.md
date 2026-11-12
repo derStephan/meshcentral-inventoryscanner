@@ -5,20 +5,9 @@
 Only the latest release on `main` receives fixes (the MeshCentral plugin installer always offers the newest
 version; there are no maintained branches).
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 3.0.x   | :white_check_mark: |
-| < 3.0   | :x:                |
-
 ## Reporting a Vulnerability
 
-Please report security vulnerabilities by opening a private GitHub Security Advisory:
-
-1. Go to the **Security** tab of this repository
-2. Click **Report a vulnerability**
-3. Fill in the details
-
-We will acknowledge receipt within 48 hours and provide a timeline for fixes.
+Please report security vulnerabilities by opening an issue.
 
 ---
 
@@ -60,6 +49,9 @@ We will acknowledge receipt within 48 hours and provide a timeline for fixes.
   scan (CWE-1333).
 - NVD `.meta` SHA-256 mismatches are logged as warnings (NVD serves stale `.meta` files); the feed content itself
   is only trusted as public data.
+- OS lifecycle data (endoflife.date) is size-capped (512 KB per product), every field is type-checked and cycle
+  names are whitelisted before use. A wrong date could only change the support state shown for distribution
+  packages; it can never cause commands on devices. Without data the state is *unknown*, never *supported*.
 
 ### Agent-side safety
 - The client transcript (`invscanner-winget.log`) is written only next to `meshagent.exe` or into
@@ -72,8 +64,9 @@ We will acknowledge receipt within 48 hours and provide a timeline for fixes.
   requests are never sent through the inventory channel.
 
 ### Data protection
-- **No inventory data leaves the server.** Outbound requests: `nvd.nist.gov` (feeds) and
-  `raw.githubusercontent.com` (mapping table; configurable, https only). No NVD API and no CPE dictionary API is
+- **No inventory data leaves the server.** Outbound requests: `nvd.nist.gov` (feeds),
+  `raw.githubusercontent.com` (mapping table; configurable, https only) and `endoflife.date` (OS support dates,
+  since 3.1.0; a fixed list of ~15 product names, configurable, https only). No NVD API and no CPE dictionary API is
   queried at runtime.
 - Ratings, comments and mappings are stored locally under `<datapath>/nvd/` and
   `<datapath>/plugins/inventoryscanner/`; comments are stored raw and escaped on output.

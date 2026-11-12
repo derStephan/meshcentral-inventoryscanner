@@ -98,7 +98,9 @@ Based on official MeshCentral source (`pluginHandler.js`, `webserver.js`, `db.js
 - **DB ids:** node `_id` = `node/<domain>/<id>`; sysinfo = `'si' + node._id` (doc under `rec.doc`);
   mesh `_id` = `mesh/<domain>/<name>`.
 - **OS fields:** there is **no** `node.os`/`node.platform`. Use `node.osdesc` (display string) and
-  `doc.hardware.windows.osinfo.BuildRevision` (Windows build number; `BuildNumber` as fallback).
+  `doc.hardware.windows.osinfo.BuildRevision` = `Version + '.' + UBR`, e.g. `10.0.26200.9711` (verified in
+  agents/modules_meshcore/computer-identifiers.js; `BuildNumber` = bare `26200` as fallback). Only the full form
+  can be compared with the NVD Windows ranges (see the OS matching paragraph below).
 - **Sysinfo structure** (verified against meshagent.js): hardware lives under `doc.hardware` —
   `identifiers.{cpu_name,gpu_name[],bios_*,board_*,product_name,chassis_*,storage_devices[]}`,
   `windows.memory[]`, `tpm`, `network.dns[]`.
@@ -131,7 +133,7 @@ POST body `action=`:
 
 | action | Keys | Notes |
 |---|---|---|
-| `save_assessment` | `meshId` or `meshIds` (comma list), `cveId`, `assessment`, `comment` | comment **mandatory**; id must match `CVE-\d{4}-\d{4,}` or be `WINDOWS-UPDATES`; mesh ids validated `^mesh/[^:]+$`; comment trimmed, ≤1000 chars, stored **raw** |
+| `save_assessment` | `meshId` or `meshIds` (comma list), `cveId`, `assessment`, `comment` | comment **mandatory**; id must match `CVE-\d{4}-\d{4,}` or be `WINDOWS-UPDATES` / `OS-EOL`; mesh ids validated `^mesh/[^:]+$`; comment trimmed, ≤1000 chars, stored **raw** |
 | `flag_false_positive` | `meshId(s)`, `cveId`, `comment?` | comment **optional** (empty stays empty); sets `assessment:'UNKNOWN', flagged:true` |
 | `unflag_false_positive` | `meshId(s)`, `cveId` | deletes flagged entries for all given meshes |
 | `get_cpe_table` | — | `{entries:[{match,vendor,product,source:'built-in'|'remote'|'custom'}], cpeTable:{source,updated,url,enabled,entries}}`; a `kind`
@@ -155,11 +157,12 @@ POST body `action=`:
 | `remove_cpe` | `index` | legacy index-based removal |
 | `get_settings` | — | `{settings:{...effective...}, sources:{key:'file'|'config.json'|'default', notifyPerGroup:{meshId:src}, revertAllowed:{key:bool}}}` |
 | `save_settings` | full form field set (see `saveSettingsHandler`) | validates everything, writes `scanner-settings.json`, runs `rescheduleAll()`, answers with the `get_settings` payload; `reset=true` clears all overrides |
-| `revert_setting` | one key of `revertScanIntervalHours`/`revertScanMeshes`/`revertNotifyOnScan`/`revertNotifyThreshold`/`revertNotifyUnratedRepeat`/`revertNotify`/`revertUpdateHours`/`revertAnyCveMaxAgeYears`/`revertAutoProductMatch`/`revertCpeTableEnabled`/`revertCpeTableUrl`/`revertCollectIntervalMinutes`/`revertCollectOnAgentConnect` = 'true' | removes that single override so config.json/default applies again |
+| `revert_setting` | one key of `revertScanIntervalHours`/`revertScanMeshes`/`revertNotifyOnScan`/`revertNotifyThreshold`/`revertNotifyUnratedRepeat`/`revertNotify`/`revertUpdateHours`/`revertAnyCveMaxAgeYears`/`revertAutoProductMatch`/`revertCpeTableEnabled`/`revertCpeTableUrl`/`revertDistroManaged`/`revertOsLifecycleEnabled`/`revertOsLifecycleUrl`/`revertCollectIntervalMinutes`/`revertCollectOnAgentConnect` = 'true' | removes that single override so config.json/default applies again |
 
 Every POST: 401 unless `isAuthorizedAdmin`, 403 without header `X-InvScanner-Request: 1`, 400 without an object body.
 GET also knows `show_cpe` (legacy JSON list of custom entries with index, used by nothing in the panel).
-`save_assessment`/`flag_false_positive`/`unflag_false_positive` all validate the finding id (unflag since v3.0.1);
+`save_assessment`/`flag_false_positive`/`unflag_false_positive` all validate the finding id (`CVE-...`,
+`WINDOWS-UPDATES`, `OS-EOL`; unflag since v3.0.1);
 `scan` validates every mesh id with the same `^mesh/[^:]+$` rule (since v3.0.1, ≤1000 ids).
 `add_cpe` rejects regexes failing `isSafeTableRegex` and vendor/product longer than 200 characters.
 
@@ -202,12 +205,13 @@ unrated finding is `mixed:false, assessment:null`.
 
 **`buildOverallReport()` shape** (drives both report views):
 `{ generated, totalSystems, totalPrograms, assessablePrograms, notAssessablePrograms, outOfScopePrograms,
-coverageBase, coveragePercent, totalCves, falsePositiveCves, severityCounts{CRITICAL..UNKNOWN}, uniqueCves, locationCount,
+distroManagedPrograms, distroEolPrograms, distroUnknownPrograms, coverageBase, coveragePercent, totalCves, falsePositiveCves, severityCounts{CRITICAL..UNKNOWN}, uniqueCves, locationCount,
 locations:[{ id, name, totalSystems, totalPrograms, assessablePrograms, notAssessablePrograms, outOfScopePrograms,
-coverageBase, coveragePercent, totalCves, falsePositiveCves, severityCounts, uniqueCves, findings:[{cve, severity, cvss, software, version,
+distroManagedPrograms, distroEolPrograms, distroUnknownPrograms, coverageBase, coveragePercent, totalCves, falsePositiveCves, severityCounts, uniqueCves, findings:[{cve, severity, cvss, software, version,
 description, assessment, comment, flagged, effectiveSeverity, devices:[hostnames]}], devices:[deviceRec] }],
 devices:[deviceRec] }` with `deviceRec = {hostName, name, group, os, programs, programsAssessable,
-programsNotAssessable, programsOutOfScope, cveCount, critical..unknown}`. `locations` is an **array** (views iterate it with
+programsNotAssessable, programsOutOfScope, programsDistroManaged, osSupport, cveCount, critical..unknown}`
+(`osSupport` = 'supported'|'eol'|'unknown'; distro counts are NEVER part of `coverageBase`). `locations` is an **array** (views iterate it with
 `{{@index}}` anchors); `findingsById`/`uniqueCveIds` internals: `findingsById` is deleted before returning.
 **`coverageBase` exists because Handlebars cannot add** - the reports must print `assessable/coverageBase`, never
 `assessable/totalPrograms` (drivers would silently deflate the percentage).
@@ -275,6 +279,7 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
 <plugins/inventoryscanner>/cpe-table.json        the maintained table itself: the installer unpacks the repo copy
                                   here and every refresh rewrites it in place (see the CPE table paragraph)
 <plugins/inventoryscanner>/scanner-settings.json Settings-tab overrides (never config.json)
+<plugins/inventoryscanner>/os-lifecycle.json     cached endoflife.date support dates (v3.1.0)
 <plugins/inventoryscanner>/winget-results.json   last run per device (drives wg_status/wg_programs)
 <plugins/inventoryscanner>/winget-update.log     batch log, rotated at ~5 MB
 <plugins/inventoryscanner>/data/<nodeid>/        collected software + windowsupdates JSON per device
@@ -434,6 +439,31 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
     `scanner-settings.json`; `scannerConfig()`/`collectorConfig()`/`scheduleUpdate()`/`anyCveMaxAgeYears()` read
     through `effectiveSectionConfig()`. `obj.timerGen` + `rescheduleAll()` invalidate chained scan/collection
     timers on save, and `collectAndReschedule()` (no arguments!) re-reads its interval every cycle.
+12. **Distribution packages are judged by the OS lifecycle, not by NVD ranges (v3.1.0):** distributions backport
+    fixes into the same upstream version (`2.4.4-2ubuntu17.6` is a patched 2.4.4), so a range check only produces
+    false positives (measured: 3,696 CVE rows from `python3-*` libraries alone, all wrong) and misses distro-only
+    fixes. `isDistroPackage` (agent row `location` dpkg|rpm|pacman|apk, verified in linux-info.js, or a maintainer
+    `Name <mail@host>` publisher) + `isDistroMaintained` (maintainer domain of the distribution itself,
+    `DISTRO_MAINTAINER_DOMAINS`; third-party repos such as docker.com/nvidia.com are still CVE-checked) -> status
+    `distro-managed` | `distro-eol` | `distro-unknown` from `osSupportState(osdesc)`. Support dates come from
+    endoflife.date (`maybeFetchOsLifecycle`, one https GET per slug in `OS_LIFECYCLE_SLUGS`, cached in
+    `os-lifecycle.json`, refreshed with the NVD cycle, sanitized by `sanitizeLifecycleCycles`); nothing is
+    hard-coded. No data = `unknown`, never `supported`. An end-of-life release raises one synthetic finding
+    `OS-EOL` per device (`osEolFinding`, CRITICAL; ratable/flaggable like `WINDOWS-UPDATES`). Windows cycles are
+    `<10|11>-<release>-<w|e>` (Pro/Home = w, Enterprise/Education = e). Distro packages never enter `coverageBase`.
+13. **Windows OS matching (v3.1.0):** `windowsOsTarget` maps Windows 10/11 to the release CPE
+    (`windows_11_25h2`, from the `25H2` in osdesc) and Server 2016+ to `windows_server_<year>`, and only
+    `kind:'range'` definitions are evaluated against `BuildRevision` (`10.0.<build>.<UBR>`). The generic
+    `windows_11`/`windows_10` CPEs hold almost only early all-version entries and matched EVERY machine identically
+    (568 findings per Windows 11 PC before v3.1.0). No full build -> no OS assertion. Older Windows keeps the
+    previous path (`mapOsToCpe`).
+14. **Big NVD feeds (v3.1.0):** a feed above `NVD_WHOLE_PARSE_MAX` (256 MB) is split by
+    `splitNvdVulnerabilities` (byte-level scanner over the `vulnerabilities` array, one JSON.parse per CVE). The
+    2026 feed is ~520 MB, above V8's 512 MB string limit: `readFileSync(..,'utf8')` threw and the whole year was
+    silently missing. Load errors are now written to nvd-download.log.
+15. **Publisher evidence (v3.1.0):** `deriveVendorFromPublisher` falls back to `vendorFromPublisherIndex`: the
+    publisher without legal forms is accepted as vendor ONLY when that exact token is an application vendor in the
+    loaded feeds (`cpeVendorTokens`); the product still has to be proven by the token matcher.
 
 ## Configuration keys & precedence
 
@@ -446,7 +476,8 @@ never touches config.json). The config.json keys below remain the fallback/seed:
   `cpeTableEnabled`/`cpeTableUrl` (remote curated table; default = this repo's cpe-table.json on main),
   `scanIntervalHours` (720 = monthly OK), `scanMeshes`, `notifyOnScan`, `notifyThreshold`,
   `notifyUnratedRepeat`, `notify` (per-group), `updateHours`, `anyCveMaxAgeYears` (suppresses ancient version-less
-  `kind:"any"` CVE matches).
+  `kind:"any"` CVE matches), `distroManaged` (default true), `osLifecycleEnabled` (default true),
+  `osLifecycleUrl` (default `https://endoflife.date/api/`, https, must end with `/`).
 - `inventoryScanner` (note: one letter less than the section above): `collectIntervalMinutes`, `collectOnAgentConnect`.
 - `wingetUpdater` (sibling section, own Updates-tab form): `enabled` (default **false**), `intervalHours` (deprecated, ignored),
   `updateMeshes` (array; scheduled batches ONLY run on these - empty means NOTHING runs on purpose),
@@ -470,6 +501,9 @@ longer duplicates it - drift between the two files was the reason for the move):
 | `vulnerabilityScanner.cpeTableEnabled` | `true` | Re-download the maintained table with every NVD refresh |
 | `vulnerabilityScanner.cpeTableUrl` | (this repo's `cpe-table.json`) | https URL of the maintained table (own fork allowed) |
 | `vulnerabilityScanner.anyCveMaxAgeYears` | `5` | "Suppress version-less CVEs older than N years" (`0` = never) |
+| `vulnerabilityScanner.distroManaged` | `true` | "Linux distribution packages: trust the distribution while the OS is supported" |
+| `vulnerabilityScanner.osLifecycleEnabled` | `true` | "Fetch OS support dates" (endoflife.date; off = support state unknown, no OS-EOL) |
+| `vulnerabilityScanner.osLifecycleUrl` | `https://endoflife.date/api/` | "Lifecycle API URL" (mirror only) |
 | `inventoryScanner.collectIntervalMinutes` | `1440` | Collect inventory every N minutes (`0` = off) |
 | `inventoryScanner.collectOnAgentConnect` | `true` | "Collect when an agent connects" |
 | `wingetUpdater.enabled` | `false` | Automatic winget updates on/off (Updates tab) |
@@ -498,7 +532,7 @@ Data dumps from support sessions (CSV exports, browser output TXTs) live OUTSIDE
 MeshCentral install folder) and root `/*.txt` + `/*.csv` are gitignored as a guard - never copy them in.
 - `tools/check.js`: `node --check` on the plugin, inline-script syntax/`{{`-hazard check, JSON validity of
   config files, and view-name↔render-name consistency. Must run anywhere (no dependencies).
-- `tools/test-plugin.js`: 261 behavioral assertions (55 steps) against the real module (mocked MeshCentral DB/webserver):
+- `tools/test-plugin.js`: 284 behavioral assertions (60 steps) against the real module (mocked MeshCentral DB/webserver):
   locations grouping & counting, manual-rating severity override, FP exclusion, host-name preference, coverage
   numbers, multi-mesh scan/`mixed` logic, all POST handlers incl. validation/rejections, routes, admin gating
   (401), CPE table add/delete, vulns CSV header/content, toolbar button injection (simulated browser DOM), remote CPE table apply/cache/fetch/settings, NVD download-log tailing, manual NVD update trigger + concurrency guard, unknown-version matching rules, winget updater (builder/parser/queue/routes, incl. single-package update/uninstall runs + `wg_programs`), driver/firmware classification & coverage denominator, honest CVE aggregation (`deviceList`/`versionVaried`), coexistence-aware pruning, `longTimeout` chunking, restart-proof schedule delays,
@@ -568,3 +602,7 @@ across the whole fleet (`$invOnly` restricted script runs).
 v3.0.1 (second audit, see AUDIT.md): request-header guard on POST, default-domain admin gate incl. toolbar hook,
 working winget uninstall/PATH lookup/table parsing, protected client transcript folder, NVD-verified mapping
 table, safe-regex check, agent-reply ownership checks, rights field for agents >= 2026-11-09.
+v3.1.0 (matching rework, measured on a 39-device fleet, see AUDIT.md): NVD feeds > 256 MB are split instead of
+parsed whole (the 2026 feed was never loaded), distro-managed packages + OS lifecycle from endoflife.date + OS-EOL
+finding, Windows OS matching by release CPE + full build, NVD-verified publisher->vendor evidence, 35 new verified
+table rows, python/Teams/Nextcloud mis-mappings fixed.

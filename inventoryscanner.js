@@ -17,7 +17,7 @@
  * NVD feed is downloaded.
  *
  * @author derStephan
- * @version 3.0.1
+ * @version 3.1.0
  *
  * Transparency: This plugin was created with the assistance of Qwen 3.6 27B and Qwen 3.8 Flash Next.
  * Audits: 2026-11-06 (NVIDIA Nemotron 3 550B A55B) and 2026-11-11 (Claude, v3.0.1) via opencode - see AUDIT.md.
@@ -156,6 +156,8 @@ module.exports.inventoryscanner = function (parent) {
      * loaded NVD index (lower-cased). Used to check whether a candidate product token
      * derived from an installed-software name actually exists before searching. */
     obj.cpeProductTokens = {};
+    /** @type {Object<string, number>} CPE vendor tokens of APPLICATION entries in the loaded feeds (v3.1.0). */
+    obj.cpeVendorTokens = {};
     /** @type {Array<object>} All CVE records loaded from the NVD feeds. */
     obj.allCves = [];
     /** @type {string|null} ISO timestamp of the last successful feed download. */
@@ -213,8 +215,10 @@ module.exports.inventoryscanner = function (parent) {
         obj.loadCollectedInventory();
         obj.loadCustomCpe();
         obj.loadRemoteCpeTable();
+        obj.loadOsLifecycle();
         obj.loadPluginSettings();
         obj.maybeFetchCpeTable();
+        obj.maybeFetchOsLifecycle();
         obj.wgLoadResults();
         obj.installRouteHook();
         obj.ensureNvdData();
@@ -587,6 +591,7 @@ module.exports.inventoryscanner = function (parent) {
                     obj.updateTimerArmed = true;
                 }
                 obj.maybeFetchCpeTable();
+                obj.maybeFetchOsLifecycle();
                 obj.scheduleUpdate();
             });
         }, hours * 3600 * 1000);
@@ -1532,7 +1537,13 @@ module.exports.inventoryscanner = function (parent) {
         var autoProductMatch = true; // automatic product-token matching for unmapped names
         var cpeTableEnabled = true;  // refresh the curated table from the repository
         var cpeTableUrl = obj.CPE_TABLE_DEFAULT_URL;
+        var distroManaged = true;      // distribution packages judged by the OS support state (v3.1.0)
+        var osLifecycleEnabled = true; // fetch OS support dates from endoflife.date (v3.1.0)
+        var osLifecycleUrl = obj.OS_LIFECYCLE_DEFAULT_URL;
         if (cfg && (typeof cfg === 'object')) {
+            if (typeof cfg.distroManaged === 'boolean') { distroManaged = cfg.distroManaged; }
+            if (typeof cfg.osLifecycleEnabled === 'boolean') { osLifecycleEnabled = cfg.osLifecycleEnabled; }
+            if ((typeof cfg.osLifecycleUrl === 'string') && /^https:\/\/[^\s"'<>]{5,250}\/$/.test(cfg.osLifecycleUrl)) { osLifecycleUrl = cfg.osLifecycleUrl; }
             if (typeof cfg.scanIntervalHours === 'number' && cfg.scanIntervalHours >= 0) { intervalHours = cfg.scanIntervalHours; }
             if (Array.isArray(cfg.scanMeshes) && cfg.scanMeshes.length > 0) { meshes = cfg.scanMeshes.slice(); }
             if (typeof cfg.notifyOnScan === 'boolean') { notifyOnScan = cfg.notifyOnScan; }
@@ -1547,7 +1558,7 @@ module.exports.inventoryscanner = function (parent) {
                 }
             }
         }
-        return { intervalHours: intervalHours, meshes: meshes, notifyOnScan: notifyOnScan, notifyThreshold: notifyThreshold, notifyThresholds: notifyThresholds, notifyUnratedRepeat: notifyUnratedRepeat, autoProductMatch: autoProductMatch, cpeTableEnabled: cpeTableEnabled, cpeTableUrl: cpeTableUrl };
+        return { intervalHours: intervalHours, meshes: meshes, notifyOnScan: notifyOnScan, notifyThreshold: notifyThreshold, notifyThresholds: notifyThresholds, notifyUnratedRepeat: notifyUnratedRepeat, autoProductMatch: autoProductMatch, cpeTableEnabled: cpeTableEnabled, cpeTableUrl: cpeTableUrl, distroManaged: distroManaged, osLifecycleEnabled: osLifecycleEnabled, osLifecycleUrl: osLifecycleUrl };
     };
 
     /**
@@ -2384,6 +2395,7 @@ obj.loadNvdFromAllFiles = function () {
         obj.productIndex = {};
         obj.productIndexByProduct = {};
         obj.cpeProductTokens = {};
+        obj.cpeVendorTokens = {};
         obj.allCves = [];
         var current = obj.currentYear();
         var newestMtime = null;
@@ -2407,15 +2419,71 @@ obj.loadNvdFromAllFiles = function () {
 
     /**
      * @brief Parse a single NVD feed file and index its vulnerabilities.
+     * Files up to 256 MB are parsed in one piece. Larger files (the 2026 feed is ~520 MB,
+     * above V8's maximum string length of ~512 MB, so readFileSync(...,'utf8') THROWS and
+     * every CVE of that year was silently missing before v3.1.0) go through
+     * splitNvdVulnerabilities, which never builds a string of the whole file.
      * @param {string} file - Path to a <code>nvdcve-2.0-<year>.json</code> file.
+     * @returns {number} number of vulnerabilities indexed from this file.
      */
     obj.loadNvdFromFile = function (file) {
         try {
-            var data = JSON.parse(fs.readFileSync(file, 'utf8'));
-            if (data && Array.isArray(data.vulnerabilities)) { obj.processNvdData(data.vulnerabilities); }
+            var size = fs.statSync(file).size;
+            if (size <= obj.NVD_WHOLE_PARSE_MAX) {
+                var data = JSON.parse(fs.readFileSync(file, 'utf8'));
+                if (data && Array.isArray(data.vulnerabilities)) { obj.processNvdData(data.vulnerabilities); return data.vulnerabilities.length; }
+                return 0;
+            }
+            var n = 0, batch = [];
+            obj.splitNvdVulnerabilities(fs.readFileSync(file), function (item) {
+                batch.push(item); n++;
+                if (batch.length >= 2000) { obj.processNvdData(batch); batch = []; }
+            });
+            if (batch.length > 0) { obj.processNvdData(batch); }
+            return n;
         } catch (err) {
-            obj.debug('plugin:inventory_scanner', 'Error loading NVD file', file, ':', err.message);
+            obj.nvdLog('Error loading NVD file ' + path.basename(file) + ': ' + err.message);
+            return 0;
         }
+    };
+
+    /** @type {number} files above this size are split instead of parsed whole (bytes). */
+    obj.NVD_WHOLE_PARSE_MAX = 256 * 1024 * 1024;
+
+    /**
+     * @brief Split the "vulnerabilities" array of an NVD 2.0 feed buffer into single parsed
+     * objects without ever creating a string of the whole buffer. Byte-level scanner: tracks
+     * string/escape state and brace depth; every top-level array element is sliced out of the
+     * buffer and JSON.parse'd on its own (a few KB each).
+     * @param {Buffer} buf - Whole feed file.
+     * @param {function} onItem - Called with each parsed vulnerability object.
+     */
+    obj.splitNvdVulnerabilities = function (buf, onItem) {
+        var key = Buffer.from('"vulnerabilities"');
+        var at = buf.indexOf(key);
+        if (at < 0) { throw new Error('no vulnerabilities array'); }
+        var i = buf.indexOf(0x5B, at + key.length); // '['
+        if (i < 0) { throw new Error('no vulnerabilities array'); }
+        i++;
+        var len = buf.length, depth = 0, inStr = false, esc = false, start = -1;
+        for (; i < len; i++) {
+            var c = buf[i];
+            if (inStr) {
+                if (esc) { esc = false; }
+                else if (c === 0x5C) { esc = true; }      // backslash
+                else if (c === 0x22) { inStr = false; }   // quote
+                continue;
+            }
+            if (c === 0x22) { inStr = true; continue; }
+            if (c === 0x7B) { if (depth === 0) { start = i; } depth++; continue; }   // {
+            if (c === 0x7D) {                                                          // }
+                depth--;
+                if (depth === 0 && start >= 0) { onItem(JSON.parse(buf.toString('utf8', start, i + 1))); start = -1; }
+                continue;
+            }
+            if (c === 0x5D && depth === 0) { return; }   // ] closes the array
+        }
+        throw new Error('truncated vulnerabilities array');
     };
 
     /**
@@ -2477,6 +2545,7 @@ obj.loadNvdFromAllFiles = function () {
                     // be searched by product name alone, independent of vendor.
                     var pkey = def.product;
                     obj.cpeProductTokens[pkey] = 1;
+                    if (def.part === 'a') { obj.cpeVendorTokens[def.vendor] = 1; }
                     if (!obj.productIndexByProduct[pkey]) { obj.productIndexByProduct[pkey] = []; }
                     var vendors = obj.productIndexByProduct[pkey];
                     var vfound = null;
@@ -2993,6 +3062,201 @@ obj.loadNvdFromAllFiles = function () {
             entries: (obj.remoteCpeEntries != null) ? obj.remoteCpeEntries.length : obj.SOFTWARE_CPE_TABLE.length
         };
     };
+
+    // ---- Distribution-managed packages + OS support lifecycle (v3.1.0) ----
+    // Linux distributions (Ubuntu, Debian, RHEL, ...) backport security fixes into the SAME
+    // upstream version ("2.4.4-2ubuntu17.6" is a patched 2.4.4). An NVD version comparison is
+    // therefore meaningless for distro packages: it reports CVEs that are long fixed (false
+    // positives) and cannot see distro-only fixes. The honest rule: while the distribution
+    // release still gets security updates, its package manager is responsible for these
+    // packages; once the release is end-of-life, nothing patches them any more.
+    // Support dates come from https://endoflife.date (community-maintained, public API, no key),
+    // cached on disk, refreshed with the NVD cycle - never hard-coded.
+
+    /** @type {string} on-disk cache of the lifecycle data. */
+    obj.osLifecyclePath = path.join(obj.meshServer.datapath, 'plugins', 'inventoryscanner', 'os-lifecycle.json');
+    /** @type {string} default API base (product slug is appended + '.json'). */
+    obj.OS_LIFECYCLE_DEFAULT_URL = 'https://endoflife.date/api/';
+    /** @type {object} slug -> { fetched, cycles:[{cycle, eol, support, extendedSupport, lts, releaseLabel, latest}] } */
+    obj.osLifecycle = {};
+    /** @type {Array<string>} products fetched (the slugs the OS detector can produce). */
+    obj.OS_LIFECYCLE_SLUGS = ['ubuntu', 'debian', 'rhel', 'centos', 'centos-stream', 'almalinux', 'rocky-linux', 'fedora', 'linux-mint', 'opensuse', 'sles', 'alpine', 'windows', 'windows-server', 'macos'];
+    /** @type {number} hard cap per lifecycle payload. */
+    obj.OS_LIFECYCLE_MAX_BYTES = 512 * 1024;
+
+    /** @brief Lifecycle status for the Settings tab. */
+    obj.osLifecycleStatus = function () {
+        var out = { products: 0, fetched: '', enabled: obj.scannerConfig().osLifecycleEnabled };
+        for (var k in obj.osLifecycle) { if (Object.prototype.hasOwnProperty.call(obj.osLifecycle, k)) { out.products++; if (obj.osLifecycle[k].fetched > out.fetched) { out.fetched = obj.osLifecycle[k].fetched; } } }
+        return out;
+    };
+
+    /** @brief Load the cached lifecycle data (silent). */
+    obj.loadOsLifecycle = function () {
+        obj.osLifecycle = {};
+        try {
+            if (fs.existsSync(obj.osLifecyclePath)) {
+                var d = JSON.parse(fs.readFileSync(obj.osLifecyclePath, 'utf8'));
+                if (d && typeof d === 'object') {
+                    for (var k in d) {
+                        if (Object.prototype.hasOwnProperty.call(d, k) && obj.OS_LIFECYCLE_SLUGS.indexOf(k) >= 0 && d[k] && Array.isArray(d[k].cycles)) {
+                            obj.osLifecycle[k] = { fetched: String(d[k].fetched || ''), cycles: obj.sanitizeLifecycleCycles(d[k].cycles) };
+                        }
+                    }
+                }
+            }
+        } catch (e) { obj.osLifecycle = {}; }
+    };
+
+    /** @brief Keep only the fields used, with strict types (the payload is external data). */
+    obj.sanitizeLifecycleCycles = function (arr) {
+        var out = [];
+        var dateOrBool = function (v) { return (typeof v === 'boolean') ? v : ((typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v)) ? v : null); };
+        for (var i = 0; i < arr.length && out.length < 500; i++) {
+            var c = arr[i];
+            if (!c || (typeof c.cycle !== 'string' && typeof c.cycle !== 'number')) continue;
+            var cy = String(c.cycle);
+            if (!/^[A-Za-z0-9._-]{1,40}$/.test(cy)) continue;
+            out.push({
+                cycle: cy, eol: dateOrBool(c.eol), support: dateOrBool(c.support), extendedSupport: dateOrBool(c.extendedSupport),
+                lts: c.lts === true, releaseLabel: (typeof c.releaseLabel === 'string') ? c.releaseLabel.substring(0, 60) : '',
+                latest: (typeof c.latest === 'string') ? c.latest.substring(0, 40) : ''
+            });
+        }
+        return out;
+    };
+
+    /** @brief HTTP GET JSON for one lifecycle product (https only, size-capped; test indirection). */
+    obj.osLifecycleHttpGet = function (url, callback) { obj.cpeTableHttpGet(url, callback); };
+
+    /**
+     * @brief Refresh the lifecycle cache when enabled and older than the NVD cycle. One request
+     * per product, sequential; a failing product keeps its cached data.
+     */
+    obj.maybeFetchOsLifecycle = function (callback) {
+        var scfg = obj.scannerConfig();
+        if (!scfg.osLifecycleEnabled) { if (callback) callback(null, { skipped: 'disabled' }); return; }
+        var uh = 168;
+        try { var ec = obj.effectiveSectionConfig('vulnerabilityScanner'); if (ec && (typeof ec.updateHours === 'number') && (ec.updateHours >= 1)) { uh = ec.updateHours; } } catch (e) { }
+        var now = Date.now(), due = [];
+        for (var i = 0; i < obj.OS_LIFECYCLE_SLUGS.length; i++) {
+            var s = obj.OS_LIFECYCLE_SLUGS[i], rec = obj.osLifecycle[s];
+            var age = (rec && rec.fetched) ? (now - Date.parse(rec.fetched)) : Infinity;
+            if (!(age < uh * 3600 * 1000)) { due.push(s); }
+        }
+        if (due.length === 0) { if (callback) callback(null, { skipped: 'fresh' }); return; }
+        var base = scfg.osLifecycleUrl, ok = 0, failed = 0;
+        var next = function (k) {
+            if (k >= due.length) {
+                if (ok > 0) {
+                    try { fs.mkdirSync(path.dirname(obj.osLifecyclePath), { recursive: true }); fs.writeFileSync(obj.osLifecyclePath, JSON.stringify(obj.osLifecycle)); } catch (e) { }
+                }
+                obj.nvdLog('OS lifecycle data: ' + ok + ' product(s) refreshed, ' + failed + ' failed (source ' + base + ')');
+                if (callback) callback(null, { ok: ok, failed: failed });
+                return;
+            }
+            obj.osLifecycleHttpGet(base + due[k] + '.json', function (err, text) {
+                var arr = null;
+                if (!err) { try { arr = JSON.parse(text); } catch (e) { arr = null; } }
+                if (Array.isArray(arr) && arr.length > 0) {
+                    obj.osLifecycle[due[k]] = { fetched: new Date().toISOString(), cycles: obj.sanitizeLifecycleCycles(arr) };
+                    ok++;
+                } else { failed++; }
+                next(k + 1);
+            });
+        };
+        next(0);
+    };
+
+    /**
+     * @brief Identify the OS release of a node for the lifecycle lookup.
+     * @param {string} osDesc - node.osdesc ("Ubuntu 24.04.5 LTS", "Microsoft Windows 11 Pro - 25H2/26200", ...).
+     * @returns {object|null} { slug, cycles:[candidate cycle names, most specific first], label }.
+     */
+    obj.osReleaseOf = function (osDesc) {
+        var d = String(osDesc || ''), m;
+        var ver = function (re) { var x = d.match(re); return x ? x : null; };
+        if (/ubuntu/i.test(d) && (m = ver(/(\d{2})\.(\d{2})/))) return { slug: 'ubuntu', cycles: [m[1] + '.' + m[2]], label: 'Ubuntu ' + m[1] + '.' + m[2] };
+        if (/linux mint/i.test(d) && (m = ver(/(\d+)(?:\.(\d+))?/))) return { slug: 'linux-mint', cycles: m[2] != null ? [m[1] + '.' + m[2], m[1]] : [m[1]], label: 'Linux Mint ' + m[0] };
+        if (/debian/i.test(d) && (m = ver(/(\d+)/))) return { slug: 'debian', cycles: [m[1]], label: 'Debian ' + m[1] };
+        if (/centos stream/i.test(d) && (m = ver(/(\d+)/))) return { slug: 'centos-stream', cycles: [m[1]], label: 'CentOS Stream ' + m[1] };
+        if (/centos/i.test(d) && (m = ver(/(\d+)/))) return { slug: 'centos', cycles: [m[1]], label: 'CentOS ' + m[1] };
+        if (/red hat|rhel/i.test(d) && (m = ver(/(\d+)/))) return { slug: 'rhel', cycles: [m[1]], label: 'RHEL ' + m[1] };
+        if (/almalinux/i.test(d) && (m = ver(/(\d+)/))) return { slug: 'almalinux', cycles: [m[1]], label: 'AlmaLinux ' + m[1] };
+        if (/rocky/i.test(d) && (m = ver(/(\d+)/))) return { slug: 'rocky-linux', cycles: [m[1]], label: 'Rocky Linux ' + m[1] };
+        if (/fedora/i.test(d) && (m = ver(/(\d+)/))) return { slug: 'fedora', cycles: [m[1]], label: 'Fedora ' + m[1] };
+        if (/suse linux enterprise|sles/i.test(d) && (m = ver(/(\d+)(?:\s*SP(\d+)|\.(\d+))?/i))) { var sp = m[2] || m[3]; return { slug: 'sles', cycles: sp != null ? [m[1] + '.' + sp] : [m[1] + '.0'], label: 'SLES ' + m[0] }; }
+        if (/opensuse/i.test(d) && (m = ver(/(\d+\.\d+)/))) return { slug: 'opensuse', cycles: [m[1]], label: 'openSUSE ' + m[1] };
+        if (/alpine/i.test(d) && (m = ver(/(\d+)\.(\d+)/))) return { slug: 'alpine', cycles: [m[1] + '.' + m[2]], label: 'Alpine ' + m[1] + '.' + m[2] };
+        if (/windows server/i.test(d) && (m = ver(/(20\d\d)(\s*r2)?/i))) return { slug: 'windows-server', cycles: [m[1] + (m[2] ? '-r2' : '')], label: 'Windows Server ' + m[1] + (m[2] ? ' R2' : '') };
+        if (/windows (10|11)/i.test(d) && (m = ver(/windows (10|11)/i))) {
+            var rel = d.match(/\b(\d{2}h\d|\d{4})\b(?!\d)/i), ed = /enterprise|education/i.test(d) ? 'e' : 'w';
+            if (rel) { var r = rel[1].toLowerCase(); return { slug: 'windows', cycles: [m[1] + '-' + r + '-' + ed, m[1] + '-' + r], label: 'Windows ' + m[1] + ' ' + r.toUpperCase() }; }
+            return { slug: 'windows', cycles: [], label: 'Windows ' + m[1] };
+        }
+        if (/windows 7/i.test(d)) return { slug: 'windows', cycles: ['7-sp1'], label: 'Windows 7' };
+        if (/windows 8\.1/i.test(d)) return { slug: 'windows', cycles: ['8.1'], label: 'Windows 8.1' };
+        return null;
+    };
+
+    /**
+     * @brief Support state of a node's OS release.
+     * @param {string} osDesc - node.osdesc.
+     * @param {number} [now] - epoch ms (tests).
+     * @returns {object} { state:'supported'|'eol'|'unknown', label, eol, source, reason }.
+     *   'unknown' = release not identified or no lifecycle data (offline / disabled).
+     */
+    obj.osSupportState = function (osDesc, now) {
+        var rel = obj.osReleaseOf(osDesc);
+        if (rel == null) return { state: 'unknown', label: String(osDesc || ''), eol: '', reason: 'OS release not recognized' };
+        var data = obj.osLifecycle[rel.slug];
+        if (!data || !Array.isArray(data.cycles) || data.cycles.length === 0) return { state: 'unknown', label: rel.label, eol: '', reason: 'no lifecycle data (endoflife.date not fetched yet or disabled)' };
+        var hit = null;
+        for (var i = 0; i < rel.cycles.length && hit == null; i++) {
+            for (var j = 0; j < data.cycles.length; j++) { if (data.cycles[j].cycle.toLowerCase() === rel.cycles[i]) { hit = data.cycles[j]; break; } }
+        }
+        if (hit == null) return { state: 'unknown', label: rel.label, eol: '', reason: 'release cycle not listed at endoflife.date' };
+        var t = (now != null) ? now : Date.now();
+        var end = hit.eol;
+        if (end === false) return { state: 'supported', label: rel.label, eol: '', reason: 'no end-of-life date announced' };
+        if (end === true) return { state: 'eol', label: rel.label, eol: '', reason: 'end of life' };
+        if (typeof end === 'string') {
+            var supported = (Date.parse(end + 'T23:59:59Z') >= t);
+            return { state: supported ? 'supported' : 'eol', label: rel.label, eol: end, reason: (supported ? 'security updates until ' : 'security updates ended ') + end };
+        }
+        return { state: 'unknown', label: rel.label, eol: '', reason: 'no end-of-life date in the lifecycle data' };
+    };
+
+    /**
+     * @brief True when an inventory row was reported by a Linux package manager. The MeshCentral
+     * agent tags these rows with location 'dpkg'|'rpm'|'pacman'|'apk' (verified in
+     * agents/modules_meshcore/linux-info.js); older inventories without that field are
+     * recognized by the Debian/RPM maintainer format "Name &lt;mail@host&gt;" in the publisher.
+     * @param {object} sw - inventory row.
+     * @returns {boolean}
+     */
+    obj.isDistroPackage = function (sw) {
+        if (sw == null) return false;
+        var loc = String(sw.location || sw.installLocation || '').toLowerCase();
+        if (loc === 'dpkg' || loc === 'rpm' || loc === 'pacman' || loc === 'apk') return true;
+        return /<[^<>@\s]+@[^<>\s]+>\s*$/.test(String(sw.publisher || sw.Publisher || ''));
+    };
+    /**
+     * @brief Third-party repositories (Docker, NVIDIA, Google, ...) also install through the
+     * package manager, but they are NOT patched by the distribution's security team. Rows whose
+     * maintainer address belongs to the distribution itself are distro-managed; others stay
+     * subject to the normal CVE check.
+     * @param {object} sw - inventory row (isDistroPackage === true).
+     * @returns {boolean}
+     */
+    obj.isDistroMaintained = function (sw) {
+        var p = String(sw.publisher || sw.Publisher || '').toLowerCase();
+        var m = p.match(/@([^<>\s]+)>\s*$/);
+        if (!m) return String(sw.location || '').toLowerCase() === 'apk' || String(sw.location || '').toLowerCase() === 'pacman';
+        return obj.DISTRO_MAINTAINER_DOMAINS.test(m[1]);
+    };
+    /** @type {RegExp} mail domains of distribution package maintainers (the distribution itself). */
+    obj.DISTRO_MAINTAINER_DOMAINS = /(^|\.)(ubuntu\.com|canonical\.com|debian\.org|redhat\.com|fedoraproject\.org|centos\.org|almalinux\.org|rockylinux\.org|suse\.(com|de)|opensuse\.org|alpinelinux\.org|archlinux\.org|linuxmint\.com)$/;
     /**
      * @brief First table hit for a display name (custom entries win, then the active
      * curated table, first match). Returns { vendor, product } for a CPE mapping row
@@ -3160,6 +3424,32 @@ obj.loadNvdFromAllFiles = function () {
         for (var key in obj.PUBLISHER_VENDOR_MAP) {
             if (padded.indexOf(' ' + key + ' ') >= 0) { return obj.PUBLISHER_VENDOR_MAP[key]; }
         }
+        return obj.vendorFromPublisherIndex(publisher);
+    };
+
+    /** @type {RegExp} legal-form and filler words removed from publisher names. */
+    obj.PUBLISHER_NOISE_RE = /\b(inc|incorporated|corp|corporation|co|company|gmbh|ag|ltd|limited|llc|s\s?r\s?o|kg|sa|bv|srl|plc|oy|ab|se|pty|technologies|technology|software|systems|international|group|the)\b/g;
+
+    /**
+     * @brief Generic publisher -> CPE vendor evidence (v3.1.0): the publisher, stripped of legal
+     * forms, is accepted as vendor ONLY when exactly that token exists as a vendor in the loaded
+     * NVD data ("JetBrains s.r.o." -> jetbrains, "Apache Friends" -> apache_friends,
+     * "Nero AG" -> nero). It never invents a vendor; the product must still be proven by
+     * autoMatchProductTokens. Maintainer e-mail publishers (Linux packages) are ignored.
+     * @param {string} publisher - Publisher display name.
+     * @returns {string} vendor token or ''.
+     */
+    obj.vendorFromPublisherIndex = function (publisher) {
+        var raw = String(publisher || '');
+        if (raw === '' || /@/.test(raw)) return '';
+        if (obj.cpeVendorTokens == null || Object.keys(obj.cpeVendorTokens).length === 0) return '';
+        var w = raw.toLowerCase().replace(/\(.*?\)/g, ' ').replace(/[,.&]/g, ' ').replace(obj.PUBLISHER_NOISE_RE, ' ').split(/[^a-z0-9+-]+/).filter(Boolean);
+        if (w.length === 0) return '';
+        var cands = [w.join('_'), w.join(''), w.join('-'), w[0]];
+        for (var i = 0; i < cands.length; i++) {
+            var c = cands[i];
+            if (c && c.length >= 3 && !obj.GENERIC_PRODUCT_TOKENS[c] && obj.cpeVendorTokens[c] === 1) return c;
+        }
         return '';
     };
 
@@ -3218,10 +3508,13 @@ obj.loadNvdFromAllFiles = function () {
      * Products proven by neither table nor automatic matching are reported as "not assessable".
      * @param {Array<object>} softwareList - The installed software list (from the plugin DB).
      * @param {function} callback - Called with <code>(deviceVulns)</code>.
+     * @param {object} [ctx] - { osDesc } of the device (v3.1.0): enables the distro-managed rule.
      */
-    obj.scanDeviceSoftware = function (softwareList, callback) {
+    obj.scanDeviceSoftware = function (softwareList, callback, ctx) {
         var deviceVulns = [];
         if (!Array.isArray(softwareList)) { if (callback) callback(deviceVulns); return; }
+        var osState = null;
+        var distroRule = obj.scannerConfig().distroManaged !== false;
 
         // Sequential processing to keep API load low and respect NVD rate limits.
         var idx = 0;
@@ -3233,6 +3526,26 @@ obj.loadNvdFromAllFiles = function () {
             var version = sw.version || sw.Version || '';
             var publisher = sw.publisher || sw.Publisher || sw.vendor || sw.Vendor || '';
             if (!name) { nextEntry(); return; }
+
+            // Packages of the distribution itself: patched by its security team (backports into the
+            // same upstream version), so an NVD version check would only produce false positives.
+            // Judged by the support state of the OS release instead (see osSupportState).
+            if (distroRule && obj.isDistroPackage(sw) && obj.isDistroMaintained(sw)) {
+                if (osState == null) { osState = obj.osSupportState(ctx && ctx.osDesc); }
+                var st = osState.state;
+                deviceVulns.push({
+                    status: (st === 'supported') ? 'distro-managed' : (st === 'eol' ? 'distro-eol' : 'distro-unknown'),
+                    distro: st, isCve: false, cve: '', severity: '', cvss: '',
+                    description: (st === 'supported')
+                        ? ('Package of ' + osState.label + ' - patched by the distribution (' + osState.reason + '); NVD version ranges do not apply to backported distribution builds.')
+                        : (st === 'eol'
+                            ? ('Package of ' + osState.label + ' - the release no longer receives security updates (' + osState.reason + '); fixes are missing, upgrade the release.')
+                            : ('Package of ' + (osState.label || 'an unrecognized OS') + ' - support state unknown (' + osState.reason + '); not checked against the NVD.')),
+                    software: name, version: version, published: '', references: []
+                });
+                nextEntry();
+                return;
+            }
 
             // Map the display name to a CPE { vendor, product } target. When a vendor is
             // known (curated table or publisher), the CVE search is exact (vendor+product)
@@ -3401,13 +3714,14 @@ obj.loadNvdFromAllFiles = function () {
      * @param {boolean} anyOnly - If true, only match definitions that explicitly apply to all versions ('any').
      * @returns {Array<object>} Matching CVE records.
      */
-    obj.searchOsCves = function (vendor, product, version, anyOnly) {
+    obj.searchOsCves = function (vendor, product, version, anyOnly, boundedOnly) {
         var defs = obj.productIndex[String(vendor).toLowerCase() + '|' + String(product).toLowerCase()];
         if (!defs || defs.length === 0) return [];
         var results = [];
         for (var i = 0; i < defs.length; i++) {
             var def = defs[i];
             if (def.part !== 'o') continue;
+            if (boundedOnly && def.kind !== 'range') continue; // only build-bounded definitions can be asserted
             if (anyOnly) {
                 // Version-less OS match: apply the same historical "any"-CVE suppression
                 // so ancient any-version OS CVEs do not appear on current OSes.
@@ -3440,8 +3754,46 @@ obj.loadNvdFromAllFiles = function () {
      * @param {string} windowsBuild - The Windows build number, if known.
      * @returns {Array<object>} OS-level CVE findings.
      */
+    /**
+     * @brief Windows 10/11 and Server 2016+ target: release-specific CPE product + full build.
+     * The release comes from osdesc ("... - 25H2/26200"), the build from the agent's
+     * osinfo.BuildRevision ("10.0.26200.9711" = Version + "." + UBR, verified in MeshCentral
+     * agents/modules_meshcore/computer-identifiers.js). A bare build number ("26200") is not
+     * enough for the ranges and yields build ''.
+     * @param {string} osDesc - node.osdesc.
+     * @param {string} windowsBuild - osinfo.BuildRevision || osinfo.BuildNumber.
+     * @returns {object|null} { product, build } or null when not Windows 10/11/Server 2016+.
+     */
+    obj.windowsOsTarget = function (osDesc, windowsBuild) {
+        var d = String(osDesc || '');
+        var b = String(windowsBuild || '').trim();
+        var build = /^10\.0\.\d{4,5}\.\d+$/.test(b) ? b : '';
+        var m;
+        if ((m = d.match(/windows server (2016|2019|2022|2025)\b/i))) { return { product: 'windows_server_' + m[1], build: build }; }
+        if ((m = d.match(/windows (10|11)\b/i))) {
+            var rel = d.match(/\b(\d{2}h\d|1[5-9]\d\d|20\d\d)\b/i);
+            if (rel == null) { return { product: 'windows_' + m[1], build: build }; }
+            return { product: 'windows_' + m[1] + '_' + rel[1].toLowerCase(), build: build };
+        }
+        return null;
+    };
+
     obj.scanDeviceOs = function (osDesc, windowsBuild) {
         var osVulns = [];
+        var win = obj.windowsOsTarget(osDesc, windowsBuild);
+        if (win != null) {
+            // Windows 10/11/Server 2016+ (v3.1.0): the NVD keeps the version-bounded data under the
+            // release-specific CPE (windows_11_25h2, windows_server_2019, ...) with ranges on the full
+            // build "10.0.<build>.<UBR>". The generic windows_11/windows_10 CPEs carry mostly
+            // "all versions" entries from early releases and matched EVERY machine (568 identical
+            // findings per Windows 11 PC before v3.1.0). Without a full build no assertion is made.
+            if (win.build === '') { return osVulns; }
+            var wc = obj.searchOsCves('microsoft', win.product, win.build, false, true);
+            for (var w = 0; w < wc.length; w++) {
+                osVulns.push({ cve: wc[w].id, severity: wc[w].severity, cvss: wc[w].cvss, description: wc[w].description, software: 'Operating System', version: osDesc + ' (' + win.build + ')', published: wc[w].published, references: wc[w].references });
+            }
+            return osVulns;
+        }
         var target = obj.mapOsToCpe(osDesc, windowsBuild);
         if (!target) return osVulns;
 
@@ -3590,6 +3942,32 @@ obj.loadNvdFromAllFiles = function () {
      * @param {number} count - The number of missing updates.
      * @returns {object} A critical finding record.
      */
+    /**
+     * @brief Scan the software of ONE node with its OS context (distro-managed rule needs the
+     * OS release). Every report/scan/export path goes through here (v3.1.0).
+     */
+    obj.scanNodeSoftware = function (node, softwareList, callback) {
+        obj.scanDeviceSoftware(softwareList, callback, { osDesc: (node && node.osdesc) || '' });
+    };
+
+    /**
+     * @brief Finding for a device whose OS release is end of life (v3.1.0, id OS-EOL): its
+     * distribution packages / OS no longer get security fixes. Only raised when the lifecycle
+     * data proves it (state 'eol'); unknown states never create a finding.
+     * @param {object} node - node record.
+     * @returns {object|null}
+     */
+    obj.osEolFinding = function (node) {
+        if (obj.scannerConfig().osLifecycleEnabled === false) return null;
+        var s = obj.osSupportState(node && node.osdesc);
+        if (s.state !== 'eol') return null;
+        return {
+            cve: 'OS-EOL', isOsEol: true, severity: 'CRITICAL', cvss: 10,
+            description: s.label + ' is end of life (' + s.reason + ', source endoflife.date): the operating system and its packages receive no security updates any more.',
+            software: 'Operating System lifecycle', version: s.label, published: '', references: []
+        };
+    };
+
     obj.windowsUpdatesFinding = function (count) {
         return {
             cve: 'WINDOWS-UPDATES',
@@ -3969,8 +4347,12 @@ obj.loadNvdFromAllFiles = function () {
                 collectOnAgentConnect: cc.collectOnAgentConnect,
                 autoProductMatch: sc.autoProductMatch,
                 cpeTableEnabled: sc.cpeTableEnabled,
-                cpeTableUrl: sc.cpeTableUrl
+                cpeTableUrl: sc.cpeTableUrl,
+                distroManaged: sc.distroManaged,
+                osLifecycleEnabled: sc.osLifecycleEnabled,
+                osLifecycleUrl: sc.osLifecycleUrl
             },
+            osLifecycle: obj.osLifecycleStatus(),
             sources: {
                 scanIntervalHours: src('vulnerabilityScanner', 'scanIntervalHours'),
                 scanMeshes: src('vulnerabilityScanner', 'scanMeshes'),
@@ -3985,10 +4367,14 @@ obj.loadNvdFromAllFiles = function () {
                 autoProductMatch: src('vulnerabilityScanner', 'autoProductMatch'),
                 cpeTableEnabled: src('vulnerabilityScanner', 'cpeTableEnabled'),
                 cpeTableUrl: src('vulnerabilityScanner', 'cpeTableUrl'),
+                distroManaged: src('vulnerabilityScanner', 'distroManaged'),
+                osLifecycleEnabled: src('vulnerabilityScanner', 'osLifecycleEnabled'),
+                osLifecycleUrl: src('vulnerabilityScanner', 'osLifecycleUrl'),
                 revertAllowed: {
                     autoProductMatch: (obj.pluginSettings.vulnerabilityScanner != null) && Object.prototype.hasOwnProperty.call(obj.pluginSettings.vulnerabilityScanner, 'autoProductMatch'),
                     cpeTableEnabled: (obj.pluginSettings.vulnerabilityScanner != null) && Object.prototype.hasOwnProperty.call(obj.pluginSettings.vulnerabilityScanner, 'cpeTableEnabled'),
                     cpeTableUrl: (obj.pluginSettings.vulnerabilityScanner != null) && Object.prototype.hasOwnProperty.call(obj.pluginSettings.vulnerabilityScanner, 'cpeTableUrl'),
+                    osLifecycleUrl: (obj.pluginSettings.vulnerabilityScanner != null) && Object.prototype.hasOwnProperty.call(obj.pluginSettings.vulnerabilityScanner, 'osLifecycleUrl'),
                     scanIntervalHours: (obj.pluginSettings.vulnerabilityScanner != null) && Object.prototype.hasOwnProperty.call(obj.pluginSettings.vulnerabilityScanner, 'scanIntervalHours'),
                     updateHours: (obj.pluginSettings.vulnerabilityScanner != null) && Object.prototype.hasOwnProperty.call(obj.pluginSettings.vulnerabilityScanner, 'updateHours'),
                     anyCveMaxAgeYears: (obj.pluginSettings.vulnerabilityScanner != null) && Object.prototype.hasOwnProperty.call(obj.pluginSettings.vulnerabilityScanner, 'anyCveMaxAgeYears'),
@@ -4042,6 +4428,9 @@ obj.loadNvdFromAllFiles = function () {
         var cpeTableUrl = String(req.body.cpeTableUrl || '').trim();
         if (cpeTableUrl === '') { cpeTableUrl = obj.CPE_TABLE_DEFAULT_URL; }
         else if (!/^https:\/\/[^\s"'<>]{5,250}$/.test(cpeTableUrl)) { return send({ error: 'Invalid CPE table URL (must be a short https URL).' }); }
+        var osLifecycleUrl = String(req.body.osLifecycleUrl || '').trim();
+        if (osLifecycleUrl === '') { osLifecycleUrl = obj.OS_LIFECYCLE_DEFAULT_URL; }
+        else if (!/^https:\/\/[^\s"'<>]{5,250}\/$/.test(osLifecycleUrl)) { return send({ error: 'Invalid lifecycle API URL (https, ending with /).' }); }
         obj.pluginSettings = {
             vulnerabilityScanner: {
                 scanIntervalHours: iv.value,
@@ -4052,6 +4441,9 @@ obj.loadNvdFromAllFiles = function () {
                 autoProductMatch: boolSetting(req.body.autoProductMatch, true),
                 cpeTableEnabled: boolSetting(req.body.cpeTableEnabled, true),
                 cpeTableUrl: cpeTableUrl,
+                distroManaged: boolSetting(req.body.distroManaged, true),
+                osLifecycleEnabled: boolSetting(req.body.osLifecycleEnabled, true),
+                osLifecycleUrl: osLifecycleUrl,
                 notify: notify,
                 updateHours: uh.value,
                 anyCveMaxAgeYears: ag.value
@@ -4088,6 +4480,9 @@ obj.loadNvdFromAllFiles = function () {
             revertAutoProductMatch: ['vulnerabilityScanner', 'autoProductMatch'],
             revertCpeTableEnabled: ['vulnerabilityScanner', 'cpeTableEnabled'],
             revertCpeTableUrl: ['vulnerabilityScanner', 'cpeTableUrl'],
+            revertDistroManaged: ['vulnerabilityScanner', 'distroManaged'],
+            revertOsLifecycleEnabled: ['vulnerabilityScanner', 'osLifecycleEnabled'],
+            revertOsLifecycleUrl: ['vulnerabilityScanner', 'osLifecycleUrl'],
             revertCollectIntervalMinutes: ['inventoryScanner', 'collectIntervalMinutes'],
             revertCollectOnAgentConnect: ['inventoryScanner', 'collectOnAgentConnect']
         };
@@ -4166,11 +4561,12 @@ obj.loadNvdFromAllFiles = function () {
                     var doc = sysinfoRecord ? (sysinfoRecord.doc || sysinfoRecord) : {};
                     var windowsBuild = '';
                     if (doc && doc.hardware && doc.hardware.windows && doc.hardware.windows.osinfo) { windowsBuild = doc.hardware.windows.osinfo.BuildRevision || doc.hardware.windows.osinfo.BuildNumber || ''; }
-                    obj.scanDeviceSoftware(obj.getStoredSoftware(node, doc), function (softwareVulns) {
+                    obj.scanNodeSoftware(node, obj.getStoredSoftware(node, doc), function (softwareVulns) {
                         var deviceVulns = softwareVulns.concat(obj.scanDeviceOs(node.osdesc || '', windowsBuild));
                         // Windows-only: missing updates are treated as a critical finding.
                         var wu = obj.getWindowsUpdates(node);
                         if (wu && wu.count > 0) { deviceVulns.push(obj.windowsUpdatesFinding(wu.count)); }
+                        var eolF = obj.osEolFinding(node); if (eolF != null) { deviceVulns.push(eolF); }
 
                         for (var j = 0; j < deviceVulns.length; j++) {
                             var v = deviceVulns[j];
@@ -4349,6 +4745,9 @@ obj.loadNvdFromAllFiles = function () {
                 assessablePrograms: 0,
                 notAssessablePrograms: 0,
                 outOfScopePrograms: 0,
+                distroManagedPrograms: 0,
+                distroEolPrograms: 0,
+                distroUnknownPrograms: 0,
                 coverageBase: 0,
                 coveragePercent: 0,
                 totalCves: 0,
@@ -4375,6 +4774,9 @@ obj.loadNvdFromAllFiles = function () {
                         assessablePrograms: 0,
                         notAssessablePrograms: 0,
                         outOfScopePrograms: 0,
+                        distroManagedPrograms: 0,
+                        distroEolPrograms: 0,
+                        distroUnknownPrograms: 0,
                         coverageBase: 0,
                         coveragePercent: 0,
                         totalCves: 0,
@@ -4414,10 +4816,11 @@ obj.loadNvdFromAllFiles = function () {
                     loc.totalPrograms += softwareList.length;
                     report.totalPrograms += softwareList.length;
 
-                    obj.scanDeviceSoftware(softwareList, function (softwareVulns) {
+                    obj.scanNodeSoftware(node, softwareList, function (softwareVulns) {
                         var deviceVulns = softwareVulns.concat(obj.scanDeviceOs(node.osdesc || '', windowsBuild));
                         var wu = obj.getWindowsUpdates(node);
                         if (wu && wu.count > 0) { deviceVulns.push(obj.windowsUpdatesFinding(wu.count)); }
+                        var eolF = obj.osEolFinding(node); if (eolF != null) { deviceVulns.push(eolF); }
 
                         // CPE coverage: classify every installed program by its scan status row.
                         // assessable = a verified CPE mapping was checked against the NVD;
@@ -4426,25 +4829,34 @@ obj.loadNvdFromAllFiles = function () {
                         // ever cover, so it is reported separately and EXCLUDED from the coverage
                         // denominator instead of dragging it down.
                         var progSeen = {};
-                        var devOK = 0, devNA = 0, devX = 0;
+                        var devOK = 0, devNA = 0, devX = 0, devDM = 0, devDE = 0, devDU = 0;
                         for (var sk = 0; sk < softwareVulns.length; sk++) {
                             var sv = softwareVulns[sk];
                             var skey = (sv.software || '') + '@@' + (sv.version || '');
                             if (progSeen[skey]) continue;
                             progSeen[skey] = 1;
-                            if (sv.outOfScope) { devX++; }
+                            // Distribution packages are a separate, transparent category (v3.1.0): never in
+                            // the coverage denominator - their patch state is the distribution's job.
+                            if (sv.distro === 'supported') { devDM++; }
+                            else if (sv.distro === 'eol') { devDE++; }
+                            else if (sv.distro === 'unknown') { devDU++; }
+                            else if (sv.outOfScope) { devX++; }
                             else if (sv.status === 'not assessable') { devNA++; }
                             else { devOK++; }
                         }
                         deviceRec.programsAssessable = devOK;
                         deviceRec.programsNotAssessable = devNA;
                         deviceRec.programsOutOfScope = devX;
+                        deviceRec.programsDistroManaged = devDM + devDE + devDU;
+                        deviceRec.osSupport = obj.osSupportState(node.osdesc).state;
                         loc.assessablePrograms += devOK;
                         loc.notAssessablePrograms += devNA;
                         loc.outOfScopePrograms += devX;
+                        loc.distroManagedPrograms += devDM; loc.distroEolPrograms += devDE; loc.distroUnknownPrograms += devDU;
                         report.assessablePrograms += devOK;
                         report.notAssessablePrograms += devNA;
                         report.outOfScopePrograms += devX;
+                        report.distroManagedPrograms += devDM; report.distroEolPrograms += devDE; report.distroUnknownPrograms += devDU;
 
                         // Deduplicate CVEs per device.
                         var seen = {};
@@ -4639,7 +5051,7 @@ obj.loadNvdFromAllFiles = function () {
      * @returns {boolean} True when the id is valid.
      */
     function isFindingId(cveId) {
-        return /^(CVE-\d{4}-\d{4,}|WINDOWS-UPDATES)$/.test(cveId);
+        return /^(CVE-\d{4}-\d{4,}|WINDOWS-UPDATES|OS-EOL)$/.test(cveId);
     }
 
     /**
@@ -4903,15 +5315,19 @@ obj.loadNvdFromAllFiles = function () {
                 } else { // vulns
                     var windowsBuild = '';
                     if (doc && doc.hardware && doc.hardware.windows && doc.hardware.windows.osinfo) { windowsBuild = doc.hardware.windows.osinfo.BuildRevision || doc.hardware.windows.osinfo.BuildNumber || ''; }
-                    obj.scanDeviceSoftware(obj.getStoredSoftware(node, doc), function (softwareVulns) {
+                    obj.scanNodeSoftware(node, obj.getStoredSoftware(node, doc), function (softwareVulns) {
                         var deviceVulns = softwareVulns.concat(obj.scanDeviceOs(osDesc, windowsBuild));
                         // Windows-only: missing updates are treated as a critical finding.
                         var wu = obj.getWindowsUpdates(node);
                         if (wu && wu.count > 0) { deviceVulns.push(obj.windowsUpdatesFinding(wu.count)); }
+                        var eolF = obj.osEolFinding(node); if (eolF != null) { deviceVulns.push(eolF); }
                         for (var m = 0; m < deviceVulns.length; m++) {
                             var v = deviceVulns[m];
                             var status = v.status || ((v.isCve || v.cve) ? 'CVE' : '');
                             if (v.outOfScope === true) { status = (status === 'firmware' ? 'firmware is not covered by CVE data' : 'drivers are not covered by CVE data'); }
+                            if (v.distro === 'supported') { status = 'patched by the distribution (OS supported)'; }
+                            else if (v.distro === 'eol') { status = 'distribution package - OS end of life'; }
+                            else if (v.distro === 'unknown') { status = 'distribution package - OS support unknown'; }
                             var assessment = obj.getMeshAssessment(node.meshid, v.cve);
                             var rating = assessment ? assessment.assessment : (v.severity || '');
                             var comment = assessment ? assessment.comment : '';

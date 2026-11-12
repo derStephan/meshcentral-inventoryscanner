@@ -41,6 +41,14 @@ where the active table came from). No plugin version bump, no new release.
 
 ### What this file is not
 
+* Not for Linux distribution packages (`openssh-server`, `python3-six`, `libcurl4t64`, ...). Since v3.1.0 the
+  scanner reports packages of the distribution as *patched by the distribution* while the OS release is supported
+  (backported fixes keep the upstream version, so NVD ranges would only raise false alarms). A table row would be
+  ignored for them anyway; do not add one. Packages from third-party repositories (Docker, NVIDIA, ...) are
+  matched normally and may get rows.
+* Regexes must match the Windows display name narrowly: a broad `^python` once swallowed every `python3-*` library
+  package and reported the interpreter's CVEs against them. Anchor (`^`) and include a distinguishing word or
+  version pattern.
 * Not the place for pretending that OEM components have an NVD product. A driver/firmware display name
   ("Realtek Audio Driver", "ACME BIOS Update") that shows up as `not assessable` is still NOT a CPE mapping
   candidate - if you are sure it is a driver or firmware, add `{"match":"^Realtek Audio Driver$","kind":"driver"}`
