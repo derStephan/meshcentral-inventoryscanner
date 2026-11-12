@@ -13,6 +13,17 @@ const os = require('os');
 
 const factory = require(path.join(__dirname, '..', 'inventoryscanner.js')).inventoryscanner;
 
+// All plugin source (entry + lib/ modules) - for the tests that assert on emitted code text.
+const PLUGIN_DIR = path.join(__dirname, '..');
+function pluginSrc() {
+    var s = fs.readFileSync(path.join(PLUGIN_DIR, 'inventoryscanner.js'), 'utf8');
+    var libDir = path.join(PLUGIN_DIR, 'lib');
+    if (fs.existsSync(libDir)) {
+        fs.readdirSync(libDir).filter(f => f.endsWith('.js')).sort().forEach(f => { s += '\n' + fs.readFileSync(path.join(libDir, f), 'utf8'); });
+    }
+    return s;
+}
+
 // ---------- fixtures ----------
 const nodes = [
     { _id: 'node//d1', meshid: 'mesh//grp1', rname: 'host1', name: 'Given1', osdesc: 'Windows 10' },
@@ -456,6 +467,27 @@ steps.push(function (next) {
     next();
 });
 
+// ---- v3.5.1 module architecture (entry = wiring only, functionality in lib/) ----
+steps.push(function (next) {
+    var libDir = path.join(PLUGIN_DIR, 'lib');
+    var files = fs.readdirSync(libDir).filter(function (f) { return f.endsWith('.js'); }).sort();
+    check('modules: lib/ holds the feature modules', files.length >= 15, files.length);
+    check('modules: every lib file exports attach(obj)', files.every(function (f) { return typeof require(path.join(libDir, f)).attach === 'function'; }));
+    var entrySrc = fs.readFileSync(path.join(PLUGIN_DIR, 'inventoryscanner.js'), 'utf8');
+    check('modules: the entry file stays thin (wiring only)', entrySrc.split('\n').length < 300, entrySrc.split('\n').length);
+    check('modules: the entry attaches every lib file by name', files.every(function (f) { return entrySrc.indexOf("'" + f.slice(0, -3) + "'") >= 0; }), files);
+    check('modules: no lib file declares module-level locals (state lives on obj)',
+        files.every(function (f) { return !/^    (var|let|const) /m.test(fs.readFileSync(path.join(libDir, f), 'utf8')); }), files);
+    var savedGen = global.__inventoryscannerInstanceGen;
+    var fresh = factory({ parent: { db: db, datapath: fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-mod-')), debug: function () { }, config: { settings: {} }, webserver: {} } });
+    var missing = Object.keys(obj).filter(function (k) { return typeof obj[k] === 'function' && typeof fresh[k] !== 'function'; });
+    global.__inventoryscannerInstanceGen = savedGen;   // the throwaway instance must not supersede the test instance
+    check('modules: a freshly built instance exposes the same function surface', missing.length === 0, missing);
+    check('modules: all MeshCentral entry points are attached',
+        ['server_startup', 'uiCustomEvent', 'hook_agentCoreIsStable', 'handleAdminReq', 'handleAdminPostReq'].every(function (k) { return typeof obj[k] === 'function'; }));
+    next();
+});
+
 // ---- onWebUIStartupEnd injects the toolbar buttons into devsCustomUIBar (simulated browser DOM) ----
 steps.push(function (next) {
     var sent = [], alerts = [], appended = [], boxes = null, bar = { innerHTML: '', appendChild: function (el) { appended.push(el); } };
@@ -709,7 +741,7 @@ steps.push(function (next) {
 // ---- v2.1.4: dry watchdog, agent-console diagnostics, pending visibility ----
 steps.push(function (next) {
     check('timeout: dry runs use the fast watchdog', obj.WINGET_DRY_TIMEOUT_MS === 10 * 60 * 1000 &&
-        /wgBatchDry === true \? obj\.WINGET_DRY_TIMEOUT_MS/.test(fs.readFileSync(require('path').join(__dirname, '..', 'inventoryscanner.js'), 'utf8')));
+        /wgBatchDry === true \? obj\.WINGET_DRY_TIMEOUT_MS/.test(pluginSrc()));
     obj.wgBatchDry = true;
     obj.wgPending['node//dryt'] = { nodeid: 'node//dryt', sid: 'invscanner-wg-node_dryt', since: Date.now() - 11 * 60 * 1000 };
     obj.wgTimeout(obj.wgPending['node//dryt']);
@@ -1326,6 +1358,10 @@ steps.push(function (next) {
     fs.mkdirSync(pd, { recursive: true });
     var srcDir = path.join(__dirname, '..');
     ['inventoryscanner.js', 'cpe-table.json'].forEach(function (f) { fs.copyFileSync(path.join(srcDir, f), path.join(pd, f)); });
+    // v3.5.1: the feature modules live in lib/ - the installer unpacks them next to the entry file,
+    // so the entry must require them by obj.pluginDir (never by a lib module's own __dirname).
+    fs.mkdirSync(path.join(pd, 'lib'), { recursive: true });
+    fs.readdirSync(path.join(srcDir, 'lib')).forEach(function (f) { fs.copyFileSync(path.join(srcDir, 'lib', f), path.join(pd, 'lib', f)); });
     fs.writeFileSync(path.join(pd, 'config.json'), fs.readFileSync(path.join(srcDir, 'config.json'), 'utf8').replace(/"version":\s*"[^"]+"/, '"version": "0.0.1"'));
     var ms2 = { db: db, datapath: base, debug: function () { }, config: { settings: { vulnerabilityScanner: { scanIntervalHours: 0, cpeTableEnabled: false }, inventoryScanner: { collectIntervalMinutes: 0 } } }, webserver: {} };
     var ph = { parent: ms2, plugins: {}, exports: {} };
@@ -1339,6 +1375,11 @@ steps.push(function (next) {
     var mod = require.cache[require.resolve(path.join(pd, 'inventoryscanner.js'))];
     check('upgrade (real installer flow): server_startup reloads the new code and swaps it in', mod && mod.exports.__upgradedCode === true && ph.plugins.inventoryscanner !== second && ph.plugins.inventoryscanner.PLUGIN_VERSION === '0.0.2', ph.plugins.inventoryscanner.PLUGIN_VERSION);
     check('upgrade: only the newest instance keeps timers alive', oldInst.timerValid(oldInst.timerGen) === false && second.timerValid(second.timerGen) === false && ph.plugins.inventoryscanner.timerValid(ph.plugins.inventoryscanner.timerGen) === true);
+    // v3.5.1: the swap must also pull the lib/ modules of the NEW folder - a module that resolved a
+    // library by its own __dirname would silently keep running the old code (obj.pluginDir is the fix).
+    check('upgrade: the lib/ modules are re-required from the new folder', (function () {
+        try { return require.cache[require.resolve(path.join(pd, 'lib', 'routes.js'))] != null; } catch (e) { return false; }
+    })());
     ph.plugins.inventoryscanner.timerGen++;
     next();
 });

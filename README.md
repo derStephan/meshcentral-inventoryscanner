@@ -251,6 +251,11 @@ npm ci         # dev dependency: handlebars (for the view tests), exact versions
 npm test       # syntax/consistency checks + behavioral tests + view render tests
 ```
 
+The server code is split by feature: `inventoryscanner.js` is the entry (identity, file layout, module
+wiring) and `lib/` holds one module per area - NVD feeds and CVE index, CPE mapping tables, matching,
+the collector, the winget and OS update engines, scheduling, reports, CSV, routes and the browser
+exports. [AGENTS.md](AGENTS.md) maps every file to its responsibility.
+
 Agents and contributors: [AGENTS.md](AGENTS.md) documents the verified contracts, and
 [CONTRIBUTING.md](CONTRIBUTING.md) the mapping-table process.
 

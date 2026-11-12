@@ -11,15 +11,19 @@ Repository: https://github.com/derStephan/meshcentral-inventoryscanner
 FLAT layout - required by the MeshCentral web installer: it unpacks the repository ZIP into
 <datapath>/plugins/inventoryscanner/ after removing exactly ONE top path element, so the plugin files
 MUST stay at repository root (never re-nest them in a folder - that silently breaks the installer).
+Sub-folders INSIDE the repository (views/, tools/, lib/) are unpacked as-is and are fine.
 
-  inventoryscanner.js          server code + browser-exported functions (module.exports.inventoryscanner(parent))
+  inventoryscanner.js          ENTRY POINT only: identity, file layout, module wiring (~175 lines)
+  lib/<module>.js              the actual functionality, one module per feature area, see "Architecture" below
   config.json                  plugin manifest: installer metadata (and MeshCentral-side config file)
   cpe-table.json               THE maintained mapping table: downloaded by running servers, edit = no release needed
   views/assessment.handlebars  admin panel (incl. its inline <script> - the panel logic lives HERE)
   views/report.handlebars      printable vulnerability report (overview + one page per location)
   views/deviceReport.handlebars printable device inventory report (host names, one page per location)
 tools/                         self-contained verification for agents (no MeshCentral server needed)
-  check.js                     node --check on JS, inline-script extraction check, JSON validity, render-name match
+  check.js                     node --check on entry+lib/*, wiring (every module attached, no orphan), module
+                               rules (no module-level locals, obj.pluginDir), inline-script extraction check,
+                               JSON validity, render-name match over the WHOLE JS tree
   test-plugin.js               behavioral tests against the real plugin module with mocked MeshCentral
   test-views.js                compiles+renders all three views with Handlebars (needs `npm ci`)
   coverage-benchmark.js        read-only mapping audit against the top NVD products by CVE count (run server-side with --nvd <datapath>/nvd)
@@ -30,6 +34,85 @@ package-lock.json              committed on purpose: pins the dev dependency tre
 .gitignore                     node_modules/ (would otherwise be shipped to every server by the ZIP installer),
                                npm debug logs, root /*.txt and /*.csv support dumps
 ```
+
+## Architecture: the lib/ modules (v3.5.1)
+
+Until v3.5.0 everything lived in one 6,000-line `inventoryscanner.js`. It is now split by
+**functionality** into `lib/`, one concern per file (100-600 lines each), with the entry file reduced
+to wiring. No behaviour, no route, no data shape changed - the split is purely structural.
+
+**The pattern (attach/mixin, deliberately not `module.exports = {fn}`):** every module exports
+`attach(obj)` and assigns its functions, constants and mutable state onto the shared per-instance
+`obj`. The entry calls them in order:
+
+```js
+module.exports.inventoryscanner = function (parent) {
+    var obj = {};                     // identity, paths, generations  (entry file)
+    modules.forEach(function (name) { // ['lifecycle','settings',...]  (entry file, in load order)
+        require(path.join(obj.pluginDir, 'lib', name + '.js')).attach(obj);
+    });
+    return obj;
+};
+```
+
+Consequences an agent must respect:
+
+- **Cross-module calls are always `obj.name(...)`.** Never cache another module's member in a local
+  (`var f = obj.searchCves`): the test suite replaces members such as `obj.scanDeviceSoftware`,
+  `obj.scanDeviceOs`, `obj.saveAssessments`, `obj.saveCustomCpe` at runtime and that only works while
+  every call site reads the member off `obj` at call time.
+- **State lives on `obj`, read at call time.** A module must not keep module-level `var`s - module
+  files are cached per process and shared by ALL instances, so module-level state would leak across
+  plugin instances (and survive a hot reload). `tools/test-plugin.js` and `tools/check.js` assert that
+  no lib file declares a module-level local.
+- **`obj.pluginDir` - not `__dirname`.** Inside `lib/`, `__dirname` is the `lib` folder. The entry sets
+  `obj.pluginDir = __dirname` (the plugin root) and everything file-related (`config.json` version read,
+  `cpe-table.json` fallback, the hot-swap `require()`) resolves against it. `node tools/check.js` fails
+  on any `__dirname` inside `lib/`.
+- **The only `__dirname` user allowed is `inventoryscanner.js` itself**, and `MODULE_CODE_VERSION` is
+  read there once at module load (the hot-swap check depends on it - see "Plugin upgrade path").
+- **Attach order is wiring, not logic.** Nothing is called at attach time (the factory body of every
+  module contains only assignments), so the order in `modules` only documents layering: lifecycle →
+  settings/assessments → data (nvd, nvdindex, cpetable, matching, oslifecycle, osscan, inventory) →
+  collectors/engines (collector, scheduling, winget, winget-handlers, osupdate) → output
+  (reports, csv, nodes) → routes → browser.
+- **Functions that were local helpers are now members too** (`obj.formatCsvField`, `obj.timestamp`,
+  `obj.parseMeshIds`, `obj.isFindingId`, `obj.boolSetting`, `obj.safeNodeDir`, `obj.fetchSysinfo`,
+  `obj.httpGetToFile`, `obj.winRelNum`, `obj.ubuRelNum`, `obj.MAX_TIMEOUT_MS`) - same reason: they are
+  used from several modules. Keep new shared helpers on `obj` as well.
+- **`lib/browser.js` is special:** its three `obj.exports` members (`inventoryCsv`, `openAssessment`,
+  `onWebUIStartupEnd`) are serialized into the browser and must not contain a single `obj.` reference;
+  `uiCustomEvent` in the same file is server-side and may. The existing test asserts the invariant.
+
+**Module ownership** (`grep` the entry's `modules` list for the current order):
+
+| File | Owns (functions/state of that area) |
+|---|---|
+| `lib/lifecycle.js` | `server_startup` (incl. the code hot-swap), `fixOwnPluginUrl`, NVD timer self-heal + stale notification |
+| `lib/settings.js` | `effectiveSectionConfig`, the `scanner-settings.json` overlay, `rescheduleAll`, `get/save/revert_setting` handlers |
+| `lib/assessments.js` | `assessments` store, `getMeshAssessment`, `save_assessment` / `flag_false_positive` / `unflag_false_positive` handlers, `isFindingId` |
+| `lib/nvd.js` | feed download + `.meta` check, `runNvdUpdate`, `ensureNvdData`, `scheduleUpdate`, feed loading, `nvdLog`, NVD log tailing |
+| `lib/nvdindex.js` | `processNvdData`, `productIndex`/`cpeProductTokens`/`cpeVendorTokens`/`allCves`, `compareCpeVersions`, `normalizeCveVersion`, `defMatches`, `searchCves*`, the `anyCveMaxAgeYears` age rule |
+| `lib/cpetable.js` | `SOFTWARE_CPE_TABLE` (seed), remote table apply/fetch/cache (`cpe-table.json`), custom UI entries, `isSafeTableRegex`, the CPE-tab handlers |
+| `lib/matching.js` | `classifySoftware`, `matchTableEntry`, `guessDriverFirmware`, `cpeTokenize`, `autoMatchProductTokens`, publisher→vendor evidence, `scanDeviceSoftware` |
+| `lib/oslifecycle.js` | endoflife.date cache + sanitizer, `osReleaseOf`, `osSupportState`, `isDistroPackage`/`isDistroMaintained`, `osEolFinding` |
+| `lib/osscan.js` | `OS_CPE_TABLE`, `mapOsToCpe`, `windowsOsTarget`, `searchOsCves`, `scanDeviceOs` |
+| `lib/inventory.js` | stored software/patch maps, `pruneSuperseded` (+ `pruneNameKey`/`pruneArchSig`/`pruneNameToken`), `getStoredSoftware`, `getWindowsUpdates` |
+| `lib/collector.js` | agent software/`winupdates` requests, `installRouteHook`, `onAgentResponse` reply ownership, per-node JSON cache, collection schedule, `hook_agentCoreIsStable` |
+| `lib/scheduling.js` | `scannerConfig`, `runScheduledScans`, `notifyAdmins`, `scheduleScans`, `load/saveScans`, `SEVERITY_RANK`, `longTimeout` |
+| `lib/winget.js` | `wgBuildScript`/`wgTransport`/queue/pump/watchdogs, results+log persistence, `wgNodeDue`/`wgSweepOnce`/`scheduleWingetUpdates`, `psTranscriptLines`, `wingetConfig` |
+| `lib/winget-handlers.js` | `wg_get_config`, `wg_save_config`, `wg_run`, `wg_status`, `wg_programs` handlers |
+| `lib/osupdate.js` | OS batch engine: `osBuildWindowsScript`, `osBuildLinuxScript`, `osLinuxTransport`, targeting/`osUpgradeInfo`, `os_run` + `os_status` handlers |
+| `lib/reports.js` | `scanMeshCves`, `scanMultiMeshCves`, `assessmentScan` (the `action=scan` route), `summarizeDeviceSwVer`, `buildOverallReport`, `vulnerabilityReport`, `deviceReport` |
+| `lib/csv.js` | CSV formatting helpers, `buildCsvForNodes`, the `action=export` route |
+| `lib/nodes.js` | `fetchSysinfo`, `scanNodeSoftware`, `getGroupName`, `getHostName`, `windowsUpdatesFinding` |
+| `lib/routes.js` | `handleAdminReq`/`handleAdminPostReq` dispatch, `isAuthorizedAdmin`, `isSameOriginRequest`, panel render, `get_locations`, `get_log`, `parseMeshIds` |
+| `lib/browser.js` | `uiCustomEvent` (server-side) + the three browser-exported functions |
+
+**Adding or moving functionality:** put the code in the module that owns the area (create a new
+`lib/<name>.js` with the same `attach(obj)` shape only if nothing fits), add its name to the entry's
+`modules` list, and keep `check.js` green - it fails if a file and the list disagree. A new route
+handler belongs to its domain module and is only *dispatched* by `lib/routes.js`.
 
 ## What the plugin does
 
@@ -57,7 +140,9 @@ sub-domain admins of a multi-tenant server are refused since v3.0.1):
 Based on official MeshCentral source (`pluginHandler.js`, `webserver.js`, `db.js`, `meshcentral.js`).
 
 - **Plugin entry:** `module.exports.inventoryscanner = function (parent)`; `parent.parent` = meshcentral server
-  object; `obj.db = obj.meshServer.db`.
+  object; `obj.db = obj.meshServer.db`. Since v3.5.1 that function lives in `inventoryscanner.js` and only
+  creates `obj`, declares the file layout and calls `require('./lib/<module>.js').attach(obj)` for every
+  feature module - see "Architecture". The entry point MeshCentral sees does not change.
 - **Folder/shortName must be alphanumeric only** (`/^[A-Za-z0-9]+$/`, no `_`/`-`), else `pluginadmin.ashx?pin=`
   returns 401. Here: `inventoryscanner`.
 - **Web installer (supported install path):** `settings.plugins.enabled=true` is the only required manual
@@ -66,7 +151,8 @@ Based on official MeshCentral source (`pluginHandler.js`, `webserver.js`, `db.js
   The installer validates the root config.json via `isValidConfig` (name, shortName, version, description,
   hasAdminPanel:boolean, homepage, changelogUrl, configUrl, repository.type/.url, meshCentralCompat - all
   required; plus downloadUrl for the ZIP), stores it in the DB (status 0 = disabled), then downloads
-  downloadUrl and unpacks into plugins/<shortName>/ with exactly one path element removed (=> flat layout).
+  downloadUrl and unpacks into plugins/<shortName>/ with exactly one path element removed (=> flat layout,
+  sub-folders such as lib/, views/ and tools/ are unpacked with their contents).
   Loading newly enabled plugins needs a server restart. Update detection = refetch configUrl and compare
   the version field (NO tags needed). versionHistoryUrl is intentionally absent: no downgrade picker.
 - **`pluginadmin.ashx` GET** → `handleAdminReq(req,res,user)`, `POST` (urlencoded body → `req.body`) →
@@ -175,7 +261,7 @@ Remote CPE table: repo `cpe-table.json` → the installer unpacks it into `<data
 **exactly `obj.cpeTablePath`** - so on an installed server the maintained table is live from the first second without
 any download, and a refresh (`fetchCpeTable`, at startup when stale and after every NVD cycle, https only) rewrites
 that SAME file in place; a plugin upgrade re-unpacks the shipped copy (the newer shipped table then wins until the
-next refresh). `loadRemoteCpeTable()` therefore tries the cache path first and `path.join(__dirname, 'cpe-table.json')`
+next refresh). `loadRemoteCpeTable()` therefore tries the cache path first and `path.join(obj.pluginDir, 'cpe-table.json')`
 second (the second entry only matters in dev `plugins.list` layouts/tests where code and datapath differ);
 `SOFTWARE_CPE_TABLE` stays as last-resort seed and the two lists are NOT kept in sync by hand - adding a mapping is a
 PR on the JSON file only (process + validation: CONTRIBUTING.md), no plugin version bump. `cpeTableStatus().origin`
@@ -260,12 +346,15 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
 
 ## Install, first start and file layout (support facts moved out of the README)
 
-- **ZIP extraction is slow and alphabetical**: files land root-files-first, `tools/`+`views/` LAST, so
+- **ZIP extraction is slow and alphabetical**: files land root-files-first, `lib/`+`tools/`+`views/` LAST, so
   `inventoryscanner.js` briefly exists as a 0-byte file and the Plugins page keeps showing **Disabled** until the
   archive is fully unpacked (slower on small VMs / with antivirus scanning). Never restart or re-install in that
   phase; the Plugins page shows no progress at all (MeshCentral UI limitation) and can print the OLD version until
   the page is refreshed. The plugin's own log line on a successful hot swap is
   `upgrade detected ... reloading without server restart` / `hot reload complete`.
+  Since v3.5.1 this is even more important: the entry `require`s its `lib/` modules, so a tree that is only
+  partially unpacked makes plugin loading fail with a visible `Cannot find module ...lib/<name>.js` - which
+  means "wait for the extraction, then enable/upgrade again", never "the plugin is broken".
 - First start downloads ALL NVD years (10-60 min typical) and then runs a baseline scan of every location; until
   the feeds are indexed the panel says "not downloaded" and no CVE can be reported.
 - An **empty software list means "not collected yet"**, never "clean"; offline devices keep their last cached
@@ -314,7 +403,11 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   server_startup compares config.json on disk with `MODULE_CODE_VERSION` - read ONCE at module load, so it is
   the version of the code actually running (pre-3.0.1 the version was read per instance, the cached code then
   reported the new version and the swap never happened; verified with a simulated installer flow, now a test).
-  On mismatch it busts the require cache for `__dirname + path.sep`, creates a fresh instance, swaps it into
+  On mismatch it busts the require cache for `obj.pluginDir + path.sep` - which since v3.5.1 also covers every
+  `lib/*.js` module (the entry requires them by `obj.pluginDir`, never by a module's own `__dirname`, so the new
+  folder's code is what gets loaded; a test asserts the re-required lib files come from the new directory).
+  `MODULE_CODE_VERSION` is read in the ENTRY file only, so it always describes the code that is really running -
+  lib modules read `obj.PLUGIN_VERSION`. A fresh instance swaps it into
   parent.plugins/exports. Every instance gets a process-wide generation (`global.__inventoryscannerInstanceGen`);
   `obj.timerValid(gen)` lets only the NEWEST instance act on its timer chains, so instances replaced by the
   installer stop by themselves. The routeAgentCommand monkey-patch resolves the current instance per call.
@@ -562,10 +655,14 @@ npm test           # = tools/check.js && tools/test-plugin.js && tools/test-view
 
 Data dumps from support sessions (CSV exports, browser output TXTs) live OUTSIDE the repo (they sit in the
 MeshCentral install folder) and root `/*.txt` + `/*.csv` are gitignored as a guard - never copy them in.
-- `tools/check.js`: `node --check` on the plugin, inline-script syntax/`{{`-hazard check, JSON validity of
-  config files, and view-name↔render-name consistency. Must run anywhere (no dependencies).
-- `tools/test-plugin.js`: 311 behavioral assertions (62 steps) against the real module (mocked MeshCentral DB/webserver):
-  locations grouping & counting, manual-rating severity override, FP exclusion, host-name preference, coverage
+- `tools/check.js`: `node --check` on the entry AND on every `lib/*.js`, the module wiring (each lib file is in the
+  entry's `modules` list and vice versa, no orphan), the module rules (no `__dirname` in `lib/`, entry stays thin),
+  inline-script syntax/`{{`-hazard check, JSON validity of config files, and view-name↔render-name consistency over
+  the WHOLE JS tree (the `res.render()` calls live in `lib/routes.js`/`lib/reports.js` since v3.5.1).
+  Must run anywhere (no dependencies).
+- `tools/test-plugin.js`: 319 behavioral assertions (63 steps) against the real module (mocked MeshCentral DB/webserver):
+  the module wiring itself (every lib file attaches, a fresh instance exposes the same function surface, no
+  module-level locals in `lib/`), locations grouping & counting, manual-rating severity override, FP exclusion, host-name preference, coverage
   numbers, multi-mesh scan/`mixed` logic, all POST handlers incl. validation/rejections, routes, admin gating
   (401), CPE table add/delete, vulns CSV header/content, toolbar button injection (simulated browser DOM), remote CPE table apply/cache/fetch/settings, NVD download-log tailing, manual NVD update trigger + concurrency guard, unknown-version matching rules, winget updater (builder/parser/queue/routes, incl. single-package update/uninstall runs + `wg_programs`), driver/firmware classification & coverage denominator, honest CVE aggregation (`deviceList`/`versionVaried`), coexistence-aware pruning, `longTimeout` chunking, restart-proof schedule delays,
   scheduled-scan notification content in repeat and once mode, NVD-status derivation, settings overlay priority,
@@ -582,6 +679,9 @@ MeshCentral install folder) and root `/*.txt` + `/*.csv` are gitignored as a gua
   the `# invscanner:parse-begin/-end` markers; skipped where PowerShell is missing). The runner is the LAST
   statement of the file and prints `registered steps: N` - new steps must be pushed above it.
   Requests in tests carry `headers: XHDR` (the panel header); the test admin has `domain: ''`.
+  Tests that assert on emitted CODE TEXT use `pluginSrc()` (entry + all `lib/*.js` concatenated) - never read
+  `inventoryscanner.js` alone, that file has no implementation any more. The upgrade test copies the whole
+  plugin tree including `lib/`, exactly like the installer unpacks it.
 - `tools/test-views.js`: compiles all three views and renders them with mock data **and empty data**.
 
 If you change data shapes, UPDATE these tests — they are the contract.
@@ -619,6 +719,14 @@ message alone, without the diff:
 - NVD feed download: go through `obj.runNvdUpdate(force, cb)` (the only sanctioned entry - it holds the nvdUpdateRunning guard); A stale-looking `.meta` mismatch is
   a warning, not an error (verified NVD behavior). Never treat `.json.gz` presence alone as "feed exists" — the
   decompressed `.json` is what `loadNvdFromAllFiles` reads.
+- **Modules (v3.5.1):** a new function is a member of the shared `obj` (`obj.x = function ...` inside the module
+  that owns the area) - a bare `function x()` in a `lib/` file is invisible to every other module and to the
+  tests. Same for shared helpers: expose them on `obj` instead of exporting them from the module.
+- **Never introduce module-level state** in `lib/` (`var cache = {}` next to `attach`): the file is cached per
+  process, so it is shared by all instances AND survives a hot reload. Put it on `obj` (or on `global` with an
+  explicit generation check, like `global.__inventoryscannerInstanceGen`).
+- Keep a file near the 600-line mark in mind: if a module grows past it, split that area further rather than
+  moving code back into the entry - the entry must stay wiring only (`check.js` fails above 300 lines).
 
 ## Current verified state (last known-good)
 
@@ -640,3 +748,7 @@ finding, Windows OS matching by release CPE + full build, NVD-verified publisher
 table rows, python/Teams/Nextcloud mis-mappings fixed.
 v3.5.0: on-demand OS updates (Windows Update agent / distribution package manager) and OS release upgrades for
 outdated releases (Windows 10/11 via TargetReleaseVersion, Ubuntu via do-release-upgrade), see the OS engine section.
+v3.5.1 (this release): STRUCTURE only - the 6,010-line `inventoryscanner.js` became a ~175-line entry plus 20
+`lib/` modules by feature area (see "Architecture"); behaviour, routes, data shapes and generated agent scripts
+are unchanged, which is exactly what the (unchanged, then extended) test suite proves. check.js and the upgrade
+test now understand the module tree.

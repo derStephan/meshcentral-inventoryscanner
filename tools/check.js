@@ -1,11 +1,13 @@
 /**
  * Static consistency checks - no dependencies, run anywhere with Node >= 16.
- * 1. node --check on inventoryscanner.js
+ * 1. node --check on inventoryscanner.js AND on every lib/<module>.js, plus the v3.5.1 module
+ *    contract: the entry attaches exactly the files that exist (no orphan, no missing), the
+ *    entry stays wiring-only (thin), and no lib file resolves paths by its own __dirname.
  * 2. assessment.handlebars inline <script>: extracts, node --check, and verifies it
  *    contains no accidental '{{' (Handlebars would eat it; only the '{{shortName}}'
  *    server token is allowed).
  * 3. JSON validity of config files.
- * 4. res.render('<name>') calls match views/<name>.handlebars files EXACTLY
+ * 4. res.render('<name>') calls (entry + lib/) match views/<name>.handlebars files EXACTLY
  *    (case-sensitive; a mismatch is a 500 on Linux but passes on Windows).
  */
 'use strict';
@@ -34,10 +36,39 @@ function jsCheck(file, label) {
     }
 }
 
-// 1. plugin main file
+// 1. plugin main file + every lib module
 const mainJs = path.join(pluginDir, 'inventoryscanner.js');
 report('inventoryscanner.js exists', fs.existsSync(mainJs));
 if (fs.existsSync(mainJs)) jsCheck(mainJs, 'inventoryscanner.js syntax');
+const libDir = path.join(pluginDir, 'lib');
+const libFiles = fs.existsSync(libDir) ? fs.readdirSync(libDir).filter(f => f.endsWith('.js')).sort() : [];
+report('lib/ exists and holds the feature modules', libFiles.length > 0, 'found ' + libFiles.length);
+for (const f of libFiles) jsCheck(path.join(libDir, f), 'lib/' + f + ' syntax');
+
+// 1b. wiring: the entry must attach every module file, and no module file may be orphaned
+const entrySrc = fs.existsSync(mainJs) ? fs.readFileSync(mainJs, 'utf8') : '';
+const modBlock = (entrySrc.match(/const modules = \[([\s\S]*?)\];/) || [])[1] || '';
+const attached = (modBlock.match(/'([^']+)'/g) || []).map(s => s.slice(1, -1));
+report('inventoryscanner.js declares a non-empty module list', attached.length > 0, modBlock.trim().split('\n').length + ' lines');
+for (const f of libFiles) {
+    report('lib/' + f + ' is attached by inventoryscanner.js', attached.indexOf(f.slice(0, -3)) >= 0);
+}
+for (const m of attached) {
+    report('attached module ' + m + ' exists as lib/' + m + '.js', libFiles.indexOf(m + '.js') >= 0);
+}
+report('entry point keeps the flat-layout contract (inventoryscanner.js at plugin root)',
+    /module\.exports\.inventoryscanner = function \(parent\)/.test(entrySrc));
+report('inventoryscanner.js stays wiring only (< 300 lines)', entrySrc.split('\n').length < 300,
+    entrySrc.split('\n').length + ' lines');
+report('the entry does not implement features (no obj.x = function beyond its own identity)',
+    (entrySrc.match(/^ {4}obj\.[\w$]+ = function/gm) || []).length <= 3,
+    (entrySrc.match(/^ {4}obj\.([\w$]+) = function/gm) || []).join(' | '));
+// lib modules run from lib/, so their own __dirname would point at the wrong folder
+for (const f of libFiles) {
+    const src = fs.readFileSync(path.join(libDir, f), 'utf8');
+    report('lib/' + f + ' uses obj.pluginDir, not its own __dirname', src.indexOf('__dirname') < 0,
+        src.split('\n').filter(l => l.indexOf('__dirname') >= 0)[0]);
+}
 
 // 2. inline script of the panel view
 const assPath = path.join(viewsDir, 'assessment.handlebars');
@@ -75,12 +106,13 @@ report('config.json meets installer requirements (name/shortName/manifest fields
     man.repository && typeof man.repository.type === 'string' && typeof man.repository.url === 'string' &&
     typeof man.meshCentralCompat === 'string');
 
-// 4. render names vs view file names
-const mainSrc = fs.existsSync(mainJs) ? fs.readFileSync(mainJs, 'utf8') : '';
+// 4. render names vs view file names (the render calls live in the lib/ modules, not in the entry)
+let allSrc = fs.existsSync(mainJs) ? fs.readFileSync(mainJs, 'utf8') : '';
+for (const f of libFiles) { allSrc += '\n' + fs.readFileSync(path.join(libDir, f), 'utf8'); }
 const renderNames = [];
 let mm;
 const re = /res\.render\(\s*'([^']+)'/g;
-while ((mm = re.exec(mainSrc)) !== null) { renderNames.push(mm[1]); }
+while ((mm = re.exec(allSrc)) !== null) { renderNames.push(mm[1]); }
 const viewFiles = fs.existsSync(viewsDir) ? fs.readdirSync(viewsDir).filter(f => f.endsWith('.handlebars')).map(f => f.slice(0, -11)) : [];
 for (const name of renderNames) {
     report("render('" + name + "') has exactly views/" + name + ".handlebars", viewFiles.indexOf(name) >= 0, viewFiles.join(', '));
