@@ -150,7 +150,9 @@ POST body `action=`:
     failed packages additionally get one `FAILED` line per package in `winget-update.log`, and upgraded
      packages that match (exactly or as substring) an ignore entry raise a `WARNING` line there |
 | `wg_programs` | — | the PACKAGES view (v3.0.0): aggregates `wgResults` per package id -> `{packages:[{id,name,ready,ok,failed,skipped,devices:[{node,label,state,from,to,time,dry}]}],note}` (≤400 packages, ≤200 devices each, sorted by ready+failed). `label` = admin given name first, then host name, then id; results of deleted devices are dropped; `not-installed` counts into `skipped` |
-| `get_log` | `type` = nvd\|winget | whitelisted log tail (last 300 lines) |
+| `get_log` | `type` = nvd\|winget\|os | whitelisted log tail (last 300 lines) |
+| `os_run` | `mode` = update\|upgrade, optional `nodeIds` (csv) | v3.5.0 manual OS batch (`osStartBatch`); `update` = every non-excluded node with `osPlatformOf` windows\|linux, `upgrade` = only nodes where `osUpgradeInfo` says outdated AND has a method; explicit ids are filtered by the same rule; {busy} while a winget or OS batch runs |
+| `os_status` | — | every Windows/Linux node: `platform, os, online, excluded, outdated, upgradable, target, note, last, pending` + `running, mode, active, queued, current:{windows11, ubuntuLts}` |
 | `update_nvd` | — | starts `runNvdUpdate(true)` (background) and answers {started:true} / {alreadyRunning:true}; concurrent runs skip via the `nvdUpdateRunning` flag |
 | `get_nvdlog` | — | `{lines:[...last 200 of nvd-download.log], size, file}`; `note` if file missing |
 | `get_locations` | — | all non-deleted meshes `{locations:[{id,name}]}` (also feeds the Settings tab group table) |
@@ -395,6 +397,36 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   `updateMeshes`; manual "Run Now" covers every non-excluded Windows node (unknown-OS nodes included). No reboots are ever triggered
   (`--allow-reboot` is never used).
 
+## OS update / upgrade engine (v3.5.0, verified contracts)
+
+- runcommands type 1 = cmd.exe (Windows), **type 3 = /bin/sh (Linux)**; on non-Windows agents type 1/2 do nothing
+  (verified in MeshCentral `agents/meshcore.js`). One agent runs ONE runcommands session at a time, so
+  `wgStartBatch`/`wgRunHandler`/`wgQueueNode` refuse while `osBatchRunning` and vice versa.
+- Sessions use the `invscanner-os-<node>` prefix and the marker `@@INVOSU@@`; `onAgentResponse` checks the OS session
+  BEFORE the winget one, with the same ownership rules (foreign session ids never consumed, session-less answers only
+  while `osPending[node]` exists, console chunks buffered on `.cbuf`). Watchdog `OS_RUN_TIMEOUT_MS` = 4 h,
+  `OS_MAX_PARALLEL` = 2, results `os-results.json`, log `os-update.log`.
+- Targeting: `osPlatformOf` needs a reported osdesc (unknown OS / macOS / mobile = never touched); the winget
+  `excludeNodes` list applies. "Current" = newest `11-<rel>` cycle / newest Ubuntu LTS in the endoflife.date cache -
+  and NOTHING else: there is deliberately no hard-coded fallback release (it would go stale). Data that is missing,
+  switched off or older than `OS_REFERENCE_MAX_AGE_MS` (30 days) gives `osUpgradeInfo(...).state = 'unknown'` with the
+  reason in `note`; such devices are never upgraded (logged per device), and `os_run mode=upgrade` is refused with an
+  explicit error when neither reference is known. Windows 10 counts as outdated only when the Windows 11 reference is
+  known. Windows Server and
+  non-Ubuntu distributions are never upgraded (method null).
+- Windows script (`osBuildWindowsScript`, transported by `wgTransport`): COM `Microsoft.Update.Session` search
+  `IsInstalled=0 and IsHidden=0 and Type='Software'` -> download -> install. Mode update skips the "Upgrades"
+  classification (`WU_UPGRADES_CATEGORY`, language independent); mode upgrade sets `TargetReleaseVersion=1`,
+  `ProductVersion='Windows 11'`, `TargetReleaseVersionInfo=<rel>` under `HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate`
+  and restores/removes them afterwards. The target is validated `^\d{2}H[12]$` (throws otherwise). Shared transcript
+  helper `psTranscriptLines` (same protected folders as winget, file `invscanner-osupdate.log`).
+- Linux script (`osBuildLinuxScript`, transported by `osLinuxTransport` = `sh -c "$(echo b64 | base64 -d | gzip -dc)"
+  < /dev/null`): every package manager call reads /dev/null and logs to `/var/log/invscanner-osupdate.log` (symlink
+  refused). States `ok | failed | unsupported | reboot-needed`. Upgrade = Ubuntu only: dist-upgrade, then
+  `do-release-upgrade -f DistUpgradeViewNonInteractive`; with `/var/run/reboot-required` present it stops with
+  `reboot-needed` (the tool refuses to run then). `Prompt=never` is reported, never changed.
+- Never any reboot (asserted by tests).
+
 ## Design decisions (with reasons)
 
 1. **Two-stage matching (Dependency-Check style, fully offline):** custom entries + curated `SOFTWARE_CPE_TABLE`
@@ -532,7 +564,7 @@ Data dumps from support sessions (CSV exports, browser output TXTs) live OUTSIDE
 MeshCentral install folder) and root `/*.txt` + `/*.csv` are gitignored as a guard - never copy them in.
 - `tools/check.js`: `node --check` on the plugin, inline-script syntax/`{{`-hazard check, JSON validity of
   config files, and view-name↔render-name consistency. Must run anywhere (no dependencies).
-- `tools/test-plugin.js`: 284 behavioral assertions (60 steps) against the real module (mocked MeshCentral DB/webserver):
+- `tools/test-plugin.js`: 311 behavioral assertions (62 steps) against the real module (mocked MeshCentral DB/webserver):
   locations grouping & counting, manual-rating severity override, FP exclusion, host-name preference, coverage
   numbers, multi-mesh scan/`mixed` logic, all POST handlers incl. validation/rejections, routes, admin gating
   (401), CPE table add/delete, vulns CSV header/content, toolbar button injection (simulated browser DOM), remote CPE table apply/cache/fetch/settings, NVD download-log tailing, manual NVD update trigger + concurrency guard, unknown-version matching rules, winget updater (builder/parser/queue/routes, incl. single-package update/uninstall runs + `wg_programs`), driver/firmware classification & coverage denominator, honest CVE aggregation (`deviceList`/`versionVaried`), coexistence-aware pruning, `longTimeout` chunking, restart-proof schedule delays,
@@ -606,3 +638,5 @@ v3.1.0 (matching rework, measured on a 39-device fleet, see AUDIT.md): NVD feeds
 parsed whole (the 2026 feed was never loaded), distro-managed packages + OS lifecycle from endoflife.date + OS-EOL
 finding, Windows OS matching by release CPE + full build, NVD-verified publisher->vendor evidence, 35 new verified
 table rows, python/Teams/Nextcloud mis-mappings fixed.
+v3.5.0: on-demand OS updates (Windows Update agent / distribution package manager) and OS release upgrades for
+outdated releases (Windows 10/11 via TargetReleaseVersion, Ubuntu via do-release-upgrade), see the OS engine section.

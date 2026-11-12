@@ -376,6 +376,37 @@
             <h3>Update log</h3>
             <div><button id="refreshWgLogBtn" class="small">Refresh log</button> <span id="wgLogInfo" class="hint"></span></div>
             <pre id="wgLog" style="max-height:260px;overflow:auto;background:#0f1720;color:#cfe3f5;padding:8px;border-radius:6px;font-size:11px;margin-top:6px;white-space:pre-wrap;">(not loaded yet)</pre>
+
+            <h2>Operating system updates</h2>
+            <div class="info">
+                <strong>force OS updates</strong> runs on every non-excluded Windows and Linux device: on Windows, the built-in
+                Windows Update agent searches, downloads and installs all pending updates (feature upgrades excluded). On Linux,
+                the distribution's package manager runs (<code>apt-get update &amp;&amp; apt-get upgrade</code>, <code>dnf upgrade</code>,
+                <code>yum update</code>, <code>zypper update</code>, <code>pacman -Syu</code> or <code>apk upgrade</code>).<br>
+                <strong>force OS Upgrade</strong> only targets devices whose OS release is <em>provably not current</em> (current
+                according to the endoflife.date data: <span id="osCurrentInfo">-</span>). There is no built-in fallback version: without
+                fresh data (at most 30 days old) the release state is shown as <em>unknown</em> with the reason, and such devices are
+                not upgraded. On Windows 10/11, Windows Update is pointed at the current release with the
+                documented TargetReleaseVersion policy and installs it; the previous policy is restored afterwards. On Ubuntu,
+                <code>apt-get dist-upgrade</code> runs, followed by <code>do-release-upgrade</code>, which moves one release per run.
+                Other distributions and Windows Server are shown but never upgraded automatically.<br>
+                Devices are <strong>never rebooted</strong>: a pending reboot is reported per device and has to be done by you.
+                The winget exclusion list applies here too, and an OS batch never runs at the same time as a winget batch.
+            </div>
+            <div class="controls">
+                <button id="osUpdBtn" class="green">force OS updates</button>
+                <button id="osUpgBtn" class="purple">force OS Upgrade</button>
+                <button id="osRefreshBtn" class="small">Refresh</button>
+                <span id="osRunState" class="hint"></span>
+            </div>
+            <div id="osMsg"></div>
+            <div class="table-container"><table>
+                <thead><tr><th>Device</th><th>Group</th><th style="width:220px;">OS</th><th style="width:70px;">Online</th><th style="width:150px;">Release state</th><th style="width:300px;">Last OS run</th><th style="width:190px;">Actions</th></tr></thead>
+                <tbody id="osDevBody"><tr><td colspan="7" style="color:#888">Loading...</td></tr></tbody>
+            </table></div>
+            <h3>OS update log</h3>
+            <div><button id="refreshOsLogBtn" class="small">Refresh log</button> <span id="osLogInfo" class="hint"></span></div>
+            <pre id="osLog" style="max-height:260px;overflow:auto;background:#0f1720;color:#cfe3f5;padding:8px;border-radius:6px;font-size:11px;margin-top:6px;white-space:pre-wrap;">(not loaded yet)</pre>
         </div>
     </div>
 
@@ -486,7 +517,7 @@
 
         // ---------- tabs ----------
 
-        var tabTitles = { assessment: 'Vulnerability Assessment', settings: 'Settings', cpe: 'Software → CPE Mapping', updates: 'Software Updates (winget)' };
+        var tabTitles = { assessment: 'Vulnerability Assessment', settings: 'Settings', cpe: 'Software → CPE Mapping', updates: 'Software & OS Updates' };
         var tabs = document.querySelectorAll('.navtab');
         for (var t = 0; t < tabs.length; t++) {
             tabs[t].addEventListener('click', function (e) {
@@ -501,7 +532,7 @@
                 for (var j = 0; j < contents.length; j++) { contents[j].classList.remove('active'); }
                 var target = document.getElementById('tab-' + name);
                 if (target) { target.classList.add('active'); }
-                if (name === 'updates') { loadWgTab(); }
+                if (name === 'updates') { loadWgTab(); loadOsStatus(); }
                 var pt = document.getElementById('pageTitle');
                 if (pt && tabTitles[name]) { pt.textContent = tabTitles[name]; }
             });
@@ -832,6 +863,124 @@
             if (!isNaN(idx) && idx >= 0 && idx < list.length) { list.splice(idx, 1); renderWgIgnore(); saveWgConfig('Removed from the ignore list.'); }
         });
         $('refreshWgLogBtn').addEventListener('click', function () { loadWgLog(); });
+
+        // ---------- OS updates / upgrades (v3.5.0) ----------
+
+        var osApp = { status: null, open: {} };
+        var osPollTimer = null;
+
+        function osLastText(d) {
+            if (d.pending) { return 'running (' + esc(d.pending.mode) + ') since ' + esc(new Date(d.pending.since || Date.now()).toLocaleTimeString()); }
+            var l = d.last;
+            if (!l) { return '-'; }
+            var t = esc(fmtLocal(l.time)) + ' - ' + esc(l.mode || '') + ': ';
+            if (l.error) { return t + '<span style="color:#a33">' + esc(l.error) + '</span>'; }
+            var col = (l.state === 'ok') ? '#1d7a3a' : ((l.state === 'reboot-needed' || l.state === 'unsupported') ? '#8a6d3b' : '#a33');
+            t += '<span style="color:' + col + '">' + esc(l.state) + '</span>';
+            if (l.platform === 'windows') { t += ', ' + (l.installed || 0) + '/' + (l.found || 0) + ' installed' + (l.failed ? ', ' + l.failed + ' failed' : ''); }
+            else { t += ' (' + esc(l.pm || '?') + (l.step ? ', ' + esc(l.step) : '') + (l.exit != null ? ', exit ' + esc(l.exit) : '') + ')'; }
+            if (l.reboot) { t += ' <b style="color:#a33">reboot pending</b>'; }
+            if (l.note) { t += '<div style="font-size:11px;color:#556">' + esc(l.note) + '</div>'; }
+            var hasDetail = (Array.isArray(l.updates) && l.updates.length > 0) || !!l.log;
+            if (hasDetail) { t += ' <button class="small" data-osact="tgl" data-osid="' + esc(d.id) + '">' + (osApp.open[d.id] ? 'hide' : 'details') + '</button>'; }
+            return t;
+        }
+
+        function renderOsDevices() {
+            var s = osApp.status;
+            if (!s) { return; }
+            var cur = s.current || {};
+            var parts = [];
+            parts.push(cur.windows11 ? ('Windows 11 ' + cur.windows11) : ('Windows 11: UNKNOWN - ' + (cur.windows11Reason || 'no data')));
+            parts.push(cur.ubuntuLts ? ('Ubuntu ' + cur.ubuntuLts + ' LTS') : ('Ubuntu: UNKNOWN - ' + (cur.ubuntuLtsReason || 'no data')));
+            $('osCurrentInfo').textContent = parts.join('; ');
+            $('osCurrentInfo').style.color = (cur.windows11 && cur.ubuntuLts) ? '' : '#a33';
+            var html = '';
+            var devs = s.devices || [];
+            for (var i = 0; i < devs.length; i++) {
+                var d = devs[i];
+                var rel;
+                if (d.releaseState === 'unknown') { rel = '<span style="color:#8a6d3b;font-weight:600">unknown</span><div style="font-size:11px;color:#556">' + esc(d.note || 'no clean answer') + ' - not upgraded</div>'; }
+                else if (d.outdated) { rel = '<span style="color:#a33;font-weight:600">outdated</span>' + (d.target ? ' -> ' + esc(d.target) : '') + (d.upgradable ? '' : '<div style="font-size:11px;color:#556">' + esc(d.note || 'no automatic upgrade') + '</div>'); }
+                else { rel = '<span style="color:#1d7a3a">current</span>' + (d.note ? '<div style="font-size:11px;color:#556">' + esc(d.note) + '</div>' : ''); }
+                html += '<tr><td>' + esc(d.given || d.host) + '</td><td>' + esc(d.group) + '</td><td style="font-size:11px">' + esc(d.os) + '</td>';
+                html += '<td>' + (d.online ? 'yes' : '<span style="color:#a33">offline</span>') + '</td><td style="font-size:11px">' + rel + (d.excluded ? '<div class="hint">excluded</div>' : '') + '</td>';
+                html += '<td style="font-size:11px">' + osLastText(d) + '</td><td style="white-space:nowrap">';
+                html += '<button class="small green" data-osact="upd" data-osid="' + esc(d.id) + '">OS updates</button> ';
+                if (d.upgradable) { html += '<button class="small purple" data-osact="upg" data-osid="' + esc(d.id) + '">OS Upgrade</button>'; }
+                html += '</td></tr>';
+                var l = d.last;
+                if (l && !d.pending && ((Array.isArray(l.updates) && l.updates.length > 0) || l.log)) {
+                    html += '<tr style="display:' + (osApp.open[d.id] ? 'table-row' : 'none') + '"><td colspan="7" style="background:#f6f8fb;font-size:11px">';
+                    if (Array.isArray(l.updates)) { for (var u = 0; u < l.updates.length; u++) { html += '<div>' + (l.updates[u].state === 'ok' ? '<span style="color:#1d7a3a">ok</span>' : '<span style="color:#a33">failed' + (l.updates[u].hresult != null ? ' 0x' + esc(wgHexExit(l.updates[u].hresult)) : '') + '</span>') + ' - ' + esc(l.updates[u].title) + '</div>'; } }
+                    if (l.log) { html += '<div><code>' + esc(l.log) + '</code></div>'; }
+                    html += '</td></tr>';
+                }
+            }
+            if (html === '') { html = '<tr><td colspan="7" style="color:#888">No Windows or Linux devices with a reported OS.</td></tr>'; }
+            $('osDevBody').innerHTML = html;
+            $('osRunState').textContent = s.running ? ('OS ' + s.mode + ' batch running - ' + s.active + ' active, ' + s.queued + ' queued') : '';
+        }
+
+        function loadOsLog() {
+            post('get_log', { type: 'os' }).then(function (data) {
+                if (data.error) { $('osLog').textContent = data.error; return; }
+                $('osLog').textContent = (data.lines && data.lines.length) ? localizeLog(data.lines).join(String.fromCharCode(10)) : '(empty)';
+                $('osLogInfo').textContent = data.note || ((data.lines || []).length + ' lines · ' + (data.file || ''));
+            }).catch(function (ex) { $('osLog').textContent = 'Failed: ' + ex.message; });
+        }
+
+        function loadOsStatus() {
+            post('os_status', {}).then(function (s) {
+                if (s.error) { showMsg('osMsg', s.error, false); return; }
+                var was = osApp.status && osApp.status.running;
+                osApp.status = s; renderOsDevices(); loadOsLog();
+                if (osPollTimer != null) { clearTimeout(osPollTimer); osPollTimer = null; }
+                if (s.running) { osPollTimer = setTimeout(loadOsStatus, 15000); }
+                else if (was) { showMsg('osMsg', 'OS batch finished - see the table and the log.', true); }
+            }).catch(function (ex) { showMsg('osMsg', 'Failed to load OS state: ' + ex.message, false); });
+        }
+
+        function osDevLabel(id) {
+            var ds = (osApp.status && osApp.status.devices) || [];
+            for (var i = 0; i < ds.length; i++) { if (ds[i].id === id) { return ds[i].given || ds[i].host || id; } }
+            return id;
+        }
+
+        function osRun(mode, nodeId) {
+            var body = { mode: mode };
+            if (nodeId) { body.nodeIds = nodeId; }
+            post('os_run', body).then(function (d) {
+                if (d.error) { showMsg('osMsg', d.error, false); return; }
+                if (d.busy) { floatMsg('A winget or OS batch is still running - try again later.', false); return; }
+                floatMsg('OS ' + mode + ' started' + (nodeId ? ' for ' + osDevLabel(nodeId) : '') + ' - progress in the table and the OS update log.', true);
+                setTimeout(loadOsStatus, 1500);
+            }).catch(function (ex) { showMsg('osMsg', 'Run failed: ' + ex.message, false); });
+        }
+
+        $('osUpdBtn').addEventListener('click', function () {
+            if (!window.confirm('force OS updates on ALL non-excluded Windows and Linux devices now?\nWindows installs every pending Windows update, Linux runs the package manager upgrade. No device is rebooted.')) { return; }
+            osRun('update');
+        });
+        $('osUpgBtn').addEventListener('click', function () {
+            var devsAll = (osApp.status && osApp.status.devices) || [];
+            var n = devsAll.filter(function (x) { return x.upgradable && !x.excluded; }).length;
+            var unk = devsAll.filter(function (x) { return x.releaseState === 'unknown' && !x.excluded; }).length;
+            if (n === 0) { showMsg('osMsg', 'No device is provably outdated.' + (unk ? ' ' + unk + ' device(s) have an UNKNOWN release state (see the table for the reason) and are not upgraded.' : ''), false); return; }
+            if (!window.confirm('force OS Upgrade on ' + n + ' outdated device(s) now?' + (unk ? '\n' + unk + ' device(s) with an UNKNOWN release state are skipped.' : '') + '\nWindows installs the current feature release, Ubuntu upgrades to the next release. This can take hours and changes the OS release. No device is rebooted - you have to do that yourself.')) { return; }
+            osRun('upgrade');
+        });
+        $('osRefreshBtn').addEventListener('click', loadOsStatus);
+        $('refreshOsLogBtn').addEventListener('click', loadOsLog);
+        $('osDevBody').addEventListener('click', function (e) {
+            var b = e.target;
+            while (b && b !== this && !(b.getAttribute && b.getAttribute('data-osact'))) { b = b.parentNode; }
+            if (!b || b === this) { return; }
+            var act = b.getAttribute('data-osact'), id = b.getAttribute('data-osid');
+            if (act === 'tgl') { osApp.open[id] = !osApp.open[id]; renderOsDevices(); return; }
+            if (act === 'upd' && window.confirm('Run OS updates on this ONE device now? No reboot is triggered.')) { osRun('update', id); }
+            if (act === 'upg' && window.confirm('Upgrade the OS release of this ONE device now? This can take hours. No reboot is triggered.')) { osRun('upgrade', id); }
+        });
 
         // ---------- floating location selector ----------
 

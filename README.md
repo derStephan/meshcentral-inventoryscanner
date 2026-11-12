@@ -39,6 +39,9 @@ without sending inventory data to anyone.
   everything still unrated.
 * **Software updates via winget** - opt-in, dry runs first, per device or per package across the whole fleet,
   with an ignore list for licensed packages and a full audit trail.
+* **OS updates and OS upgrades on demand** - *force OS updates* installs pending Windows updates (built-in Windows
+  Update agent) or runs the Linux package manager upgrade; *force OS Upgrade* brings outdated releases (e.g.
+  Windows 11 23H2, Ubuntu 22.04) to the current one. Never reboots a device.
 
 ## Requirements
 
@@ -126,6 +129,54 @@ Ignored packages are skipped in every run and pinned on the client, so even a us
 `winget upgrade --all` leaves a licensed version alone. Offline devices are picked up when they connect;
 a device is never rebooted.
 
+**OS updates (Updates tab, section *Operating system updates*)** - two manual buttons, both with confirmation,
+plus the same two actions per device row:
+
+* **force OS updates** - every non-excluded Windows and Linux device. Windows: the built-in Windows Update agent
+  searches, downloads and installs all pending updates (feature upgrades excluded). Linux: `apt-get update` +
+  `apt-get upgrade`, or `dnf upgrade --refresh`, `yum update`, `zypper update`, `pacman -Syu`, `apk upgrade`.
+* **force OS Upgrade** - only devices whose release is provably not current. "Current" comes exclusively from the
+  endoflife.date data (newest Windows 11 release, newest Ubuntu LTS) - there is no built-in fallback version. If that
+  data is missing, switched off or older than 30 days, the release state is shown as **unknown** together with the
+  reason, and nothing is upgraded. Windows 10/11: Windows Update is pointed at the current release with the
+  documented `TargetReleaseVersion` policy and installs it; the previous policy values are restored afterwards.
+  Ubuntu: `apt-get dist-upgrade`, then `do-release-upgrade` (one release step per run; if a reboot is pending first,
+  the device reports *reboot-needed* - reboot, then run it again). Other distributions and Windows Server are shown
+  as outdated but not upgraded automatically.
+
+No device is ever rebooted; a pending reboot is shown per device. Results go to the device table, the device's event
+list and `os-update.log`; the clients log to `invscanner-osupdate.log` (Windows: next to `meshagent.exe` or in
+`C:\ProgramData\InventoryScanner`, Linux: `/var/log/`). OS and winget batches never run at the same time, and the
+winget exclusion list applies to both.
+
+**Which Linux distributions are supported?** The script picks the package manager it finds on the device, not the
+distribution name:
+
+| Distribution (examples) | force OS updates | force OS Upgrade |
+|---|---|---|
+| Ubuntu and its official flavors (Kubuntu, Xubuntu, Ubuntu Server, ...) | `apt-get update` + `apt-get upgrade` | yes: `dist-upgrade`, then `do-release-upgrade` |
+| Debian, Linux Mint, Raspberry Pi OS, Pop!_OS and other apt-based systems | `apt-get update` + `apt-get upgrade` | no |
+| Fedora, RHEL 8+, Rocky Linux, AlmaLinux, CentOS Stream | `dnf upgrade --refresh` | no |
+| CentOS 7 / RHEL 7 (no dnf) | `yum update` | no |
+| openSUSE Leap, SLES | `zypper refresh` + `zypper update` | no |
+| Arch Linux, Manjaro | `pacman -Syu` | no |
+| Alpine | `apk update` + `apk upgrade` | no |
+
+* **force OS updates** installs the pending package updates *within* the installed release on every distribution
+  in the table. A device without any of these package managers reports *unsupported*.
+* **force OS Upgrade** (new release) is automated for **Ubuntu only**: the device must report `ID=ubuntu` in
+  `/etc/os-release`. Derivatives with their own ID (Linux Mint, Pop!_OS, elementary OS, ...) report *unsupported*,
+  because `do-release-upgrade` is not their upgrade path. For every other distribution a release upgrade needs its
+  own tool and manual steps (e.g. `dnf system-upgrade` on Fedora, editing the sources and `apt full-upgrade` on
+  Debian, `zypper dup` on openSUSE), so the plugin does not try it. An end-of-life release of such a distribution is
+  shown as outdated in the device table, but it is never upgraded automatically.
+* Rolling distributions (Arch, Manjaro, openSUSE Tumbleweed) have no releases to upgrade to; *force OS updates* is
+  the regular way to keep them current. On Tumbleweed the plugin runs `zypper update`, not the recommended
+  `zypper dup`, so run `zypper dup` yourself from time to time.
+* Requirements on every Linux device: the MeshCentral agent runs as root (the default installation), the device has
+  network access to its package repositories, and `base64` and `gzip` are installed (present on all distributions
+  above).
+
 ## Settings
 
 Everything is configured in the **Settings tab** - no file editing, effective immediately without a restart. The
@@ -146,15 +197,6 @@ also mark a name as a driver or firmware component. Contributions are pull reque
 the rules (including how to verify a CPE against the NVD, because guessing is not allowed) are in
 [CONTRIBUTING.md](CONTRIBUTING.md). Your own entries added in the CPE Mapping tab always win, and the tab states
 which table is in force.
-
-## URLs
-
-| Page | URL |
-|---|---|
-| Assessment panel | `/pluginadmin.ashx?pin=inventoryscanner&action=show` |
-| Vulnerability report | `/pluginadmin.ashx?pin=inventoryscanner&action=report` |
-| Device report | `/pluginadmin.ashx?pin=inventoryscanner&action=deviceReport` |
-| CSV (all devices) | `...&action=export&type=hardware\|software\|vulns` |
 
 ## Privacy & security
 

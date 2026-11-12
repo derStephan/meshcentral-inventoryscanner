@@ -1465,6 +1465,135 @@ steps.push(function (next) {
     next();
 });
 
+// ---- v3.5.0: force OS updates / force OS Upgrade ----
+steps.push(function (next) {
+    var dpO = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-os-'));
+    var sentO = [];
+    var osNodes = [
+        { _id: 'node//w23', meshid: 'mesh//grp1', rname: 'w23', name: 'Win23', osdesc: 'Microsoft Windows 11 Pro - 23H2/22631' },
+        { _id: 'node//w25', meshid: 'mesh//grp1', rname: 'w25', name: 'Win25', osdesc: 'Microsoft Windows 11 Pro - 25H2/26200' },
+        { _id: 'node//u22', meshid: 'mesh//grp2', rname: 'u22', name: 'Ubu22', osdesc: 'Ubuntu 22.04.5 LTS' },
+        { _id: 'node//u24', meshid: 'mesh//grp2', rname: 'u24', name: 'Ubu24', osdesc: 'Ubuntu 24.04.3 LTS' },
+        { _id: 'node//mac', meshid: 'mesh//grp2', rname: 'mac', name: 'Mac', osdesc: 'macOS 15' },
+        { _id: 'node//none', meshid: 'mesh//grp2', rname: 'none', name: 'NoOs' }
+    ];
+    var dbO = { GetAllType: function (t, cb) { cb(null, t === 'node' ? osNodes.slice() : meshes.slice()); }, Get: function (id, cb) { cb(null, osNodes.filter(function (n) { return n._id === id; })); } };
+    var agents = {};
+    osNodes.forEach(function (n) { agents[n._id] = { send: function (m) { sentO.push(JSON.parse(m)); } }; });
+    var oO = factory({ parent: { db: dbO, datapath: dpO, debug: function () { }, config: { settings: {} }, webserver: { meshes: {}, wsagents: agents }, DispatchEvent: function () { } } });
+    var gunz = function (cmd, re) { var mm = String(cmd).match(re); return mm ? require('zlib').gunzipSync(Buffer.from(mm[1], 'base64')).toString('utf8') : ''; };
+
+    check('os: platform detection (unknown OS and macOS are never targeted)',
+        oO.osPlatformOf(osNodes[0]) === 'windows' && oO.osPlatformOf(osNodes[2]) === 'linux' && oO.osPlatformOf(osNodes[4]) === null && oO.osPlatformOf(osNodes[5]) === null);
+
+    // no lifecycle data -> NO assumed release: state unknown with a reason, never "outdated"/"current"
+    var uw = oO.osUpgradeInfo(osNodes[0].osdesc), uu = oO.osUpgradeInfo(osNodes[2].osdesc);
+    check('os: without lifecycle data the current release is unknown (no built-in fallback version)',
+        oO.osCurrentWindows11().release === '' && oO.osCurrentUbuntuLts().release === '' && typeof oO.OS_FALLBACK_CURRENT === 'undefined' &&
+        uw.state === 'unknown' && uw.outdated === false && uw.method === null && /unknown/.test(uw.note) && uu.state === 'unknown' && uu.method === null, [uw, uu]);
+    var fresh = new Date().toISOString();
+    oO.osLifecycle = { windows: { fetched: '2020-01-01T00:00:00Z', cycles: [{ cycle: '11-25h2-w' }] }, ubuntu: { fetched: fresh, cycles: [{ cycle: '24.04', lts: true }] } };
+    check('os: stale lifecycle data (>30 days) is not trusted to name the current release, the reason says so',
+        oO.osCurrentWindows11().release === '' && /older than 30 days/.test(oO.osCurrentWindows11().reason) && oO.osCurrentUbuntuLts().release === '24.04');
+    oO.osLifecycle = { windows: { fetched: fresh, cycles: [{ cycle: '11-26h1-w' }, { cycle: '11-25h2-e' }, { cycle: '11-23h2-w' }] }, ubuntu: { fetched: fresh, cycles: [{ cycle: '26.04', lts: true }, { cycle: '25.10', lts: false }, { cycle: '24.04', lts: true }] } };
+    check('os: the current release follows the lifecycle data (newest Windows 11 release, newest Ubuntu LTS)',
+        oO.osCurrentWindows11().release === '26h1' && oO.osCurrentUbuntuLts().release === '26.04');
+    check('os: 23H2, 25H2, 22.04 and 24.04 are outdated against 26H1 / 26.04 and get the right method + target',
+        oO.osUpgradeInfo(osNodes[0].osdesc).method === 'windows-feature' && oO.osUpgradeInfo(osNodes[0].osdesc).target === '26H1' &&
+        oO.osUpgradeInfo(osNodes[1].osdesc).state === 'outdated' && oO.osUpgradeInfo(osNodes[2].osdesc).method === 'ubuntu-release' &&
+        oO.osUpgradeInfo(osNodes[2].osdesc).target === '26.04' && oO.osUpgradeInfo(osNodes[3].osdesc).state === 'outdated');
+    check('os: a release equal to the newest one is current; Windows 11 without a reported release is unknown',
+        oO.osUpgradeInfo('Microsoft Windows 11 Pro - 26H1/28000').state === 'current' && oO.osUpgradeInfo('Ubuntu 26.04 LTS').state === 'current' &&
+        oO.osUpgradeInfo('Microsoft Windows 11 Pro').state === 'unknown');
+    // for the batch tests below: 25H2 / 24.04 are the newest in this fixture
+    oO.osLifecycle = { windows: { fetched: fresh, cycles: [{ cycle: '11-25h2-w' }, { cycle: '11-23h2-w' }] }, ubuntu: { fetched: fresh, cycles: [{ cycle: '24.04', lts: true }, { cycle: '22.04', lts: true }] } };
+
+    var wsU = oO.osBuildWindowsScript('update');
+    var wsG = oO.osBuildWindowsScript('upgrade', '25H2');
+    check('os win script: built-in Windows Update agent, feature upgrades skipped on update, marker before transcript stop',
+        wsU.indexOf('Microsoft.Update.Session') >= 0 && wsU.indexOf("$invOsMode = 'update'") >= 0 && wsU.indexOf(oO.WU_UPGRADES_CATEGORY) >= 0 &&
+        wsU.indexOf(oO.OS_MARKER) < wsU.indexOf('Stop-Transcript') && wsU.indexOf('invscanner-osupdate.log') >= 0);
+    check('os win script: upgrade sets and restores TargetReleaseVersion, never reboots',
+        wsG.indexOf("$invTarget = '25H2'") >= 0 && wsG.indexOf("'TargetReleaseVersionInfo' -Value $invTarget") >= 0 && wsG.indexOf('Remove-ItemProperty') >= 0 &&
+        !/Restart-Computer|shutdown/i.test(wsG));
+    check('os win script: an unvalidated target refuses to build', (function () { try { oO.osBuildWindowsScript('upgrade', "25H2';x"); return false; } catch (e) { return true; } })());
+    var openers = wsG.split(String.fromCharCode(10)).filter(function (l) { return /[({]\s*$/.test(l); });
+    check('os win script: one statement per line', openers.length === 0, openers.slice(0, 2));
+
+    var lsU = oO.osBuildLinuxScript('update'), lsG = oO.osBuildLinuxScript('upgrade');
+    check('os linux script: apt update + upgrade and the other package managers, stdin from /dev/null',
+        lsU.indexOf('apt-get -q update && step upgrade apt-get $APTOPT upgrade') >= 0 && lsU.indexOf('dnf -y upgrade') >= 0 && lsU.indexOf('zypper --non-interactive update') >= 0 &&
+        lsU.indexOf('pacman -Syu --noconfirm') >= 0 && lsU.indexOf('apk upgrade') >= 0 && lsU.indexOf('< /dev/null') >= 0);
+    check('os linux script: upgrade = dist-upgrade + do-release-upgrade (Ubuntu only), never reboots',
+        lsG.indexOf('dist-upgrade') >= 0 && lsG.indexOf('do-release-upgrade -f DistUpgradeViewNonInteractive') >= 0 && lsG.indexOf('ID=ubuntu') >= 0 && !/\breboot\s*$|shutdown -r|systemctl reboot/m.test(lsG));
+    var lt = oO.osLinuxTransport(lsU);
+    check('os linux transport: one line, gunzips back to the script', lt.indexOf(String.fromCharCode(10)) < 0 && gunz(lt, /echo '([A-Za-z0-9+\/=]+)'/) === lsU);
+
+    oO.handleAdminPostReq({ headers: XHDR, body: { action: 'os_run', mode: 'reboot' } }, mockRes(function (dBad) {
+        check('os route: unknown mode rejected', !!dBad.error, dBad);
+        var savedLc = oO.osLifecycle; oO.osLifecycle = {};
+        oO.handleAdminPostReq({ headers: XHDR, body: { action: 'os_run', mode: 'upgrade' } }, mockRes(function (dUnk) {
+        check('os route: upgrade without reference data is refused with a clear reason, nothing sent',
+            dUnk.started === false && /current release is unknown/.test(dUnk.error || '') && sentO.length === 0 && oO.osBatchRunning === false, dUnk);
+        oO.osLifecycle = savedLc;
+        oO.handleAdminPostReq({ headers: XHDR, body: { action: 'os_run', mode: 'upgrade' } }, mockRes(function (d) {
+            check('os upgrade: only the outdated devices receive a script (23H2 + 22.04), right shell type each',
+                d.started === true && sentO.length === 2 && sentO.filter(function (m) { return m.type === 1; }).length === 1 && sentO.filter(function (m) { return m.type === 3; }).length === 1 &&
+                sentO.every(function (m) { return m.action === 'runcommands' && m.runAsUser === 0 && String(m.sessionid).indexOf('invscanner-os-') === 0; }), sentO.map(function (m) { return [m.type, m.sessionid]; }));
+            var winMsg = sentO.filter(function (m) { return m.type === 1; })[0];
+            check('os upgrade e2e: the Windows device gets the 25H2 upgrade script', gunz(winMsg.cmds, /FromBase64String\('([A-Za-z0-9+\/=]+)'\)/).indexOf("$invTarget = '25H2'") >= 0);
+            var wgBusy = oO.wgStartBatch('manual', null, ['node//w25'], false);
+            check('os batch: blocks a winget batch while it runs', wgBusy.busy === true);
+            oO.onAgentResponse({ action: 'msg', type: 'runcommands', sessionid: winMsg.sessionid, result: 'x' + oO.OS_MARKER + '{"os":"windows","mode":"upgrade","target":"25H2","found":1,"installed":1,"failed":0,"reboot":true,"updates":{"title":"Windows 11, version 25H2","state":"ok","hresult":0},"error":""}' }, '', 'node//w23');
+            var rw = oO.osResults['node//w23'];
+            check('os parse: windows answer stored (single update unwrapped, reboot flagged)', rw && rw.state === 'ok' && rw.installed === 1 && rw.reboot === true && rw.updates.length === 1, rw);
+            var linMsg = sentO.filter(function (m) { return m.type === 3; })[0];
+            check('os route: a foreign session is never consumed', oO.onAgentResponse({ action: 'msg', type: 'runcommands', sessionid: 'user//x', result: 'y' }, '', 'node//u22') === false);
+            oO.onAgentResponse({ action: 'msg', type: 'console', value: oO.OS_MARKER + '{"os":"linux","mode":"upgrade","pm":"apt","state":"reboot-needed","exit":0,"step":"release-upgrade","reboot":true,"note":"reboot first","log":"tail"}' + String.fromCharCode(10) }, '', 'node//u22');
+            var rl = oO.osResults['node//u22'];
+            check('os parse: linux answer via console channel, batch drained', rl && rl.state === 'reboot-needed' && rl.pm === 'apt' && oO.osBatchRunning === false && fs.existsSync(oO.osResultsPath), [rl, oO.osBatchRunning]);
+            var lg = fs.readFileSync(oO.osLogPath, 'utf8');
+            check('os log: per-device lines', lg.indexOf('node//w23 - OS upgrade ok: 1 found, 1 installed, 0 failed, REBOOT PENDING') >= 0 && lg.indexOf('node//u22 - OS upgrade reboot-needed via apt') >= 0, lg.split(String.fromCharCode(10)).slice(-4));
+            sentO.length = 0;
+            oO.handleAdminPostReq({ headers: XHDR, body: { action: 'os_run', mode: 'update' } }, mockRes(function (d2) {
+                check('os update: every Windows/Linux device, none with an unknown OS or macOS', d2.started === true && sentO.length === 2 && oO.osQueue.length === 2, [sentO.length, oO.osQueue.length]);
+                oO.handleAdminPostReq({ headers: XHDR, body: { action: 'os_status' } }, mockRes(function (st) {
+                    var w23 = st.devices.filter(function (x) { return x.id === 'node//w23'; })[0];
+                    check('os status: four devices, release state, running batch, last result',
+                        st.devices.length === 4 && st.running === true && st.mode === 'update' && w23.outdated === true && w23.upgradable === true && w23.last.state === 'ok' && w23.pending != null, st);
+                    oO.handleAdminPostReq({ headers: XHDR, body: { action: 'os_run', mode: 'upgrade' } }, mockRes(function (d3) {
+                        check('os route: second batch while one runs answers busy', d3.busy === true, d3);
+                        oO.handleAdminPostReq({ headers: XHDR, body: { action: 'get_log', type: 'os' } }, mockRes(function (lgr) {
+                            check('os log route: tail available', Array.isArray(lgr.lines) && lgr.lines.length > 0 && lgr.file === 'plugins/inventoryscanner/os-update.log', lgr);
+                            next();
+                        }), user);
+                    }), user);
+                }), user);
+            }), user);
+        }), user);
+        }), user);
+    }), user);
+});
+
+steps.push(function (next) {
+    // generated scripts must parse: PowerShell parser for the Windows script, sh -n for Linux
+    var cp = require('child_process');
+    var dir = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-ospp-'));
+    var pW = path.join(dir, 'os.ps1');
+    fs.writeFileSync(pW, obj.osBuildWindowsScript('upgrade', '25H2'));
+    var out = null;
+    try { out = cp.execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', "$t=$null;$e=$null;[void][System.Management.Automation.Language.Parser]::ParseFile('" + pW + "',[ref]$t,[ref]$e);$e.Count"], { encoding: 'utf8', timeout: 60000 }); } catch (e) { out = null; }
+    if (out == null) { console.log('SKIP os script: PowerShell parser (PowerShell not available)'); }
+    else { check('os win script: PowerShell parser reports no errors', out.trim() === '0', out.trim()); }
+    var pL = path.join(dir, 'os.sh');
+    fs.writeFileSync(pL, obj.osBuildLinuxScript('upgrade'));
+    var shOk = null;
+    ['sh', 'bash', 'C:\\Program Files\\Git\\bin\\sh.exe'].some(function (sh) { try { cp.execFileSync(sh, ['-n', pL], { stdio: 'pipe', timeout: 30000 }); shOk = true; return true; } catch (e) { if (e.status != null) { shOk = false; return true; } return false; } });
+    if (shOk == null) { console.log('SKIP os script: sh -n (no POSIX shell available)'); }
+    else { check('os linux script: sh -n reports no syntax errors', shOk === true); }
+    next();
+});
+
 console.log('registered steps: ' + steps.length);
 (function run(i) {
     if (i >= steps.length) {
