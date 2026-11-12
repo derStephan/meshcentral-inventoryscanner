@@ -1347,9 +1347,6 @@ steps.push(function (next) {
     });
 });
 
-// The runner MUST stay the last statement: every steps.push() above has to be registered before
-// step 0 starts (pre-3.0.1 it sat mid-file and the trailing steps only ran because an earlier
-// step happened to be asynchronous).
 steps.push(function (next) {
     // realistic upgrade (v3.0.1): installer unpacks new files, then re-requires the CACHED module and
     // calls server_startup on a NEW instance of the OLD code - that instance must notice it and reload.
@@ -1539,10 +1536,11 @@ steps.push(function (next) {
     oO.osLifecycle = { windows: { fetched: fresh, cycles: [{ cycle: '11-26h1-w' }, { cycle: '11-25h2-e' }, { cycle: '11-23h2-w' }] }, ubuntu: { fetched: fresh, cycles: [{ cycle: '26.04', lts: true }, { cycle: '25.10', lts: false }, { cycle: '24.04', lts: true }] } };
     check('os: the current release follows the lifecycle data (newest Windows 11 release, newest Ubuntu LTS)',
         oO.osCurrentWindows11().release === '26h1' && oO.osCurrentUbuntuLts().release === '26.04');
-    check('os: 23H2, 25H2, 22.04 and 24.04 are outdated against 26H1 / 26.04 and get the right method + target',
+    check('os: 23H2, 25H2, 22.04 and 24.04 are outdated against 26H1 / 26.04 and get the right method + target (no support end in this fixture -> "available", never guessed "urgent")',
         oO.osUpgradeInfo(osNodes[0].osdesc).method === 'windows-feature' && oO.osUpgradeInfo(osNodes[0].osdesc).target === '26H1' &&
-        oO.osUpgradeInfo(osNodes[1].osdesc).state === 'outdated' && oO.osUpgradeInfo(osNodes[2].osdesc).method === 'ubuntu-release' &&
-        oO.osUpgradeInfo(osNodes[2].osdesc).target === '26.04' && oO.osUpgradeInfo(osNodes[3].osdesc).state === 'outdated');
+        oO.osUpgradeInfo(osNodes[1].osdesc).state === 'available' && oO.osUpgradeInfo(osNodes[2].osdesc).method === 'ubuntu-release' &&
+        oO.osUpgradeInfo(osNodes[2].osdesc).target === '26.04' && oO.osUpgradeInfo(osNodes[3].osdesc).state === 'available' &&
+        oO.osUpgradeInfo(osNodes[0].osdesc).urgent === false && /support end unknown/.test(oO.osUpgradeInfo(osNodes[0].osdesc).urgentReason));
     check('os: a release equal to the newest one is current; Windows 11 without a reported release is unknown',
         oO.osUpgradeInfo('Microsoft Windows 11 Pro - 26H1/28000').state === 'current' && oO.osUpgradeInfo('Ubuntu 26.04 LTS').state === 'current' &&
         oO.osUpgradeInfo('Microsoft Windows 11 Pro').state === 'unknown');
@@ -1573,11 +1571,11 @@ steps.push(function (next) {
     oO.handleAdminPostReq({ headers: XHDR, body: { action: 'os_run', mode: 'reboot' } }, mockRes(function (dBad) {
         check('os route: unknown mode rejected', !!dBad.error, dBad);
         var savedLc = oO.osLifecycle; oO.osLifecycle = {};
-        oO.handleAdminPostReq({ headers: XHDR, body: { action: 'os_run', mode: 'upgrade' } }, mockRes(function (dUnk) {
+        oO.handleAdminPostReq({ headers: XHDR, body: { action: 'os_run', mode: 'upgrade', scope: 'all' } }, mockRes(function (dUnk) {
         check('os route: upgrade without reference data is refused with a clear reason, nothing sent',
             dUnk.started === false && /current release is unknown/.test(dUnk.error || '') && sentO.length === 0 && oO.osBatchRunning === false, dUnk);
         oO.osLifecycle = savedLc;
-        oO.handleAdminPostReq({ headers: XHDR, body: { action: 'os_run', mode: 'upgrade' } }, mockRes(function (d) {
+        oO.handleAdminPostReq({ headers: XHDR, body: { action: 'os_run', mode: 'upgrade', scope: 'all' } }, mockRes(function (d) {
             check('os upgrade: only the outdated devices receive a script (23H2 + 22.04), right shell type each',
                 d.started === true && sentO.length === 2 && sentO.filter(function (m) { return m.type === 1; }).length === 1 && sentO.filter(function (m) { return m.type === 3; }).length === 1 &&
                 sentO.every(function (m) { return m.action === 'runcommands' && m.runAsUser === 0 && String(m.sessionid).indexOf('invscanner-os-') === 0; }), sentO.map(function (m) { return [m.type, m.sessionid]; }));
@@ -1602,7 +1600,7 @@ steps.push(function (next) {
                     var w23 = st.devices.filter(function (x) { return x.id === 'node//w23'; })[0];
                     check('os status: four devices, release state, running batch, last result',
                         st.devices.length === 4 && st.running === true && st.mode === 'update' && w23.outdated === true && w23.upgradable === true && w23.last.state === 'ok' && w23.pending != null, st);
-                    oO.handleAdminPostReq({ headers: XHDR, body: { action: 'os_run', mode: 'upgrade' } }, mockRes(function (d3) {
+                    oO.handleAdminPostReq({ headers: XHDR, body: { action: 'os_run', mode: 'upgrade', scope: 'all' } }, mockRes(function (d3) {
                         check('os route: second batch while one runs answers busy', d3.busy === true, d3);
                         oO.handleAdminPostReq({ headers: XHDR, body: { action: 'get_log', type: 'os' } }, mockRes(function (lgr) {
                             check('os log route: tail available', Array.isArray(lgr.lines) && lgr.lines.length > 0 && lgr.file === 'plugins/inventoryscanner/os-update.log', lgr);
@@ -1614,6 +1612,150 @@ steps.push(function (next) {
         }), user);
         }), user);
     }), user);
+});
+
+// ---- v3.6.0: upgrade urgency (current / available / urgent / unknown) + scope of the fleet upgrade ----
+steps.push(function (next) {
+    var nowU = Date.parse('2026-11-12T12:00:00Z');
+    var fetchedU = new Date(nowU - 3600 * 1000).toISOString();
+    var dbU = { GetAllType: function (t, cb) { cb(null, t === 'node' ? uNodes.slice() : meshes.slice()); }, Get: function (id, cb) { cb(null, uNodes.filter(function (n) { return n._id === id; })); } };
+    var uNodes = [
+        { _id: 'node//p23', meshid: 'mesh//grp1', name: 'Pro23', osdesc: 'Microsoft Windows 11 Pro - 23H2/22631' },
+        { _id: 'node//p25', meshid: 'mesh//grp1', name: 'Pro25', osdesc: 'Microsoft Windows 11 Pro - 25H2/26200' },
+        { _id: 'node//e25', meshid: 'mesh//grp1', name: 'Ent25', osdesc: 'Microsoft Windows 11 Enterprise - 25H2/26200' },
+        { _id: 'node//p26', meshid: 'mesh//grp1', name: 'Pro26', osdesc: 'Microsoft Windows 11 Pro - 26H2/26300' },
+        { _id: 'node//u22', meshid: 'mesh//grp2', name: 'Ubu22', osdesc: 'Ubuntu 22.04.5 LTS' },
+        { _id: 'node//u24', meshid: 'mesh//grp2', name: 'Ubu24', osdesc: 'Ubuntu 24.04.5 LTS' },
+        { _id: 'node//deb10', meshid: 'mesh//grp2', name: 'Deb10', osdesc: 'Debian GNU/Linux 10 (buster)' },
+        { _id: 'node//deb12', meshid: 'mesh//grp2', name: 'Deb12', osdesc: 'Debian GNU/Linux 12 (bookworm)' }
+    ];
+    var sentU = [], agU = {};
+    uNodes.forEach(function (n) { agU[n._id] = { send: function (m) { sentU.push(JSON.parse(m)); } }; });
+    var oU = factory({ parent: { db: dbU, datapath: fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-urg-')), debug: function () { }, config: { settings: {} }, webserver: { meshes: {}, wsagents: agU }, DispatchEvent: function () { } } });
+    oU.rescheduleAll = function () { };
+    // excerpt of the real endoflife.date payloads (windows.json / ubuntu.json / debian.json, fetched 2026-11-12)
+    oU.osLifecycle = {
+        windows: { fetched: fetchedU, cycles: oU.sanitizeLifecycleCycles([
+            { cycle: '11-26h2-e', eol: '2029-10-09' }, { cycle: '11-26h2-w', eol: '2028-10-10' },
+            { cycle: '11-25h2-e', eol: '2028-10-10' }, { cycle: '11-25h2-w', eol: '2027-10-12' },
+            { cycle: '11-23h2-e', eol: '2026-11-10' }, { cycle: '11-23h2-w', eol: '2025-11-11' }]) },
+        ubuntu: { fetched: fetchedU, cycles: oU.sanitizeLifecycleCycles([
+            { cycle: '26.04', lts: true, eol: '2031-05-29' }, { cycle: '25.10', lts: false, eol: '2026-07-01' },
+            { cycle: '24.04', lts: true, eol: '2029-05-31' }, { cycle: '22.04', lts: true, eol: '2027-06-01' }]) },
+        debian: { fetched: fetchedU, cycles: oU.sanitizeLifecycleCycles([{ cycle: '12', eol: '2028-06-30' }, { cycle: '10', eol: '2024-06-30' }]) }
+    };
+    var st = function (i) { return oU.osUpgradeInfo(uNodes[i].osdesc, nowU); };
+    check('urgency: default window is 365 days', oU.scannerConfig().osUpgradeUrgentDays === 365);
+    check('urgency: 23H2 Pro (support ended 2025-11-11) is urgent -> 26H2',
+        st(0).state === 'urgent' && st(0).urgent === true && st(0).target === '26H2' && st(0).method === 'windows-feature' && /support ended 2025-11-11/.test(st(0).urgentReason), st(0));
+    check('urgency: 25H2 Pro (334 days left) is urgent with 365, the SAME release on Enterprise (698 days left) is only available',
+        st(1).state === 'urgent' && st(1).daysLeft === 334 && st(2).state === 'available' && st(2).daysLeft === 698 && st(2).eol === '2028-10-10', [st(1), st(2)]);
+    check('urgency: the newest release is current, never urgent', st(3).state === 'current' && st(3).urgent === false && st(3).outdated === false, st(3));
+    check('urgency: Ubuntu 22.04 (201 days left) urgent, 24.04 (931 days left) available, both -> 26.04 via do-release-upgrade',
+        st(4).state === 'urgent' && st(4).daysLeft === 201 && st(5).state === 'available' && st(5).daysLeft === 931 && st(5).target === '26.04' && st(5).method === 'ubuntu-release', [st(4), st(5)]);
+    check('urgency: platforms without a newer-release check - Debian 10 (ended) urgent but no automatic upgrade, Debian 12 (596 days) unknown',
+        st(6).state === 'urgent' && st(6).method === null && st(6).outdated === true && st(7).state === 'unknown' && st(7).method === null && /596 days left/.test(st(7).note), [st(6), st(7)]);
+    oU.pluginSettings = { vulnerabilityScanner: { osUpgradeUrgentDays: 0 } };
+    check('urgency: window 0 = only after support ended (25H2 Pro and Ubuntu 22.04 become available, 23H2 stays urgent)',
+        st(1).state === 'available' && st(4).state === 'available' && st(0).state === 'urgent', [st(1).state, st(4).state, st(0).state]);
+    oU.pluginSettings = { vulnerabilityScanner: { osUpgradeUrgentDays: 334 } };
+    var b334 = st(1).state;
+    oU.pluginSettings = { vulnerabilityScanner: { osUpgradeUrgentDays: 335 } };
+    check('urgency: exact boundary - 334 days left is available with a 334-day window and urgent with 335', b334 === 'available' && st(1).state === 'urgent', [b334, st(1).state]);
+    oU.pluginSettings = { vulnerabilityScanner: { osUpgradeUrgentDays: 5000 } };
+    check('urgency: an out-of-range config value is ignored (default 365 applies)', oU.scannerConfig().osUpgradeUrgentDays === 365);
+    oU.pluginSettings = {};
+    var savedDeb = oU.osLifecycle.ubuntu;
+    oU.osLifecycle.ubuntu = { fetched: fetchedU, cycles: oU.sanitizeLifecycleCycles([{ cycle: '26.04', lts: true, eol: '2031-05-29' }, { cycle: '24.04', lts: true }]) };
+    var noEol = oU.osUpgradeInfo('Ubuntu 24.04.5 LTS', nowU);
+    check('urgency: an outdated release WITHOUT a known support end is "available" with that reason, never "urgent"',
+        noEol.state === 'available' && noEol.urgent === false && /support end unknown/.test(noEol.urgentReason), noEol);
+    oU.osLifecycle.ubuntu = savedDeb;
+
+    // routes use Date.now(): pin the fixture relative to the real clock so the same states hold
+    var shift = Date.now() - nowU;
+    var mv = function (d) { return new Date(Date.parse(d + 'T00:00:00Z') + shift).toISOString().substring(0, 10); };
+    ['windows', 'ubuntu', 'debian'].forEach(function (k) { oU.osLifecycle[k].fetched = new Date().toISOString(); oU.osLifecycle[k].cycles.forEach(function (c) { if (typeof c.eol === 'string') c.eol = mv(c.eol); }); });
+    var postU = function (b, cb) { oU.handleAdminPostReq({ headers: XHDR, body: b }, mockRes(cb), user); };
+    postU({ action: 'os_run', mode: 'upgrade' }, function (r1) {
+        check('scope: a fleet-wide upgrade without scope is refused, nothing sent', /needs scope urgent or all/.test(r1.error || '') && sentU.length === 0, r1);
+        postU({ action: 'os_run', mode: 'upgrade', scope: 'soon' }, function (r2) {
+            postU({ action: 'os_run', mode: 'update', scope: 'urgent' }, function (r3) {
+                check('scope: an invalid scope and a scope on mode update are refused', /scope must be urgent or all/.test(r2.error || '') && /only applies to mode upgrade/.test(r3.error || '') && sentU.length === 0, [r2, r3]);
+                postU({ action: 'os_status' }, function (s1) {
+                    var byId = {}; s1.devices.forEach(function (x) { byId[x.id] = x; });
+                    check('os_status: per-device releaseState/urgent/eol/daysLeft/urgentReason, counts per state and the active window',
+                        s1.urgentDays === 365 && s1.counts.urgent === 4 && s1.counts.available === 2 && s1.counts.current === 1 && s1.counts.unknown === 1 &&
+                        byId['node//p25'].releaseState === 'urgent' && byId['node//p25'].urgent === true && byId['node//e25'].releaseState === 'available' &&
+                        byId['node//e25'].upgradable === true && byId['node//deb10'].upgradable === false && byId['node//u24'].eol !== '' && typeof byId['node//u24'].daysLeft === 'number' &&
+                        /support until/.test(byId['node//u24'].urgentReason), [s1.counts, s1.urgentDays]);
+                    postU({ action: 'os_run', mode: 'upgrade', scope: 'urgent' }, function (r4) {
+                        // OS_MAX_PARALLEL = 2: answer every sent session until the queue is drained
+                        var answered = 0;
+                        var drain = function () {
+                            while (answered < sentU.length) {
+                                var m = sentU[answered++];
+                                oU.onAgentResponse({ action: 'msg', type: 'runcommands', sessionid: m.sessionid, result: oU.OS_MARKER + '{"os":"x","state":"ok","found":0,"installed":0,"failed":0,"updates":[]}' }, '', 'node//' + m.sessionid.substring('invscanner-os-'.length));
+                            }
+                        };
+                        check('scope urgent: two scripts in flight at once (OS_MAX_PARALLEL), the third device is queued', sentU.length === 2 && oU.osQueue.length === 1, [sentU.length, oU.osQueue.length]);
+                        drain();
+                        var got = sentU.map(function (m) { return m.sessionid; }).sort().join();
+                        check('scope urgent: only the urgent AND upgradable devices (23H2 Pro, 25H2 Pro, Ubuntu 22.04) get a script; Debian 10 is urgent but has no automatic upgrade',
+                            r4.started === true && r4.scope === 'urgent' && got === 'invscanner-os-p23,invscanner-os-p25,invscanner-os-u22', got);
+                        var lgU = fs.readFileSync(oU.osLogPath, 'utf8');
+                        check('scope urgent: skipped devices are logged with their reason',
+                            lgU.indexOf('node//e25 - not upgraded by the urgent batch, upgrade only available: support until') >= 0 &&
+                            lgU.indexOf('node//deb10 - not upgraded, urgent but no automatic upgrade') >= 0 && lgU.indexOf('OS upgrade (urgent) batch starting for 3 device(s)') >= 0, lgU.split(String.fromCharCode(10)).slice(-8));
+                        check('scope urgent: batch drained', oU.osBatchRunning === false, oU.osBatchRunning);
+                        sentU.length = 0; answered = 0;
+                        postU({ action: 'os_run', mode: 'upgrade', scope: 'all' }, function (r5) {
+                            drain();
+                            var got5 = sentU.map(function (m) { return m.sessionid; }).sort().join();
+                            check('scope all: every outdated, upgradable device (urgent + available), still none without an automatic upgrade path',
+                                r5.started === true && r5.scope === 'all' && got5 === 'invscanner-os-e25,invscanner-os-p23,invscanner-os-p25,invscanner-os-u22,invscanner-os-u24' && oU.osBatchRunning === false, got5);
+                            next();
+                        });
+                    });
+                });
+            });
+        });
+    });
+});
+
+// ---- v3.6.0: the urgency window is a regular setting; the Settings tab no longer drops other sections ----
+steps.push(function (next) {
+    var oS = factory({ parent: { db: db, datapath: fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-set-')), debug: function () { }, config: { settings: {} }, webserver: {} } });
+    oS.rescheduleAll = function () { };
+    var base = { action: 'save_settings', scanIntervalHours: '24', updateHours: '168', anyCveMaxAgeYears: '5', collectIntervalMinutes: '1440', notifyThreshold: 'HIGH' };
+    var withU = function (v) { var b = JSON.parse(JSON.stringify(base)); if (v !== undefined) { b.osUpgradeUrgentDays = v; } return b; };
+    var postS = function (b, cb) { oS.handleAdminPostReq({ headers: XHDR, body: b }, mockRes(cb), user); };
+    oS.pluginSettings = { wingetUpdater: { enabled: true, excludeNodes: ['node//keep'], ignorePackages: [{ id: 'Keep.Me', note: 'licence' }], updateMeshes: ['mesh//grp1'], pinSync: false } };
+    postS(withU('200'), function (d1) {
+        check('setting: osUpgradeUrgentDays saved, effective and reported with its source',
+            !d1.error && d1.settings.osUpgradeUrgentDays === 200 && d1.sources.osUpgradeUrgentDays === 'file' && d1.sources.revertAllowed.osUpgradeUrgentDays === true && oS.scannerConfig().osUpgradeUrgentDays === 200, d1.settings && d1.settings.osUpgradeUrgentDays);
+        check('settings save: the winget configuration (incl. the exclusion list used by OS batches) survives a Settings-tab save',
+            oS.wingetConfig().excludeNodes.join() === 'node//keep' && oS.wingetConfig().ignorePackages[0].id === 'Keep.Me' && oS.wingetConfig().enabled === true && oS.wingetConfig().pinSync === false, oS.pluginSettings);
+        postS(withU(undefined), function (d2) {
+            check('setting: a save without the field keeps the saved value (older panels never reset it silently)', d2.settings.osUpgradeUrgentDays === 200, d2.settings.osUpgradeUrgentDays);
+            postS(withU('-1'), function (d3) {
+                postS(withU('3651'), function (d4) {
+                    postS(withU('12.5'), function (d5) {
+                        check('setting: negative, too large and non-integer values are refused', /OS upgrade urgency/.test(d3.error || '') && /OS upgrade urgency/.test(d4.error || '') && /OS upgrade urgency/.test(d5.error || '') && oS.scannerConfig().osUpgradeUrgentDays === 200, [d3.error, d4.error, d5.error]);
+                        postS({ action: 'revert_setting', revertOsUpgradeUrgentDays: 'true' }, function (d6) {
+                            check('setting: revert hands the key back to config.json / the default', d6.settings.osUpgradeUrgentDays === 365 && d6.sources.osUpgradeUrgentDays === 'default', d6.settings.osUpgradeUrgentDays);
+                            postS({ action: 'save_settings', reset: 'true' }, function (d7) {
+                                check('settings reset: clears the Settings-tab sections only, the winget configuration stays',
+                                    d7.reset === true && oS.pluginSettings.vulnerabilityScanner === undefined && oS.wingetConfig().excludeNodes.join() === 'node//keep' &&
+                                    JSON.parse(fs.readFileSync(oS.pluginSettingsPath, 'utf8')).wingetUpdater.ignorePackages[0].id === 'Keep.Me', oS.pluginSettings);
+                                next();
+                            });
+                        });
+                    });
+                });
+            });
+        });
+    });
 });
 
 steps.push(function (next) {
@@ -1635,6 +1777,9 @@ steps.push(function (next) {
     next();
 });
 
+// The runner MUST stay the last statement: every steps.push() above has to be registered before
+// step 0 starts (pre-3.0.1 it sat mid-file and the trailing steps only ran because an earlier
+// step happened to be asynchronous). New steps go ABOVE this block.
 console.log('registered steps: ' + steps.length);
 (function run(i) {
     if (i >= steps.length) {

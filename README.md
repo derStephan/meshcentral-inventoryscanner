@@ -41,7 +41,8 @@ without sending inventory data to anyone.
   with an ignore list for licensed packages and a full audit trail.
 * **OS updates and OS upgrades on demand** - *force OS updates* installs pending Windows updates (built-in Windows
   Update agent) or runs the Linux package manager upgrade; *force OS Upgrade* brings outdated releases (e.g.
-  Windows 11 23H2, Ubuntu 22.04) to the current one. Never reboots a device.
+  Windows 11 23H2, Ubuntu 22.04) to the current one, marked *urgent* when the installed release runs out of support.
+  Never reboots a device.
 
 ## Requirements
 
@@ -129,20 +130,40 @@ Ignored packages are skipped in every run and pinned on the client, so even a us
 `winget upgrade --all` leaves a licensed version alone. Offline devices are picked up when they connect;
 a device is never rebooted.
 
-**OS updates (Updates tab, section *Operating system updates*)** - two manual buttons, both with confirmation,
-plus the same two actions per device row:
+**OS updates (Updates tab, section *Operating system updates*)** - three manual buttons, all with confirmation,
+plus *OS updates* / *OS Upgrade* per device row:
 
 * **force OS updates** - every non-excluded Windows and Linux device. Windows: the built-in Windows Update agent
   searches, downloads and installs all pending updates (feature upgrades excluded). Linux: `apt-get update` +
   `apt-get upgrade`, or `dnf upgrade --refresh`, `yum update`, `zypper update`, `pacman -Syu`, `apk upgrade`.
-* **force OS Upgrade** - only devices whose release is provably not current. "Current" comes exclusively from the
-  endoflife.date data (newest Windows 11 release, newest Ubuntu LTS) - there is no built-in fallback version. If that
-  data is missing, switched off or older than 30 days, the release state is shown as **unknown** together with the
-  reason, and nothing is upgraded. Windows 10/11: Windows Update is pointed at the current release with the
-  documented `TargetReleaseVersion` policy and installs it; the previous policy values are restored afterwards.
-  Ubuntu: `apt-get dist-upgrade`, then `do-release-upgrade` (one release step per run; if a reboot is pending first,
-  the device reports *reboot-needed* - reboot, then run it again). Other distributions and Windows Server are shown
-  as outdated but not upgraded automatically.
+* **force OS Upgrade (urgent)** / **force OS Upgrade (all)** - only devices whose release is provably not current.
+  "Current" comes exclusively from the endoflife.date data (newest Windows 11 release, newest Ubuntu LTS) - there is
+  no built-in fallback version. If that data is missing, switched off or older than 30 days, the release state is
+  shown as **unknown** together with the reason, and nothing is upgraded. Windows 10/11: Windows Update is pointed at
+  the current release with the documented `TargetReleaseVersion` policy and installs it; the previous policy values
+  are restored afterwards. Ubuntu: `apt-get dist-upgrade`, then `do-release-upgrade` (one release step per run; if a
+  reboot is pending first, the device reports *reboot-needed* - reboot, then run it again). Other distributions and
+  Windows Server are shown in the table but not upgraded automatically.
+
+**Release state per device** - the *Release state* column shows one of four states:
+
+| State | Meaning | force OS Upgrade (urgent) | force OS Upgrade (all) / per device |
+|---|---|---|---|
+| **current** | the newest release | - | - |
+| **Upgrade available** | a newer release exists; the installed one is still supported for longer than the urgency window | no | yes |
+| **Upgrade urgent** | a newer release exists and the installed release is out of support, or its support ends within the urgency window | yes | yes |
+| **unknown** | no clean answer (release not reported, no fresh endoflife.date data) - the reason is shown | no | no |
+
+* The **urgency window** is set in the Settings tab ("OS upgrade is urgent this many days before support ends";
+  default **365 days**, 0 = only after support ended). The support end is that of the *installed* release and
+  edition at endoflife.date: Windows Home/Pro and Enterprise/Education releases have different end dates.
+* Windows 11 Home/Pro releases get 24 months of support. With the default 365 days a Pro release therefore becomes
+  *urgent* about a year after it came out - e.g. on 2026-11-12, Windows 11 Pro 25H2 (support until 2027-10-12) is
+  urgent, the same release on Enterprise (until 2028-10-10) is only *available*. Lower the window if that is too early.
+* An outdated release whose support end is not known is shown as *available* with "support end unknown" - it is
+  never called urgent on a guess.
+* Windows Server and distributions other than Ubuntu have no newer-release check: they show *Upgrade urgent* when
+  their own support has ended or ends within the window, otherwise *unknown*, and are never upgraded automatically.
 
 No device is ever rebooted; a pending reboot is shown per device. Results go to the device table, the device's event
 list and `os-update.log`; the clients log to `invscanner-osupdate.log` (Windows: next to `meshagent.exe` or in
@@ -168,8 +189,8 @@ distribution name:
   `/etc/os-release`. Derivatives with their own ID (Linux Mint, Pop!_OS, elementary OS, ...) report *unsupported*,
   because `do-release-upgrade` is not their upgrade path. For every other distribution a release upgrade needs its
   own tool and manual steps (e.g. `dnf system-upgrade` on Fedora, editing the sources and `apt full-upgrade` on
-  Debian, `zypper dup` on openSUSE), so the plugin does not try it. An end-of-life release of such a distribution is
-  shown as outdated in the device table, but it is never upgraded automatically.
+  Debian, `zypper dup` on openSUSE), so the plugin does not try it. Such a release is shown as *Upgrade urgent* once
+  its support has ended or ends within the urgency window, but it is never upgraded automatically.
 * Rolling distributions (Arch, Manjaro, openSUSE Tumbleweed) have no releases to upgrade to; *force OS updates* is
   the regular way to keep them current. On Tumbleweed the plugin runs `zypper update`, not the recommended
   `zypper dup`, so run `zypper dup` yourself from time to time.
@@ -182,7 +203,8 @@ distribution name:
 Everything is configured in the **Settings tab** - no file editing, effective immediately without a restart. The
 values are stored in the plugin's own folder and **override the same keys in `config.json`**, which the plugin
 only reads (it never writes it). Per field you can revert to the `config.json` value, and *Reset all* hands
-control back to the file completely.
+control of the Settings-tab values back to the file completely. The configuration of the Updates tab (winget
+switch, groups, ignore list, exclusions) is not touched by *Save Settings* or *Reset all*.
 
 File-based fallback keys (for unattended setups) are listed in [AGENTS.md](AGENTS.md) under
 *Configuration keys & precedence*. Group ids look like `mesh/<domain>/<name>` - in the default domain that is

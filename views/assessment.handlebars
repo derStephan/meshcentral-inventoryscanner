@@ -153,7 +153,8 @@
                 <strong>override the same keys in the server's config.json</strong> - immediately and without a
                 restart. config.json is never written by the plugin and remains the fallback
                 ("from config.json" / "built-in default"). Use a field's <em>revert</em> option or the
-                <em>Reset all</em> button to hand control back to config.json.
+                <em>Reset all</em> button to hand control back to config.json. The Updates-tab configuration (winget)
+                is stored in the same file but is not changed by this tab.
             </div>
             <div class="setgrid">
                 <label for="setInterval">Scan interval (hours)</label>
@@ -218,6 +219,13 @@
                 <div><input type="text" id="setOsLifecycleUrl" style="width:420px">
                     <select id="setOsLifecycleUrlSrc" class="srcsel"></select>
                     <div class="hint">https, ending with "/" (the product slug + ".json" is appended). Only change this for a mirror.</div></div>
+
+                <label for="setOsUrgentDays">OS upgrade is urgent this many days before support ends</label>
+                <div><input type="text" id="setOsUrgentDays" class="num">
+                    <select id="setOsUrgentDaysSrc" class="srcsel"></select>
+                    <div class="hint">Updates tab, OS section: an outdated release counts as "Upgrade urgent" once its support (endoflife.date)
+                    has ended or fewer days than this are left, otherwise as "Upgrade available". 365 = default, 0 = only after support ended.
+                    Windows Home/Pro releases get 24 months of support, so with 365 a Pro release becomes urgent about a year after it came out.</div></div>
 
                 <label for="setNotifyOnScan">Notify admins after scans</label>
                 <div><input type="checkbox" id="setNotifyOnScan"></div>
@@ -386,7 +394,10 @@
                 <strong>force OS Upgrade</strong> only targets devices whose OS release is <em>provably not current</em> (current
                 according to the endoflife.date data: <span id="osCurrentInfo">-</span>). There is no built-in fallback version: without
                 fresh data (at most 30 days old) the release state is shown as <em>unknown</em> with the reason, and such devices are
-                not upgraded. On Windows 10/11, Windows Update is pointed at the current release with the
+                not upgraded. An outdated release is <strong>Upgrade urgent</strong> when its own support has ended or ends within
+                <span id="osUrgentDaysInfo">-</span> days (Settings tab), otherwise <strong>Upgrade available</strong>; without a known
+                support end it is never called urgent. <em>force OS Upgrade (urgent)</em> covers only the urgent devices,
+                <em>force OS Upgrade (all)</em> every outdated device. On Windows 10/11, Windows Update is pointed at the current release with the
                 documented TargetReleaseVersion policy and installs it; the previous policy is restored afterwards. On Ubuntu,
                 <code>apt-get dist-upgrade</code> runs, followed by <code>do-release-upgrade</code>, which moves one release per run.
                 Other distributions and Windows Server are shown but never upgraded automatically.<br>
@@ -395,7 +406,8 @@
             </div>
             <div class="controls">
                 <button id="osUpdBtn" class="green">force OS updates</button>
-                <button id="osUpgBtn" class="purple">force OS Upgrade</button>
+                <button id="osUpgUrgentBtn" class="red">force OS Upgrade (urgent)</button>
+                <button id="osUpgBtn" class="purple">force OS Upgrade (all)</button>
                 <button id="osRefreshBtn" class="small">Refresh</button>
                 <span id="osRunState" class="hint"></span>
             </div>
@@ -895,13 +907,20 @@
             parts.push(cur.ubuntuLts ? ('Ubuntu ' + cur.ubuntuLts + ' LTS') : ('Ubuntu: UNKNOWN - ' + (cur.ubuntuLtsReason || 'no data')));
             $('osCurrentInfo').textContent = parts.join('; ');
             $('osCurrentInfo').style.color = (cur.windows11 && cur.ubuntuLts) ? '' : '#a33';
+            $('osUrgentDaysInfo').textContent = (s.urgentDays != null) ? String(s.urgentDays) : '?';
+            var cnt = s.counts || {};
+            $('osUpgUrgentBtn').textContent = 'force OS Upgrade (urgent' + (cnt.urgent != null ? ': ' + cnt.urgent : '') + ')';
+            $('osUpgBtn').textContent = 'force OS Upgrade (all' + ((cnt.urgent != null && cnt.available != null) ? ': ' + (cnt.urgent + cnt.available) : '') + ')';
             var html = '';
             var devs = s.devices || [];
             for (var i = 0; i < devs.length; i++) {
                 var d = devs[i];
                 var rel;
+                var why = d.urgentReason ? '<div style="font-size:11px;color:#556">' + esc(d.urgentReason) + '</div>' : '';
+                var noAuto = (!d.upgradable && d.note) ? '<div style="font-size:11px;color:#556">' + esc(d.note) + '</div>' : '';
                 if (d.releaseState === 'unknown') { rel = '<span style="color:#8a6d3b;font-weight:600">unknown</span><div style="font-size:11px;color:#556">' + esc(d.note || 'no clean answer') + ' - not upgraded</div>'; }
-                else if (d.outdated) { rel = '<span style="color:#a33;font-weight:600">outdated</span>' + (d.target ? ' -> ' + esc(d.target) : '') + (d.upgradable ? '' : '<div style="font-size:11px;color:#556">' + esc(d.note || 'no automatic upgrade') + '</div>'); }
+                else if (d.releaseState === 'urgent') { rel = '<span style="color:#a33;font-weight:600">Upgrade urgent</span>' + (d.target ? ' -> ' + esc(d.target) : '') + why + noAuto; }
+                else if (d.releaseState === 'available') { rel = '<span style="color:#8a6d3b;font-weight:600">Upgrade available</span>' + (d.target ? ' -> ' + esc(d.target) : '') + why + noAuto; }
                 else { rel = '<span style="color:#1d7a3a">current</span>' + (d.note ? '<div style="font-size:11px;color:#556">' + esc(d.note) + '</div>' : ''); }
                 html += '<tr><td>' + esc(d.given || d.host) + '</td><td>' + esc(d.group) + '</td><td style="font-size:11px">' + esc(d.os) + '</td>';
                 html += '<td>' + (d.online ? 'yes' : '<span style="color:#a33">offline</span>') + '</td><td style="font-size:11px">' + rel + (d.excluded ? '<div class="hint">excluded</div>' : '') + '</td>';
@@ -947,29 +966,35 @@
             return id;
         }
 
-        function osRun(mode, nodeId) {
+        function osRun(mode, nodeId, scope) {
             var body = { mode: mode };
             if (nodeId) { body.nodeIds = nodeId; }
+            if (scope) { body.scope = scope; }
             post('os_run', body).then(function (d) {
                 if (d.error) { showMsg('osMsg', d.error, false); return; }
                 if (d.busy) { floatMsg('A winget or OS batch is still running - try again later.', false); return; }
-                floatMsg('OS ' + mode + ' started' + (nodeId ? ' for ' + osDevLabel(nodeId) : '') + ' - progress in the table and the OS update log.', true);
+                floatMsg('OS ' + mode + (scope ? ' (' + scope + ')' : '') + ' started' + (nodeId ? ' for ' + osDevLabel(nodeId) : '') + ' - progress in the table and the OS update log.', true);
                 setTimeout(loadOsStatus, 1500);
             }).catch(function (ex) { showMsg('osMsg', 'Run failed: ' + ex.message, false); });
+        }
+
+        function osUpgradeFleet(scope) {
+            var devsAll = (osApp.status && osApp.status.devices) || [];
+            var n = devsAll.filter(function (x) { return x.upgradable && !x.excluded && (scope === 'all' || x.releaseState === 'urgent'); }).length;
+            var unk = devsAll.filter(function (x) { return x.releaseState === 'unknown' && !x.excluded; }).length;
+            var avail = devsAll.filter(function (x) { return x.upgradable && !x.excluded && x.releaseState === 'available'; }).length;
+            var skipped = (unk ? '\n' + unk + ' device(s) with an UNKNOWN release state are skipped.' : '') + ((scope === 'urgent' && avail) ? '\n' + avail + ' device(s) with "Upgrade available" are not part of this batch.' : '');
+            if (n === 0) { showMsg('osMsg', (scope === 'urgent' ? 'No device needs an urgent upgrade.' : 'No device is provably outdated.') + skipped.split('\n').join(' '), false); return; }
+            if (!window.confirm('force OS Upgrade (' + scope + ') on ' + n + ' device(s) now?' + skipped + '\nWindows installs the current feature release, Ubuntu upgrades to the next release. This can take hours and changes the OS release. No device is rebooted - you have to do that yourself.')) { return; }
+            osRun('upgrade', null, scope);
         }
 
         $('osUpdBtn').addEventListener('click', function () {
             if (!window.confirm('force OS updates on ALL non-excluded Windows and Linux devices now?\nWindows installs every pending Windows update, Linux runs the package manager upgrade. No device is rebooted.')) { return; }
             osRun('update');
         });
-        $('osUpgBtn').addEventListener('click', function () {
-            var devsAll = (osApp.status && osApp.status.devices) || [];
-            var n = devsAll.filter(function (x) { return x.upgradable && !x.excluded; }).length;
-            var unk = devsAll.filter(function (x) { return x.releaseState === 'unknown' && !x.excluded; }).length;
-            if (n === 0) { showMsg('osMsg', 'No device is provably outdated.' + (unk ? ' ' + unk + ' device(s) have an UNKNOWN release state (see the table for the reason) and are not upgraded.' : ''), false); return; }
-            if (!window.confirm('force OS Upgrade on ' + n + ' outdated device(s) now?' + (unk ? '\n' + unk + ' device(s) with an UNKNOWN release state are skipped.' : '') + '\nWindows installs the current feature release, Ubuntu upgrades to the next release. This can take hours and changes the OS release. No device is rebooted - you have to do that yourself.')) { return; }
-            osRun('upgrade');
-        });
+        $('osUpgUrgentBtn').addEventListener('click', function () { osUpgradeFleet('urgent'); });
+        $('osUpgBtn').addEventListener('click', function () { osUpgradeFleet('all'); });
         $('osRefreshBtn').addEventListener('click', loadOsStatus);
         $('refreshOsLogBtn').addEventListener('click', loadOsLog);
         $('osDevBody').addEventListener('click', function (e) {
@@ -1473,6 +1498,8 @@
                 setBool('setOsLifecycleEnabled', s.osLifecycleEnabled);
                 if (s.osLifecycleUrl !== undefined) $('setOsLifecycleUrl').value = s.osLifecycleUrl;
                 applyConfigSourceUi($('setOsLifecycleUrlSrc'), src.osLifecycleUrl, 'revertOsLifecycleUrl');
+                if (s.osUpgradeUrgentDays !== undefined) $('setOsUrgentDays').value = s.osUpgradeUrgentDays;
+                applyConfigSourceUi($('setOsUrgentDaysSrc'), src.osUpgradeUrgentDays, 'revertOsUpgradeUrgentDays');
                 var oli = data.osLifecycle || {};
                 $('osLifecycleInfo').textContent = oli.products ? ('data for ' + oli.products + ' OS families, fetched ' + fmtLocal(oli.fetched)) : 'no data yet (fetched with the next NVD refresh)';
                 if (s.cpeTableUrl !== undefined) $('setCpeTableUrl').value = s.cpeTableUrl;
@@ -1551,6 +1578,7 @@
                 distroManaged: $('setDistroManaged').checked ? 'true' : 'false',
                 osLifecycleEnabled: $('setOsLifecycleEnabled').checked ? 'true' : 'false',
                 osLifecycleUrl: $('setOsLifecycleUrl').value.trim(),
+                osUpgradeUrgentDays: $('setOsUrgentDays').value.trim(),
                 scanMeshes: (allChecked || !anyChecked) ? '' : scanIds.join(','),
                 notifyMeshIds: notifyIds.join(','),
                 notifySeverities: notifySevs.join(',')

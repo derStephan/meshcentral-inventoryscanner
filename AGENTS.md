@@ -21,8 +21,8 @@ Sub-folders INSIDE the repository (views/, tools/, lib/) are unpacked as-is and 
   views/report.handlebars      printable vulnerability report (overview + one page per location)
   views/deviceReport.handlebars printable device inventory report (host names, one page per location)
 tools/                         self-contained verification for agents (no MeshCentral server needed)
-  check.js                     node --check on entry+lib/*, wiring (every module attached, no orphan), module
-                               rules (no module-level locals, obj.pluginDir), inline-script extraction check,
+  check.js                     node --check on entry+lib/*, wiring (every module attached, no orphan), thin entry,
+                               no __dirname in lib/ (obj.pluginDir), inline-script extraction check,
                                JSON validity, render-name match over the WHOLE JS tree
   test-plugin.js               behavioral tests against the real plugin module with mocked MeshCentral
   test-views.js                compiles+renders all three views with Handlebars (needs `npm ci`)
@@ -63,8 +63,9 @@ Consequences an agent must respect:
   every call site reads the member off `obj` at call time.
 - **State lives on `obj`, read at call time.** A module must not keep module-level `var`s - module
   files are cached per process and shared by ALL instances, so module-level state would leak across
-  plugin instances (and survive a hot reload). `tools/test-plugin.js` and `tools/check.js` assert that
-  no lib file declares a module-level local.
+  plugin instances (and survive a hot reload). `tools/test-plugin.js` asserts that no lib file declares
+  a local at the top of its `attach` body (4-space indented `var`/`let`/`const`); top-level `require`s at
+  column 0 are allowed (they hold no state). `tools/check.js` does NOT check this.
 - **`obj.pluginDir` - not `__dirname`.** Inside `lib/`, `__dirname` is the `lib` folder. The entry sets
   `obj.pluginDir = __dirname` (the plugin root) and everything file-related (`config.json` version read,
   `cpe-table.json` fallback, the hot-swap `require()`) resolves against it. `node tools/check.js` fails
@@ -102,7 +103,7 @@ Consequences an agent must respect:
 | `lib/scheduling.js` | `scannerConfig`, `runScheduledScans`, `notifyAdmins`, `scheduleScans`, `load/saveScans`, `SEVERITY_RANK`, `longTimeout` |
 | `lib/winget.js` | `wgBuildScript`/`wgTransport`/queue/pump/watchdogs, results+log persistence, `wgNodeDue`/`wgSweepOnce`/`scheduleWingetUpdates`, `psTranscriptLines`, `wingetConfig` |
 | `lib/winget-handlers.js` | `wg_get_config`, `wg_save_config`, `wg_run`, `wg_status`, `wg_programs` handlers |
-| `lib/osupdate.js` | OS batch engine: `osBuildWindowsScript`, `osBuildLinuxScript`, `osLinuxTransport`, targeting/`osUpgradeInfo`, `os_run` + `os_status` handlers |
+| `lib/osupdate.js` | OS batch engine: `osBuildWindowsScript`, `osBuildLinuxScript`, `osLinuxTransport`, targeting/`osUpgradeInfo`/`osUrgency`, `os_run` + `os_status` handlers |
 | `lib/reports.js` | `scanMeshCves`, `scanMultiMeshCves`, `assessmentScan` (the `action=scan` route), `summarizeDeviceSwVer`, `buildOverallReport`, `vulnerabilityReport`, `deviceReport` |
 | `lib/csv.js` | CSV formatting helpers, `buildCsvForNodes`, the `action=export` route |
 | `lib/nodes.js` | `fetchSysinfo`, `scanNodeSoftware`, `getGroupName`, `getHostName`, `windowsUpdatesFinding` |
@@ -244,8 +245,8 @@ POST body `action=`:
 | `get_locations` | — | all non-deleted meshes `{locations:[{id,name}]}` (also feeds the Settings tab group table) |
 | `remove_cpe` | `index` | legacy index-based removal |
 | `get_settings` | — | `{settings:{...effective...}, sources:{key:'file'|'config.json'|'default', notifyPerGroup:{meshId:src}, revertAllowed:{key:bool}}}` |
-| `save_settings` | full form field set (see `saveSettingsHandler`) | validates everything, writes `scanner-settings.json`, runs `rescheduleAll()`, answers with the `get_settings` payload; `reset=true` clears all overrides |
-| `revert_setting` | one key of `revertScanIntervalHours`/`revertScanMeshes`/`revertNotifyOnScan`/`revertNotifyThreshold`/`revertNotifyUnratedRepeat`/`revertNotify`/`revertUpdateHours`/`revertAnyCveMaxAgeYears`/`revertAutoProductMatch`/`revertCpeTableEnabled`/`revertCpeTableUrl`/`revertDistroManaged`/`revertOsLifecycleEnabled`/`revertOsLifecycleUrl`/`revertCollectIntervalMinutes`/`revertCollectOnAgentConnect` = 'true' | removes that single override so config.json/default applies again |
+| `save_settings` | full form field set (see `saveSettingsHandler`); `osUpgradeUrgentDays` optional (0..3650, absent/empty keeps a saved value) | validates everything, writes `scanner-settings.json`, runs `rescheduleAll()`, answers with the `get_settings` payload; `reset=true` clears the overrides of THIS tab (`vulnerabilityScanner` + `inventoryScanner`). Save and reset keep every other section of the file, notably `wingetUpdater` (up to v3.5.1 both replaced the whole file and dropped it) |
+| `revert_setting` | one key of `revertScanIntervalHours`/`revertScanMeshes`/`revertNotifyOnScan`/`revertNotifyThreshold`/`revertNotifyUnratedRepeat`/`revertNotify`/`revertUpdateHours`/`revertAnyCveMaxAgeYears`/`revertAutoProductMatch`/`revertCpeTableEnabled`/`revertCpeTableUrl`/`revertDistroManaged`/`revertOsLifecycleEnabled`/`revertOsLifecycleUrl`/`revertOsUpgradeUrgentDays`/`revertCollectIntervalMinutes`/`revertCollectOnAgentConnect` = 'true' | removes that single override so config.json/default applies again |
 
 Every POST: 401 unless `isAuthorizedAdmin`, 403 without header `X-InvScanner-Request: 1`, 400 without an object body.
 GET also knows `show_cpe` (legacy JSON list of custom entries with index, used by nothing in the panel).
@@ -373,6 +374,8 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
 <plugins/inventoryscanner>/os-lifecycle.json     cached endoflife.date support dates (v3.1.0)
 <plugins/inventoryscanner>/winget-results.json   last run per device (drives wg_status/wg_programs)
 <plugins/inventoryscanner>/winget-update.log     batch log, rotated at ~5 MB
+<plugins/inventoryscanner>/os-results.json       last OS update/upgrade run per device (drives os_status)
+<plugins/inventoryscanner>/os-update.log         OS batch log, rotated at ~5 MB
 <plugins/inventoryscanner>/data/<nodeid>/        collected software + windowsupdates JSON per device
 ```
 - On the client the updater writes `invscanner-winget.log` next to `meshagent.exe` (fallback: the protected
@@ -490,7 +493,7 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   `updateMeshes`; manual "Run Now" covers every non-excluded Windows node (unknown-OS nodes included). No reboots are ever triggered
   (`--allow-reboot` is never used).
 
-## OS update / upgrade engine (v3.5.0, verified contracts)
+## OS update / upgrade engine (v3.5.0, urgency since v3.6.0, verified contracts)
 
 - runcommands type 1 = cmd.exe (Windows), **type 3 = /bin/sh (Linux)**; on non-Windows agents type 1/2 do nothing
   (verified in MeshCentral `agents/meshcore.js`). One agent runs ONE runcommands session at a time, so
@@ -507,6 +510,15 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   explicit error when neither reference is known. Windows 10 counts as outdated only when the Windows 11 reference is
   known. Windows Server and
   non-Ubuntu distributions are never upgraded (method null).
+- Release state (v3.6.0, `osUpgradeInfo(osdesc, now)` -> `state`): `current` | `available` | `urgent` | `unknown`
+  (`outdated` = available or urgent, `urgent` boolean, plus `eol`, `daysLeft`, `urgentReason`). The urgency comes from
+  `osUrgency`, i.e. `osSupportState` of the INSTALLED release (endoflife.date cycle incl. edition: Home/Pro `-w`,
+  Enterprise/Education `-e`): support ended, or fewer than `scannerConfig().osUpgradeUrgentDays` days left (default
+  365, 0..3650, Settings tab) = `urgent`; an outdated release without a known end date stays `available` with
+  "support end unknown" - never guessed as urgent. Platforms without a newer-release check (Windows Server, every
+  distribution except Ubuntu) are `urgent` when their own support ended / ends inside the window, else `unknown`;
+  they never get a method. The fleet upgrade takes `scope`: `urgent` = state `urgent` + method, `all` = `available`
+  or `urgent` + method; the panel has one button per scope, the per-device button always uses `all`.
 - Windows script (`osBuildWindowsScript`, transported by `wgTransport`): COM `Microsoft.Update.Session` search
   `IsInstalled=0 and IsHidden=0 and Type='Software'` -> download -> install. Mode update skips the "Upgrades"
   classification (`WU_UPGRADES_CATEGORY`, language independent); mode upgrade sets `TargetReleaseVersion=1`,
@@ -602,7 +614,8 @@ never touches config.json). The config.json keys below remain the fallback/seed:
   `scanIntervalHours` (720 = monthly OK), `scanMeshes`, `notifyOnScan`, `notifyThreshold`,
   `notifyUnratedRepeat`, `notify` (per-group), `updateHours`, `anyCveMaxAgeYears` (suppresses ancient version-less
   `kind:"any"` CVE matches), `distroManaged` (default true), `osLifecycleEnabled` (default true),
-  `osLifecycleUrl` (default `https://endoflife.date/api/`, https, must end with `/`).
+  `osLifecycleUrl` (default `https://endoflife.date/api/`, https, must end with `/`), `osUpgradeUrgentDays`
+  (default 365, integer 0..3650; outside that range the default applies).
 - `inventoryScanner` (note: one letter less than the section above): `collectIntervalMinutes`, `collectOnAgentConnect`.
 - `wingetUpdater` (sibling section, own Updates-tab form): `enabled` (default **false**), `intervalHours` (deprecated, ignored),
   `updateMeshes` (array; scheduled batches ONLY run on these - empty means NOTHING runs on purpose),
@@ -629,6 +642,7 @@ longer duplicates it - drift between the two files was the reason for the move):
 | `vulnerabilityScanner.distroManaged` | `true` | "Linux distribution packages: trust the distribution while the OS is supported" |
 | `vulnerabilityScanner.osLifecycleEnabled` | `true` | "Fetch OS support dates" (endoflife.date; off = support state unknown, no OS-EOL) |
 | `vulnerabilityScanner.osLifecycleUrl` | `https://endoflife.date/api/` | "Lifecycle API URL" (mirror only) |
+| `vulnerabilityScanner.osUpgradeUrgentDays` | `365` | "OS upgrade is urgent this many days before support ends" (0 = only after support ended; drives `urgent` vs `available` in the Updates tab) |
 | `inventoryScanner.collectIntervalMinutes` | `1440` | Collect inventory every N minutes (`0` = off) |
 | `inventoryScanner.collectOnAgentConnect` | `true` | "Collect when an agent connects" |
 | `wingetUpdater.enabled` | `false` | Automatic winget updates on/off (Updates tab) |
@@ -660,13 +674,16 @@ MeshCentral install folder) and root `/*.txt` + `/*.csv` are gitignored as a gua
   inline-script syntax/`{{`-hazard check, JSON validity of config files, and view-name↔render-name consistency over
   the WHOLE JS tree (the `res.render()` calls live in `lib/routes.js`/`lib/reports.js` since v3.5.1).
   Must run anywhere (no dependencies).
-- `tools/test-plugin.js`: 319 behavioral assertions (63 steps) against the real module (mocked MeshCentral DB/webserver):
+- `tools/test-plugin.js`: 343 behavioral assertions (65 steps) against the real module (mocked MeshCentral DB/webserver):
   the module wiring itself (every lib file attaches, a fresh instance exposes the same function surface, no
   module-level locals in `lib/`), locations grouping & counting, manual-rating severity override, FP exclusion, host-name preference, coverage
   numbers, multi-mesh scan/`mixed` logic, all POST handlers incl. validation/rejections, routes, admin gating
   (401), CPE table add/delete, vulns CSV header/content, toolbar button injection (simulated browser DOM), remote CPE table apply/cache/fetch/settings, NVD download-log tailing, manual NVD update trigger + concurrency guard, unknown-version matching rules, winget updater (builder/parser/queue/routes, incl. single-package update/uninstall runs + `wg_programs`), driver/firmware classification & coverage denominator, honest CVE aggregation (`deviceList`/`versionVaried`), coexistence-aware pruning, `longTimeout` chunking, restart-proof schedule delays,
   scheduled-scan notification content in repeat and once mode, NVD-status derivation, settings overlay priority,
-  save/revert/reset roundtrips incl. validation rejections, timer-generation invalidation, per-cycle collector config.
+  save/revert/reset roundtrips incl. validation rejections (and that a Settings-tab save/reset keeps the
+  `wingetUpdater` section), timer-generation invalidation, per-cycle collector config, OS update/upgrade engine
+  (scripts, targeting, release state `current|available|urgent|unknown` incl. the urgency window boundary, fleet
+  upgrade `scope`, `os_status`).
   Two structural guards run with them: a `mockRes` object must be answered **exactly once** and every step must call
   `next()` **exactly once** - a handler that answers twice (e.g. an exception escaping a synchronous nested test chain
   into the route's `try/catch`) would otherwise silently replay the rest of the suite. The package run is verified
@@ -748,7 +765,11 @@ finding, Windows OS matching by release CPE + full build, NVD-verified publisher
 table rows, python/Teams/Nextcloud mis-mappings fixed.
 v3.5.0: on-demand OS updates (Windows Update agent / distribution package manager) and OS release upgrades for
 outdated releases (Windows 10/11 via TargetReleaseVersion, Ubuntu via do-release-upgrade), see the OS engine section.
-v3.5.1 (this release): STRUCTURE only - the 6,010-line `inventoryscanner.js` became a ~175-line entry plus 20
+v3.5.1: STRUCTURE only - the 6,010-line `inventoryscanner.js` became a ~175-line entry plus 20
 `lib/` modules by feature area (see "Architecture"); behaviour, routes, data shapes and generated agent scripts
 are unchanged, which is exactly what the (unchanged, then extended) test suite proves. check.js and the upgrade
 test now understand the module tree.
+v3.6.0 (this release): OS upgrade urgency - release state `current|available|urgent|unknown` from the support end
+of the installed release (endoflife.date, per edition) and the new setting `osUpgradeUrgentDays` (default 365); two
+fleet buttons "force OS Upgrade (urgent)" / "(all)" (`os_run scope`, required for a fleet upgrade). Fix: the
+Settings tab's save/reset no longer wipes the `wingetUpdater` section of `scanner-settings.json`.
