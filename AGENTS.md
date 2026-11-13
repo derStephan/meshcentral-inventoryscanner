@@ -367,6 +367,12 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   Save posts the full field set, "Reset all" posts `reset=true`. The group table is filled client-side from
   `get_locations`; all-checked or none-checked is sent as an empty list = "all groups".
 
+- Navigation is one feature per tab (v4.1.0): Assessment | Settings | CPE Mapping | **Updates** (winget only) |
+  **OS Updates** (the OS engine, its own button - formerly an `<h2>` section inside the Updates tab) | **Deploy**.
+  Opening a tab loads ONLY its own data (`loadWgTab` / `loadOsStatus` / `loadSwTab`); ids and handlers on both
+  sides are unchanged by the split, only the HTML moved. The two engines still share the winget `excludeNodes`
+  list and the one-runcommands-session-per-agent rule, and each tab's info box says so.
+
 - Deploy tab (v4.0.0): library table + `<input type=file>` upload (FileReader chunks → `sw_upload`, sequential
   POSTs with resume-on-gap, progress text), source switch plugin-library ⇄ MeshCentral Server Files (two selects,
   filled by `sw_files` / `sw_serverfiles`), arguments input, location+device picker from `get_locations` +
@@ -745,7 +751,7 @@ never touches config.json). The config.json keys below remain the fallback/seed:
 **Key -> default -> Settings-tab control** (the user-facing table; kept here because the README deliberately no
 longer duplicates it - drift between the two files was the reason for the move):
 
-| Key (under `settings.<section>`) | Default | Settings/Updates tab control |
+| Key (under `settings.<section>`) | Default | Settings/Updates/OS tab control |
 |---|---|---|
 | `vulnerabilityScanner.scanIntervalHours` | `24` | Scan interval in hours (`0` = off); timed from the END of the last scan, restart-proof |
 | `vulnerabilityScanner.scanMeshes` | all | Group table "Scan" checkboxes (empty selection = all groups) |
@@ -761,7 +767,7 @@ longer duplicates it - drift between the two files was the reason for the move):
 | `vulnerabilityScanner.distroManaged` | `true` | "Linux distribution packages: trust the distribution while the OS is supported" |
 | `vulnerabilityScanner.osLifecycleEnabled` | `true` | "Fetch OS support dates" (endoflife.date; off = support state unknown, no OS-EOL) |
 | `vulnerabilityScanner.osLifecycleUrl` | `https://endoflife.date/api/` | "Lifecycle API URL" (mirror only) |
-| `vulnerabilityScanner.osUpgradeUrgentDays` | `365` | "OS upgrade is urgent this many days before support ends" (0 = only after support ended; drives `urgent` vs `available` in the Updates tab) |
+| `vulnerabilityScanner.osUpgradeUrgentDays` | `365` | "OS upgrade is urgent this many days before support ends" (0 = only after support ended; drives `urgent` vs `available` in the OS Updates tab) |
 | `inventoryScanner.collectIntervalMinutes` | `1440` | Collect inventory every N minutes (`0` = off) |
 | `inventoryScanner.collectOnAgentConnect` | `true` | "Collect when an agent connects" |
 | `wingetUpdater.enabled` | `false` | Automatic winget updates on/off (Updates tab) |
@@ -897,7 +903,7 @@ v3.6.0: OS upgrade urgency - release state `current|available|urgent|unknown` fr
 of the installed release (endoflife.date, per edition) and the new setting `osUpgradeUrgentDays` (default 365); two
 fleet buttons "force OS Upgrade (urgent)" / "(all)" (`os_run scope`, required for a fleet upgrade). Fix: the
 Settings tab's save/reset no longer wipes the `wingetUpdater` section of `scanner-settings.json`.
-v4.0.0 (this release): software deployment (Deploy tab) - install MSI/MSP/EXE/DEB/RPM/SH on chosen devices or whole
+v4.0.0: software deployment (Deploy tab) - install MSI/MSP/EXE/DEB/RPM/SH on chosen devices or whole
 locations, packages from chunked browser upload, from MeshCentral Server Files or from the plugin's server folder;
 optional command-line arguments; delivery via the agent's own wget + agentdownload cookie (MeshCentral's own
 batch-upload transport, verified in upstream source), SHA-256 verified on the device BEFORE execution; offline
@@ -906,3 +912,7 @@ exit code, note), device event + admin toast + software-deploy.log. Never automa
 swstore/swdeploy/swdeploy-handlers; the winget and OS pumps now also honour `swPending` (one runcommands session
 per agent). Test suite: 417 assertions in 71 steps (the winget `due:` fixtures got the midnight fix described in
 the Testing section).
+v4.1.0 (this release): UI structure only - the overloaded Updates tab is split into three one-feature tabs with
+their own nav buttons: **Updates** (winget updater), **OS Updates** (the v3.5.0/v3.6.0 OS engine, previously an
+`<h2>` section inside Updates) and **Deploy** (already separate since v4.0.0). No route, no handler, no data
+shape and no element id changed; only the HTML moved and the tab-open handlers were separated.

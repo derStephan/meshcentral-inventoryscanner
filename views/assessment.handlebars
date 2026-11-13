@@ -94,6 +94,7 @@
         <a href="#" class="navtab" data-tab="settings">Settings</a>
         <a href="#" class="navtab" data-tab="cpe">CPE Mapping</a>
         <a href="#" class="navtab" data-tab="updates">Updates</a>
+        <a href="#" class="navtab" data-tab="os">OS Updates</a>
         <a href="#" class="navtab" data-tab="deploy">Deploy</a>
         <span class="navsep"></span>
         <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=report" target="_blank" rel="noopener">Vulnerability Report</a>
@@ -385,8 +386,9 @@
             <h3>Update log</h3>
             <div><button id="refreshWgLogBtn" class="small">Refresh log</button> <span id="wgLogInfo" class="hint"></span></div>
             <pre id="wgLog" style="max-height:260px;overflow:auto;background:#0f1720;color:#cfe3f5;padding:8px;border-radius:6px;font-size:11px;margin-top:6px;white-space:pre-wrap;">(not loaded yet)</pre>
+        </div>
 
-            <h2>Operating system updates</h2>
+        <div class="tab-content" id="tab-os">
             <div class="info">
                 <strong>force OS updates</strong> runs on every non-excluded Windows and Linux device: on Windows, the built-in
                 Windows Update agent searches, downloads and installs all pending updates (feature upgrades excluded). On Linux,
@@ -593,7 +595,7 @@
 
         // ---------- tabs ----------
 
-        var tabTitles = { assessment: 'Vulnerability Assessment', settings: 'Settings', cpe: 'Software → CPE Mapping', updates: 'Software & OS Updates', deploy: 'Deploy Software' };
+        var tabTitles = { assessment: 'Vulnerability Assessment', settings: 'Settings', cpe: 'Software → CPE Mapping', updates: 'Software Updates (winget)', os: 'Operating System Updates', deploy: 'Deploy Software' };
         var tabs = document.querySelectorAll('.navtab');
         for (var t = 0; t < tabs.length; t++) {
             tabs[t].addEventListener('click', function (e) {
@@ -608,7 +610,8 @@
                 for (var j = 0; j < contents.length; j++) { contents[j].classList.remove('active'); }
                 var target = document.getElementById('tab-' + name);
                 if (target) { target.classList.add('active'); }
-                if (name === 'updates') { loadWgTab(); loadOsStatus(); }
+                if (name === 'updates') { loadWgTab(); }
+                if (name === 'os') { loadOsStatus(); }
                 if (name === 'deploy') { loadSwTab(); }
                 var pt = document.getElementById('pageTitle');
                 if (pt && tabTitles[name]) { pt.textContent = tabTitles[name]; }

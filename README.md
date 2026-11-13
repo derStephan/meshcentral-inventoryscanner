@@ -98,7 +98,7 @@ than 24 h). On clients, an updater transcript may remain next to `meshagent.exe`
 button. Pick the locations you work on (floating *Locations* button, remembered per browser), then use one
 aggregated table of unique findings: sort by any column, filter by text/severity/status, rate a finding for all
 affected locations in one action, or mark it a false positive (with undo). The **Settings**, **CPE Mapping**,
-**Updates** and **Deploy** tabs live on the same page.
+**Updates** (winget), **OS Updates** and **Deploy** tabs live on the same page - one feature per tab.
 
 **A finding never claims a version that is not on every device.** If the affected machines run different
 versions, the row shows *varies (N)* and the per-device truth is one hover away - the exact per-device list is
@@ -142,7 +142,7 @@ Ignored packages are skipped in every run and pinned on the client, so even a us
 `winget upgrade --all` leaves a licensed version alone. Offline devices are picked up when they connect;
 a device is never rebooted.
 
-**OS updates (Updates tab, section *Operating system updates*)** - three manual buttons, all with confirmation,
+**OS updates (OS Updates tab)** - three manual buttons, all with confirmation,
 plus *OS updates* / *OS Upgrade* per device row:
 
 * **force OS updates** - every non-excluded Windows and Linux device. Windows: the built-in Windows Update agent
