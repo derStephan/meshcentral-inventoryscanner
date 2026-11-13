@@ -930,7 +930,7 @@ v4.1.0: UI structure only - the overloaded Updates tab is split into three one-f
 their own nav buttons: **Updates** (winget updater), **OS Updates** (the v3.5.0/v3.6.0 OS engine, previously an
 `<h2>` section inside Updates) and **Deploy** (already separate since v4.0.0). No route, no handler, no data
 shape and no element id changed; only the HTML moved and the tab-open handlers were separated.
-v4.2.0 (this release): panel review + maintenance. The CVE column shows the description headline under the id
+v4.2.0: panel review + maintenance. The CVE column shows the description headline under the id
 (`cveNote()`, tooltip = full text); the NVD/scan part of the status line is tab-aware (Assessment + Settings only,
 `plugin v` everywhere); the CPE Mapping tab became a section of the Settings tab, which is now the LAST nav button;
 all buttons share one height. Maintenance: the duplicated mapping table (`SOFTWARE_CPE_TABLE` in
@@ -939,3 +939,11 @@ empty (custom + auto matcher still work, the UI says so). No POST action, route 
 `get_cpe_table` `source` values are now 'remote'/'custom' (plus `cpeTable.source` 'remote'|'none'). Test suite:
 418 assertions in 71 steps - the CPE steps now pin the single-source invariant and the matching tests
 load the bundled table exactly like a real `server_startup` does.
+v4.2.1 (this release): table layout fixes, no behaviour change. winget Packages view: Package+Id merged (id under
+the name), the four count columns merged into one `N ready, N ok, N failed, N skipped` cell, Actions stacked
+vertically - the table finally fits the screen. winget Devices view: Device/Group/Online/Excluded/Actions get
+fixed compact widths so `Last run` takes the remaining width (that is where the interesting text is). Deploy:
+the location/device picker wraps (flex) instead of scrolling sideways, and the selection summary (and the create
+confirm) count devices inside an already-ticked location as part of that location ("1 whole location(s) + 2
+additional device(s)") - the old "1 device(s) + 1 whole location(s)" double count is gone; the POST body still
+sends every ticked id (the server task store keys by node id, so duplicates were and are harmless).

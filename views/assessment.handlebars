@@ -365,7 +365,7 @@
             every package with its outcome (failed ones show the exit code and winget's message), and "+ ignore"
             moves a package onto the ignore list - saved immediately, honoured by every later run.</div>
             <div class="table-container"><table>
-                <thead><tr><th>Device</th><th>Group</th><th style="width:70px;">Online</th><th style="width:90px;">Excluded</th><th style="width:250px;">Last run</th><th style="width:270px;">Actions</th></tr></thead>
+                <thead><tr><th style="width:140px;">Device</th><th style="width:110px;">Group</th><th style="width:60px;">Online</th><th style="width:75px;">Excluded</th><th>Last run</th><th style="width:235px;">Actions</th></tr></thead>
                 <tbody id="wgDevBody"><tr><td colspan="6" style="color:#888">Loading...</td></tr></tbody>
             </table></div>
 
@@ -377,8 +377,8 @@
             not-installed entries. Start a dry run (all) to populate this table.</div>
             <div><button id="wgPkgRefresh" class="small">Refresh package view</button> <span id="wgPkgInfo" class="hint"></span></div>
             <div class="table-container"><table>
-                <thead><tr><th style="width:220px;">Package</th><th style="width:230px;">Id</th><th style="width:70px;">Ready</th><th style="width:60px;">OK</th><th style="width:70px;">Failed</th><th style="width:70px;">Skipped</th><th>Devices (state, versions)</th><th style="width:330px;">Actions</th></tr></thead>
-                <tbody id="wgPkgBody"><tr><td colspan="8" style="color:#888">Not loaded yet.</td></tr></tbody>
+                <thead><tr><th style="width:280px;">Package (id)</th><th style="width:190px;">Counts</th><th>Devices (state, versions)</th><th style="width:150px;">Actions</th></tr></thead>
+                <tbody id="wgPkgBody"><tr><td colspan="4" style="color:#888">Not loaded yet.</td></tr></tbody>
             </table></div>
 
             <h3>Update log</h3>
@@ -462,7 +462,7 @@
             <div class="controls">
                 <label>Command-line parameters: <input id="swArgs" type="text" style="min-width:420px" placeholder="optional, e.g. /qn REBOOT=ReallySuppress  (appended to msiexec; passed to the program for other types)"></label>
             </div>
-            <div class="hint" style="margin-bottom:6px;">Tick <b>whole locations</b> or single devices (both combine). Windows and Linux devices are supported; phones and devices without a reported OS are listed as not supported and never touched.</div>
+            <div class="hint" style="margin-bottom:6px;">Tick <b>whole locations</b> or single devices (both combine - a device inside a ticked location is not counted twice). Windows and Linux devices are supported; phones and devices without a reported OS are listed as not supported and never touched.</div>
             <div class="table-container" style="max-height:300px;overflow:auto;"><table>
                 <thead><tr><th style="width:320px;">Location</th><th>Devices</th></tr></thead>
                 <tbody id="swTargetBody"><tr><td colspan="2" style="color:#888">Loading...</td></tr></tbody>
@@ -792,19 +792,17 @@
                 var devs = (p.devices || []).map(function (dv) {
                     return dv.label + ' [' + dv.state + (dv.to ? (': ' + dv.from + ' -> ' + dv.to) : '') + (dv.dry ? ' (dry)' : '') + ']';
                 });
-                html += '<tr><td>' + esc(p.name) + '</td><td><code>' + esc(p.id) + '</code></td>';
-                html += '<td>' + (p.ready > 0 ? '<span style="color:#06c;font-weight:600">' + p.ready + '</span>' : String(p.ready)) + '</td>';
-                html += '<td>' + p.ok + '</td>';
-                html += '<td>' + (p.failed > 0 ? '<span style="color:#a33;font-weight:600">' + p.failed + '</span>' : '0') + '</td>';
-                html += '<td style="color:#777">' + (p.skipped || 0) + '</td>';
+                html += '<tr><td>' + esc(p.name) + '<div><code style="font-size:11px;color:#556">' + esc(p.id) + '</code></div></td>';
+                html += '<td style="font-size:12px;white-space:nowrap">' + (p.ready > 0 ? '<b style="color:#06c">' + p.ready + '</b>' : '0') + ' ready, '
+                    + p.ok + ' ok, ' + (p.failed > 0 ? '<b style="color:#a33">' + p.failed + '</b>' : '0') + ' failed, <span style="color:#777">' + (p.skipped || 0) + ' skipped</span></td>';
                 html += '<td style="font-size:11px">' + esc(devs.join(', ')) + '</td>';
-                html += '<td style="white-space:nowrap">';
-                html += (igIds.indexOf(String(p.id).toLowerCase()) >= 0) ? '<span class="hint">on ignore list</span> ' : '<button class="small" data-pkgact="ign" data-pkgid="' + esc(p.id) + '">Ignore</button> ';
-                html += '<button class="small green" data-pkgact="upd" data-pkgid="' + esc(p.id) + '">Update everywhere</button> ';
+                html += '<td><div style="display:flex;flex-direction:column;gap:3px">';
+                html += (igIds.indexOf(String(p.id).toLowerCase()) >= 0) ? '<span class="hint">on ignore list</span>' : '<button class="small" data-pkgact="ign" data-pkgid="' + esc(p.id) + '">Ignore</button>';
+                html += '<button class="small green" data-pkgact="upd" data-pkgid="' + esc(p.id) + '">Update everywhere</button>';
                 html += '<button class="small red" data-pkgact="unin" data-pkgid="' + esc(p.id) + '">Uninstall everywhere</button>';
-                html += '</td></tr>';
+                html += '</div></td></tr>';
             }
-            if (html === '') { html = '<tr><td colspan="8" style="color:#888">No package data yet - start a dry run (all devices) first.</td></tr>'; }
+            if (html === '') { html = '<tr><td colspan="4" style="color:#888">No package data yet - start a dry run (all devices) first.</td></tr>'; }
             $('wgPkgBody').innerHTML = html;
         }
 
@@ -1159,9 +1157,9 @@
                 var cells = devs.map(function (d) {
                     var off = d.online ? '' : ' <span style="color:#a33">(offline)</span>';
                     var pt = (d.platform === 'other') ? ' <span style="color:#8a6d3b" title="no Windows/Linux OS reported - never touched">[?]</span>' : '';
-                    return '<label style="font-weight:400;margin-right:10px;white-space:nowrap"><input type="checkbox" class="swDevc" value="' + esc(d.id) + '"' + (d.platform === 'other' ? ' disabled' : '') + '> ' + esc(d.given || d.host) + off + pt + '</label>';
+                    return '<label style="font-weight:400;display:inline-block;margin:1px 10px 1px 0;white-space:nowrap"><input type="checkbox" class="swDevc" value="' + esc(d.id) + '"' + (d.platform === 'other' ? ' disabled' : '') + '> ' + esc(d.given || d.host) + off + pt + '</label>';
                 }).join('');
-                html += '<tr><td style="vertical-align:top"><label style="font-weight:600;white-space:nowrap"><input type="checkbox" class="swLocc" value="' + esc(loc.id) + '"> ' + esc(loc.name) + '</label><div class="hint">' + devs.length + ' device(s)</div></td><td>' + (cells || '<span class="hint">no devices</span>') + '</td></tr>';
+                html += '<tr><td style="vertical-align:top;width:200px"><label style="font-weight:600;white-space:nowrap"><input type="checkbox" class="swLocc" value="' + esc(loc.id) + '"> ' + esc(loc.name) + '</label><div class="hint">' + devs.length + ' device(s)</div></td><td><div style="display:flex;flex-wrap:wrap">' + (cells || '<span class="hint">no devices</span>') + '</div></td></tr>';
             });
             if (html === '') { html = '<tr><td colspan="2" style="color:#888">No device groups found.</td></tr>'; }
             $('swTargetBody').innerHTML = html;
@@ -1169,10 +1167,19 @@
         }
 
         function swUpdateSelInfo() {
-            var n = 0, m = 0, c = document.querySelectorAll('#swTargetBody .swDevc'), l = document.querySelectorAll('#swTargetBody .swLocc'), i;
-            for (i = 0; i < c.length; i++) { if (c[i].checked) { n++; } }
-            for (i = 0; i < l.length; i++) { if (l[i].checked) { m++; } }
-            $('swSelInfo').textContent = n + ' device(s) + ' + m + ' whole location(s) selected';
+            var extra = 0, locs = 0;
+            var trs = document.querySelectorAll('#swTargetBody tr');
+            for (var r = 0; r < trs.length; r++) {
+                var lc = trs[r].querySelector('.swLocc');
+                var locOn = (lc != null && lc.checked);
+                if (locOn) { locs++; continue; }
+                var dc = trs[r].querySelectorAll('.swDevc');
+                for (var i = 0; i < dc.length; i++) { if (dc[i].checked && !dc[i].disabled) { extra++; } }
+            }
+            var txt = '';
+            if (locs > 0) { txt += locs + ' whole location(s)'; }
+            if (extra > 0) { txt += (txt === '' ? '' : ' + ') + extra + ' additional device(s)'; }
+            $('swSelInfo').textContent = (txt === '') ? 'no targets selected' : (txt + ' selected');
         }
 
         function renderSwTasks() {
@@ -1393,7 +1400,15 @@
             c = document.querySelectorAll('#swTargetBody .swLocc');
             for (j = 0; j < c.length; j++) { if (c[j].checked) { meshIds.push(c[j].value); } }
             if (nodeIds.length === 0 && meshIds.length === 0) { showMsg('swMsg', 'Select devices or whole locations first.', false); return; }
-            if (!window.confirm('Install "' + name + '" on ' + nodeIds.length + ' selected device(s) and all devices of ' + meshIds.length + ' location(s)?\nOffline devices are queued and install when they reconnect. This runs the installer as SYSTEM/root and never reboots a device.')) { return; }
+            var extra = 0, trs = document.querySelectorAll('#swTargetBody tr');
+            for (j = 0; j < trs.length; j++) {
+                var lc = trs[j].querySelector('.swLocc');
+                if (lc != null && lc.checked) { continue; }
+                var dc = trs[j].querySelectorAll('.swDevc');
+                for (var k3 = 0; k3 < dc.length; k3++) { if (dc[k3].checked && !dc[k3].disabled) { extra++; } }
+            }
+            var tsum = (meshIds.length > 0 ? 'all devices of ' + meshIds.length + ' whole location(s)' : '') + (extra > 0 ? (meshIds.length > 0 ? ' + ' : '') + extra + ' selected device(s)' : '');
+            if (!window.confirm('Install "' + name + '" on ' + tsum + '?\nOffline devices are queued and install when they reconnect. This runs the installer as SYSTEM/root and never reboots a device.')) { return; }
             body.nodeIds = nodeIds.join(',');
             body.meshIds = meshIds.join(',');
             post('sw_create_task', body).then(function (d) {
