@@ -1,0 +1,203 @@
+# CI administration only: this workflow never changes plugin code and never publishes a
+# release. It verifies the plugin against the CURRENT MeshCentral server, in the same shape
+# a production install has on disk (flat layout under <datapath>/plugins/inventoryscanner).
+#
+# Runs:
+#   - every change to the repository (push to the default branch, and every pull request):
+#       the mocked behavioral suite (npm test) plus the live-container route test, always.
+#   - once per day (schedule): only when Ylianst/MeshCentral published a release that has not
+#       been verified against this code yet (a cache marker keyed by the release tag gates it).
+#   - by hand (workflow_dispatch): always, with an optional image tag (latest = current
+#       release, master = current nightly build).
+#
+# Facts this workflow relies on were verified against the MeshCentral sources
+# (pluginHandler.js: settings.plugins.list loads <datapath>/plugins/<name> without a DB
+# entry; meshcentral.js --nousers: single-admin mode whose session is loopback-bound - so the
+# functional test runs INSIDE the container via docker exec; webserver.js pluginadmin.ashx).
+
+name: MeshCentral integration
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '13 5 * * *'
+  workflow_dispatch:
+    inputs:
+      mc_image:
+        description: 'MeshCentral image tag to test against'
+        type: choice
+        options:
+          - latest
+          - master
+        default: latest
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: meshcentral-integration-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  selftest:
+    name: Plugin self-tests (node ${{ matrix.node }})
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['18', '24']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+  integration:
+    name: Live MeshCentral container (${{ github.event_name == 'workflow_dispatch' && inputs.mc_image || 'latest' }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      MC_IMAGE: ${{ github.event_name == 'workflow_dispatch' && inputs.mc_image || 'latest' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve the current MeshCentral release
+        id: rel
+        run: |
+          tag=$(curl -fsS --max-time 30 \
+                 -H 'Accept: application/vnd.github+json' \
+                 https://api.github.com/repos/Ylianst/MeshCentral/releases/latest \
+                 | jq -r '.tag_name // empty' 2>/dev/null || true)
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "current MeshCentral release: ${tag:-unknown}"
+
+      - name: Probe whether this release was already verified (scheduled runs only)
+        id: probe
+        if: github.event_name == 'schedule' && steps.rel.outputs.tag != ''
+        uses: actions/cache/restore@v4
+        with:
+          path: .mc-ci-gate
+          key: mc-integration-${{ steps.rel.outputs.tag }}
+
+      - name: Decide whether to run the container test
+        id: decide
+        run: |
+          if [ "${{ steps.probe.outputs.cache-hit }}" = 'true' ]; then
+            echo 'run=false' >> "$GITHUB_OUTPUT"
+            echo "MeshCentral ${{ steps.rel.outputs.tag }} is already verified against unchanged code - integration run skipped. Use workflow_dispatch to test anyway." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'run=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install the plugin into a MeshCentral data folder
+        if: steps.decide.outputs.run == 'true'
+        run: |
+          set -e
+          mkdir -p mc-data/plugins/inventoryscanner mc-data/nvd
+          # exactly the flat layout the web installer unpacks - dev-only folders excluded
+          tar --exclude=./node_modules --exclude=./.git --exclude=./.github -cf - . \
+            | tar -xf - -C mc-data/plugins/inventoryscanner
+          cat > mc-data/config.json <<'EOF'
+          {
+            "settings": {
+              "cert": "localhost",
+              "port": 443,
+              "redirPort": 0,
+              "AgentPong": 300,
+              "SelfUpdate": false,
+              "plugins": { "enabled": true, "list": ["inventoryscanner"] }
+            },
+            "domains": {
+              "": {
+                "minify": false,
+                "NewAccounts": false,
+                "localSessionRecording": false,
+                "allowedOrigin": false
+              }
+            }
+          }
+          EOF
+          # A 0-CVE current-year feed makes the plugin's server_startup LOAD the cache
+          # instead of downloading gigabytes of NVD data; the CVE-matching logic itself is
+          # covered by tools/test-plugin.js with real feed fixtures.
+          printf '{"version":"2.0","vulnerabilities":[]}' > "mc-data/nvd/nvdcve-2.0-$(date +%Y).json"
+          printf '{"version":"2.0","vulnerabilities":[]}' > "mc-data/nvd/nvdcve-2.0-$(date -d '+3 days' +%Y).json"
+          echo "plugin version under test: $(jq -r .version mc-data/plugins/inventoryscanner/config.json)"
+
+      - name: Start the MeshCentral container
+        if: steps.decide.outputs.run == 'true'
+        run: |
+          set -e
+          docker pull --quiet "meshcentral/meshcentral:${MC_IMAGE}"
+          docker run -d --name mc \
+            -e ARGS=--nousers \
+            -v "$PWD/mc-data:/opt/meshcentral/meshcentral-data" \
+            "meshcentral/meshcentral:${MC_IMAGE}"
+          echo 'waiting for the web server (first start generates certificates)...'
+          ready=''
+          for i in $(seq 1 60); do
+            if docker exec mc curl -ksf -o /dev/null https://127.0.0.1/; then ready=yes; break; fi
+            sleep 5
+          done
+          if [ -z "$ready" ]; then
+            echo '::error::MeshCentral did not become ready in 5 minutes'
+            docker logs mc
+            exit 1
+          fi
+          if docker logs mc 2>&1 | grep -q 'Error loading plugin'; then
+            echo '::error::MeshCentral could not load the plugin'
+            docker logs mc
+            exit 1
+          fi
+          {
+            echo "### MeshCentral server under test"
+            echo "- image tag: \`meshcentral/meshcentral:${MC_IMAGE}\`"
+            echo "- server version: \`$(docker exec mc jq -r .version /opt/meshcentral/meshcentral/package.json)\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Functional test of every plugin route
+        if: steps.decide.outputs.run == 'true'
+        run: |
+          set -e
+          PLUGIN_VER=$(jq -r .version mc-data/plugins/inventoryscanner/config.json)
+          docker exec -i -e PLUGIN_VER="$PLUGIN_VER" mc bash -s \
+            < .github/integration/meshcentral-server-test.sh
+
+      - name: Collect server and plugin logs
+        if: always() && steps.decide.outputs.run == 'true'
+        run: |
+          docker logs mc > meshcentral-server.log 2>&1 || true
+
+      - name: Upload logs
+        if: always() && steps.decide.outputs.run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: meshcentral-integration-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            meshcentral-server.log
+            mc-data/plugins/inventoryscanner/*.log
+            mc-data/plugins/inventoryscanner/*.json
+            mc-data/nvd/*.log
+          if-no-files-found: warn
+          retention-days: 10
+
+      - name: Record this MeshCentral release as verified
+        if: success() && steps.decide.outputs.run == 'true' && github.event_name == 'schedule' && steps.rel.outputs.tag != ''
+        run: |
+          set -e
+          mkdir -p .mc-ci-gate
+          date -Is > .mc-ci-gate/verified-at
+      - name: Save the release marker
+        if: success() && steps.decide.outputs.run == 'true' && github.event_name == 'schedule' && steps.rel.outputs.tag != ''
+        uses: actions/cache/save@v4
+        with:
+          path: .mc-ci-gate
+          key: mc-integration-${{ steps.rel.outputs.tag }}

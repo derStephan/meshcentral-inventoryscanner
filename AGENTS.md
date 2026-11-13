@@ -806,6 +806,14 @@ npm ci             # once (dev dependency: handlebars, pinned by package-lock.js
 npm test           # = tools/check.js && tools/test-plugin.js && tools/test-views.js
 ```
 
+CI (`.github/workflows/meshcentral-integration.yml`, pure administration - it never touches plugin code
+or releases): `npm test` on every push/PR (node 18 + 24), plus a live-container run: the current
+`meshcentral/meshcentral` Docker image with the plugin installed flat under `<datapath>/plugins/inventoryscanner`
+(`plugins.list` loader, `--nousers` admin session, a 0-CVE NVD feed file so startup never downloads gigabytes) and
+**every pluginadmin.ashx route driven by curl** via `.github/integration/meshcentral-server-test.sh`. The daily
+schedule re-runs the container test only when Ylianst/MeshCentral published a release that is not yet marked
+verified (cache key = release tag); `workflow_dispatch` runs it on demand, optionally against the `master` image.
+
 Data dumps from support sessions (CSV exports, browser output TXTs) live OUTSIDE the repo (they sit in the
 MeshCentral install folder) and root `/*.txt` + `/*.csv` are gitignored as a guard - never copy them in.
 - `tools/check.js`: `node --check` on the entry AND on every `lib/*.js`, the module wiring (each lib file is in the
