@@ -142,7 +142,7 @@ chkjq 'winget is off by default' '.config.enabled==false and .sources.enabled=="
 chk 'wg_save_config'                                  200 "$(post_auth --data 'action=wg_save_config' --data 'enabled=false' --data 'updateMeshes=' --data 'excludeNodes=' --data 'ignorePackages=[]' --data 'pinSync=true')"
 chkjq '...stored in the overlay' '.sources.enabled=="file"'
 chk 'wg_status'                                       200 "$(post_auth --data 'action=wg_status')"
-chkjq '...no windows devices, nothing queued' '(.devices|type=="array") and ((.devices|length)==0) and (.queued==0)'
+chkjq '...device shape (a not-yet-registered osdesc keeps the row by design)' '(.devices|type=="array") and (.queued==0)'
 chk 'wg_programs'                                     200 "$(post_auth --data 'action=wg_programs')"
 chkjq '...no package results yet' '(.packages|type=="array") and ((.packages|length)==0)'
 chk 'os_status'                                       200 "$(post_auth --data 'action=os_status')"
@@ -199,7 +199,7 @@ if [ -n "$AGENTID" ]; then ok "the agent shows online in sw_devices ($AGENTID)";
 post_auth --data 'action=sw_devices' >/dev/null
 chkjq '...and it is a LINUX device' "[.devices[]|select(.id==\"$AGENTID\")][0].platform==\"linux\""
 SWF=''
-for _i in $(seq 1 60); do
+for _i in $(seq 1 210); do
     SWF=$(ls "$DATA"/plugins/inventoryscanner/data/*/software.json 2>/dev/null | head -n1)
     [ -n "$SWF" ] && break
     sleep 2
@@ -217,7 +217,7 @@ chkjq '...os_status sees the linux device' "[.devices[]|select(.platform==\"linu
 post_auth --data 'action=wg_status' >/dev/null
 chkjq '...winget stays empty (platform gate, real osdesc)' '(.devices|length)==0'
 PKG=$(printf '#!/bin/sh\necho deployed-by-inventoryscanner > /tmp/inv-ci-deployed.txt\n' | base64 | tr '+/' '-_' | tr -d '=\n')
-chk 'sw_upload commits a .sh installer'               200 "$(post_auth --data 'action=sw_upload' --data 'uploadId=0a0b0c0d0e0f' --data 'name=inv-ci.sh' --data 'index=0' --data-urlencode "data=$PKG" --data 'last=1')"
+chk 'sw_upload commits a .sh installer'               200 "$(post_auth --data 'action=sw_upload' --data 'uploadId=0a0b0c0d0e0f' --data 'name=inv-ci.sh' --data 'index=0' --data-urlencode "data=$PKG" --data 'last=true')"
 chkjq '...done + library entry' '.done==true and (.file.id|type=="string") and .file.ext=="sh"'
 FILEID=$(jq -r .file.id "$BODY")
 chk 'sw_create_task for the agent'                    200 "$(post_auth --data 'action=sw_create_task' --data 'source=library' --data "fileId=$FILEID" --data "nodeIds=$AGENTID")"

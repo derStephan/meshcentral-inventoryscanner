@@ -195,7 +195,8 @@ jobs:
           if [ -z "$GROUPID" ]; then echo '::error::could not create the CI device group'; exit 1; fi
           # the agent container fetches its connect material from the server exactly like a real
           # install script would (meshagents?id=6 = linux x86-64 binary, meshsettings?id= = .msh)
-          docker run -d --name mag --network mcnet --entrypoint /bin/sh \
+          # --hostname is the name the tests find in the CSV/report (docker sets it to the container id otherwise)
+          docker run -d --name mag --hostname mag --network mcnet --entrypoint /bin/sh \
             "meshcentral/meshcentral:${MC_IMAGE}-debian" \
             -c "cd /root && curl -ksLo meshagent https://mc/meshagents?id=6 && curl -ksLo meshagent.msh 'https://mc/meshsettings?id=$GROUPID' && chmod +x meshagent && ./meshagent run; sleep 3500"
           echo "agent container started for group $GROUPID"
