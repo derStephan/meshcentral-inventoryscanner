@@ -155,8 +155,10 @@ jobs:
         if: steps.decide.outputs.run == 'true'
         run: |
           set -e
+          # ARGS reaches meshcentral as ONE argv token (image entrypoint quotes it) - so the
+          # --key=value form is required here, a space would become part of the argument name.
           docker run -d --name mc --network mcnet \
-            -e "ARGS=--user ciadmin" \
+            -e "ARGS=--user=ciadmin" \
             -v "$PWD/mc-data:/opt/meshcentral/meshcentral-data" \
             "meshcentral/meshcentral:${MC_IMAGE}"
           echo 'waiting for the web server (first start generates certificates)...'
