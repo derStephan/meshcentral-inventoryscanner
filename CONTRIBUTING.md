@@ -2,10 +2,11 @@
 
 ## Mapping contributions: `cpe-table.json` (no release needed)
 
-The software-name → CPE mapping table that running servers download is `cpe-table.json` in this repository
-root. A pull request that improves coverage **must touch only this file** - every running server picks the
-change up automatically (fetched at startup and after each NVD download cycle, and the CPE Mapping tab shows
-where the active table came from). No plugin version bump, no new release.
+The software-name → CPE mapping table is `cpe-table.json` in this repository root - since v4.2.0 it is the
+**only** curated table (the code holds no second copy). A pull request that improves coverage **must touch only
+this file** - every running server picks the change up automatically (fetched at startup and after each NVD
+download cycle, and the CPE section of the Settings tab shows where the active table came from). No plugin
+version bump, no new release.
 
 ### How to add a mapping (the verified process)
 

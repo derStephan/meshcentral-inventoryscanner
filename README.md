@@ -97,8 +97,10 @@ than 24 h). On clients, an updater transcript may remain next to `meshagent.exe`
 **Panel** - `My Server → Plugins → Inventory & Vulnerability Scanner`, or the *Vulnerability Assessment* toolbar
 button. Pick the locations you work on (floating *Locations* button, remembered per browser), then use one
 aggregated table of unique findings: sort by any column, filter by text/severity/status, rate a finding for all
-affected locations in one action, or mark it a false positive (with undo). The **Settings**, **CPE Mapping**,
-**Updates** (winget), **OS Updates** and **Deploy** tabs live on the same page - one feature per tab.
+affected locations in one action, or mark it a false positive (with undo). Every CVE shows its first words under
+the id (the full description stays in the tooltip), so a rating rarely needs a trip to nvd.nist.gov. The
+**Updates** (winget), **OS Updates**, **Deploy** and **Settings** (with the CPE mapping table) tabs live on the
+same page - one feature per tab, settings last on the right.
 
 **A finding never claims a version that is not on every device.** If the affected machines run different
 versions, the row shows *varies (N)* and the per-device truth is one hover away - the exact per-device list is
@@ -243,8 +245,8 @@ The name-to-CPE table that drives matching is maintained in this repository as
 mapping reaches you **without a plugin update** (and a fresh install already ships the current copy). Rows can
 also mark a name as a driver or firmware component. Contributions are pull requests that touch only that file -
 the rules (including how to verify a CPE against the NVD, because guessing is not allowed) are in
-[CONTRIBUTING.md](CONTRIBUTING.md). Your own entries added in the CPE Mapping tab always win, and the tab states
-which table is in force.
+[CONTRIBUTING.md](CONTRIBUTING.md). Your own entries added in the CPE mapping section of the Settings tab always
+win, and that section states which table file is in force - the code holds no second copy of the table.
 
 ## Privacy & security
 

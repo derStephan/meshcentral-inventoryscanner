@@ -94,7 +94,7 @@ Consequences an agent must respect:
 | `lib/assessments.js` | `assessments` store, `getMeshAssessment`, `save_assessment` / `flag_false_positive` / `unflag_false_positive` handlers, `isFindingId` |
 | `lib/nvd.js` | feed download + `.meta` check, `runNvdUpdate`, `ensureNvdData`, `scheduleUpdate`, feed loading, `nvdLog`, NVD log tailing |
 | `lib/nvdindex.js` | `processNvdData`, `productIndex`/`cpeProductTokens`/`cpeVendorTokens`/`allCves`, `compareCpeVersions`, `normalizeCveVersion`, `defMatches`, `searchCves*`, the `anyCveMaxAgeYears` age rule |
-| `lib/cpetable.js` | `SOFTWARE_CPE_TABLE` (seed), remote table apply/fetch/cache (`cpe-table.json`), custom UI entries, `isSafeTableRegex`, the CPE-tab handlers |
+| `lib/cpetable.js` | maintained table apply/fetch/cache (`cpe-table.json` - the ONLY curated copy since v4.2.0, the old in-code seed is gone), custom UI entries, `isSafeTableRegex`, the CPE handlers |
 | `lib/matching.js` | `classifySoftware`, `matchTableEntry`, `guessDriverFirmware`, `cpeTokenize`, `autoMatchProductTokens`, publisher→vendor evidence, `scanDeviceSoftware` |
 | `lib/oslifecycle.js` | endoflife.date cache + sanitizer, `osReleaseOf`, `osSupportState`, `isDistroPackage`/`isDistroMaintained`, `osEolFinding` |
 | `lib/osscan.js` | `OS_CPE_TABLE`, `mapOsToCpe`, `windowsOsTarget`, `searchOsCves`, `scanDeviceOs` |
@@ -132,8 +132,8 @@ sub-domain admins of a multi-tenant server are refused since v3.0.1):
 2. **Offline CVE scan** against locally cached NVD 2.0 feeds (`<datapath>/nvd/`): curated CPE table + automatic
    evidence matcher (name tokens validated against the NVD product index, publisher -> vendor).
 3. **Assessment panel** (`pluginadmin.ashx?pin=inventoryscanner&action=show`): multi-location CVE review, group-wide
-   ratings (mandatory comment), false-positive flags (optional comment), filter/sort, CPE Mapping management tab, and a **Settings tab** for
-   all scanner/collection options (overrides config.json, applies without restart).
+   ratings (mandatory comment), false-positive flags (optional comment), filter/sort, and a **Settings tab** for
+   all scanner/collection options including the CPE mapping table (overrides config.json, applies without restart).
 4. **Printable reports** (`action=report`, `action=deviceReport`): overview page + one page per location, with a
    stated **CPE coverage percentage** so findings-only views can't be misread as "all clean".
 5. **Scheduled scans + notifications** (server-side Node timers, restart-proof, monthly-capable) with per-group
@@ -249,10 +249,11 @@ POST body `action=`:
 | `save_assessment` | `meshId` or `meshIds` (comma list), `cveId`, `assessment`, `comment` | comment **mandatory**; id must match `CVE-\d{4}-\d{4,}` or be `WINDOWS-UPDATES` / `OS-EOL`; mesh ids validated `^mesh/[^:]+$`; comment trimmed, ≤1000 chars, stored **raw** |
 | `flag_false_positive` | `meshId(s)`, `cveId`, `comment?` | comment **optional** (empty stays empty); sets `assessment:'UNKNOWN', flagged:true` |
 | `unflag_false_positive` | `meshId(s)`, `cveId` | deletes flagged entries for all given meshes |
-| `get_cpe_table` | — | `{entries:[{match,vendor,product,source:'built-in'|'remote'|'custom'}], cpeTable:{source,updated,url,enabled,entries}}`; a `kind`
-    (driver/firmware) table row is shown as `vendor:'-', product:'excluded: <kind>'` instead of a CPE pair |
-| `delete_cpe_table` | `match`,`vendor`,`product` | custom entries only (built-ins can be shadowed, not deleted) |
-| `add_cpe` | `match`,`vendor`,`product` | regex validated via `new RegExp`; custom wins over built-in |
+| `get_cpe_table` | — | `{entries:[{match,vendor,product,source:'remote'|'custom'}], cpeTable:{source:'remote'|'none',updated,url,enabled,entries}}`; a `kind`
+    (driver/firmware) table row is shown as `vendor:'-', product:'excluded: <kind>'` instead of a CPE pair; `source:'none'`
+    means NO table file could be loaded - the curated stage is then empty (there is no in-code fallback list since v4.2.0) |
+| `delete_cpe_table` | `match`,`vendor`,`product` | custom entries only (table rows live in cpe-table.json and can be shadowed, not deleted) |
+| `add_cpe` | `match`,`vendor`,`product` | regex validated via `new RegExp`; custom wins over the maintained table |
 | `wg_get_config` | — | effective wingetUpdater config + per-key sources + queue state |
 | `wg_save_config` | enabled, updateMeshes(csv), excludeNodes(csv), ignorePackages(JSON), pinSync (intervalHours accepted but ignored) | validates EVERYTHING, writes overlay, `rescheduleAll()`; the panel calls it automatically on EVERY Updates-tab change (switches, groups, ignore add/remove, exclusions, "+ ignore" buttons) - no manual-save footgun since v2.7.0 |
 | `wg_run` | optional `nodeIds`(csv; overrides scope+exclusions), `dry`('true'), `pkgId` + `mode`('update'\|'uninstall') | manual batch; per-device or dry test runs; {busy} while one runs. With `pkgId` the whole batch runs restricted to that ONE package (`$invOnly` guard in the script) - `mode:'uninstall'` needs a valid `pkgId`, is never a dry run and never without one (rejected). Scope without `nodeIds` = `wgTargetNodes`: `updateMeshes` gates
@@ -294,16 +295,18 @@ GET also knows `show_cpe` (legacy JSON list of custom entries with index, used b
 Assessments persist in `<datapath>/nvd/assessments.json`, key `"<meshId>:<cveId>"` →
 `{meshId, cveId, assessment, comment, lastModified, assessedBy, assessedById, flagged?}`.
 Scheduled results in `<datapath>/nvd/scans.json` → `meshId -> {time, cves:[{cve, severity, ...}]}`.
-Remote CPE table: repo `cpe-table.json` → the installer unpacks it into `<datapath>/plugins/inventoryscanner/`, which is
+Maintained CPE table: repo `cpe-table.json` → the installer unpacks it into `<datapath>/plugins/inventoryscanner/`, which is
 **exactly `obj.cpeTablePath`** - so on an installed server the maintained table is live from the first second without
 any download, and a refresh (`fetchCpeTable`, at startup when stale and after every NVD cycle, https only) rewrites
 that SAME file in place; a plugin upgrade re-unpacks the shipped copy (the newer shipped table then wins until the
 next refresh). `loadRemoteCpeTable()` therefore tries the cache path first and `path.join(obj.pluginDir, 'cpe-table.json')`
-second (the second entry only matters in dev `plugins.list` layouts/tests where code and datapath differ);
-`SOFTWARE_CPE_TABLE` stays as last-resort seed and the two lists are NOT kept in sync by hand - adding a mapping is a
-PR on the JSON file only (process + validation: CONTRIBUTING.md), no plugin version bump. `cpeTableStatus().origin`
-reports where the live file came from ('downloaded' | 'cache' | 'bundled'); `activeSoftwareTable()` = remote entries
-when a valid table was applied, else `SOFTWARE_CPE_TABLE`; custom (UI) entries always first. Entry regexes compile with the `i` flag ONLY;
+second (the second entry only matters in dev `plugins.list` layouts/tests where code and datapath differ).
+**Since v4.2.0 this file is the ONLY curated table** - the duplicated seed array (`SOFTWARE_CPE_TABLE`) that used to sit
+in `lib/cpetable.js` was removed; adding a mapping is a PR on the JSON file only (process + validation: CONTRIBUTING.md),
+never a code change. If neither file loads, `activeSoftwareTable()` is EMPTY (custom entries + the auto matcher still
+work, the panel says so loudly) - deliberately no hidden fallback list. `cpeTableStatus().origin`
+reports where the live file came from ('downloaded' | 'cache' | 'bundled'); custom (UI) entries always come first.
+Entry regexes compile with the `i` flag ONLY;
 bad JSON/regex → payload rejected, current table keeps running. Keys: `cpeTableEnabled`/`cpeTableUrl` (Settings tab).
 A table row may replace `vendor`/`product` with **`kind:'driver'|'firmware'`** (out-of-NVD-scope marker, see below);
 `applyCpeTableText` validates that shape and `matchTableEntry` returns it, kind rows win over the name heuristics.
@@ -358,19 +361,30 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   state is patched client-side (no rescan).
 - All dynamic values rendered via `esc()` (comments stored raw → escape at output; never double-escape).
 - The page heading (`h1#pageTitle`) follows the active tab (titles map in the tab click handler).
+- The status line under the heading is tab-aware (v4.2.0): the NVD-feed/scan-schedule part (`span#statusMeta`) is
+  shown only on the Assessment and Settings tabs (the tab click handler toggles it); every tab still ends with
+  `plugin v{{version}}` (stale-deploy detection).
+- The findings table's CVE column shows a ~85-character headline of the CVE description under the id
+  (`cveNote()`, full text in the `title` tooltip, v4.2.0) - ratings should be possible without opening nvd.nist.gov.
+- All buttons share one height (v4.2.0): `button` and `button.small` both compute to 32px (line-height 18px +
+  6px vertical padding; `.small` only reduces font-size and horizontal padding), and text inputs/selects match it.
+  A new control must NOT introduce different vertical padding.
 - The inline script must not contain `{{` (Handlebars would consume it) except the intended `'{{shortName}}'` token;
   `tools/check.js` enforces both this and `node --check` on the extracted script.
 - Every POST sends the header `X-InvScanner-Request: 1` (see Security below); a new fetch path must keep it.
 
-- Settings tab: fetches `get_settings` + `get_locations` on load; each numeric field carries a source select
+- Settings tab (LAST nav button since v4.2.0): fetches `get_settings` + `get_locations` on load; each numeric
+  field carries a source select
   ("set in plugin settings" / "from config.json" / "built-in default") offering `revert_setting` when overridden;
   Save posts the full field set, "Reset all" posts `reset=true`. The group table is filled client-side from
-  `get_locations`; all-checked or none-checked is sent as an empty list = "all groups".
+  `get_locations`; all-checked or none-checked is sent as an empty list = "all groups". The former CPE Mapping
+  tab is a section at the bottom of this tab (ids and handlers unchanged: `loadCpeTable`/`cpeTableBody`/...).
 
-- Navigation is one feature per tab (v4.1.0): Assessment | Settings | CPE Mapping | **Updates** (winget only) |
-  **OS Updates** (the OS engine, its own button - formerly an `<h2>` section inside the Updates tab) | **Deploy**.
+- Navigation is one feature per tab: Assessment | **Updates** (winget only) | **OS Updates** (the OS engine -
+  its own button since v4.1.0, formerly an `<h2>` section inside Updates) | **Deploy** | **Settings** (last on
+  the right since v4.2.0, now including the former CPE Mapping tab).
   Opening a tab loads ONLY its own data (`loadWgTab` / `loadOsStatus` / `loadSwTab`); ids and handlers on both
-  sides are unchanged by the split, only the HTML moved. The two engines still share the winget `excludeNodes`
+  sides are unchanged by the splits, only the HTML moved. The two engines still share the winget `excludeNodes`
   list and the one-runcommands-session-per-agent rule, and each tab's info box says so.
 
 - Deploy tab (v4.0.0): library table + `<input type=file>` upload (FileReader chunks → `sw_upload`, sequential
@@ -643,8 +657,8 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
 
 ## Design decisions (with reasons)
 
-1. **Two-stage matching (Dependency-Check style, fully offline):** custom entries + curated `SOFTWARE_CPE_TABLE`
-   first (exact vendor+product); then `obj.autoMatchProductTokens` derives candidate product tokens from the display
+1. **Two-stage matching (Dependency-Check style, fully offline):** custom entries + the curated `cpe-table.json`
+   first (exact vendor+product; the table is ONLY that file since v4.2.0 - no code copy to drift); then `obj.autoMatchProductTokens` derives candidate product tokens from the display
    name (arch/language/edition/version/year noise stripped) and accepts one ONLY if the token exists in
    `obj.cpeProductTokens` (product tokens actually present in the loaded CVE feeds). Publisher keywords map to
    vendors via `obj.PUBLISHER_VENDOR_MAP` (word-boundary); candidate vendor evidence must not contradict the
@@ -799,7 +813,7 @@ MeshCentral install folder) and root `/*.txt` + `/*.csv` are gitignored as a gua
   inline-script syntax/`{{`-hazard check, JSON validity of config files, and view-name↔render-name consistency over
   the WHOLE JS tree (the `res.render()` calls live in `lib/routes.js`/`lib/reports.js` since v3.5.1).
   Must run anywhere (no dependencies).
-- `tools/test-plugin.js`: 417 behavioral assertions (71 steps) against the real module (mocked MeshCentral DB/webserver):
+- `tools/test-plugin.js`: 418 behavioral assertions (71 steps) against the real module (mocked MeshCentral DB/webserver):
   the module wiring itself (every lib file attaches, a fresh instance exposes the same function surface, no
   module-level locals in `lib/`), locations grouping & counting, manual-rating severity override, FP exclusion, host-name preference, coverage
   numbers, multi-mesh scan/`mixed` logic, all POST handlers incl. validation/rejections, routes, admin gating
@@ -880,8 +894,8 @@ message alone, without the diff:
 All of the above implemented and green: `node --check` OK; panel inline JS parses; 3 views render with and without
 data; full logic suite passes (see `tools/test-plugin.js`), including the monthly-scheduling and notification-mode
 tests. UI flow: floating location picker → one aggregated sortable/filterable table → one-click multi-location
-rating/FP → CPE Mapping tab with built-in table visibility + overrides, Settings tab (scanner/collection options, per-key override of
-config.json) → two printable reports with navigation and
+rating/FP → Settings tab (scanner/collection options, per-key override of
+config.json, incl. the maintained CPE table with overrides) → two printable reports with navigation and
 per-location pages → scheduled monthly scans with toast/event-log notifications that re-list open findings.
 Since v3.0.0 also: drivers/firmware as their own out-of-scope category (kind rows in the table + name heuristics,
 excluded from the coverage denominator) and the Updates tab's Packages view with per-package update/uninstall
@@ -912,7 +926,16 @@ exit code, note), device event + admin toast + software-deploy.log. Never automa
 swstore/swdeploy/swdeploy-handlers; the winget and OS pumps now also honour `swPending` (one runcommands session
 per agent). Test suite: 417 assertions in 71 steps (the winget `due:` fixtures got the midnight fix described in
 the Testing section).
-v4.1.0 (this release): UI structure only - the overloaded Updates tab is split into three one-feature tabs with
+v4.1.0: UI structure only - the overloaded Updates tab is split into three one-feature tabs with
 their own nav buttons: **Updates** (winget updater), **OS Updates** (the v3.5.0/v3.6.0 OS engine, previously an
 `<h2>` section inside Updates) and **Deploy** (already separate since v4.0.0). No route, no handler, no data
 shape and no element id changed; only the HTML moved and the tab-open handlers were separated.
+v4.2.0 (this release): panel review + maintenance. The CVE column shows the description headline under the id
+(`cveNote()`, tooltip = full text); the NVD/scan part of the status line is tab-aware (Assessment + Settings only,
+`plugin v` everywhere); the CPE Mapping tab became a section of the Settings tab, which is now the LAST nav button;
+all buttons share one height. Maintenance: the duplicated mapping table (`SOFTWARE_CPE_TABLE` in
+`lib/cpetable.js`) is GONE - `cpe-table.json` is the only curated copy; with no table file the curated stage is
+empty (custom + auto matcher still work, the UI says so). No POST action, route or agent script changed; the
+`get_cpe_table` `source` values are now 'remote'/'custom' (plus `cpeTable.source` 'remote'|'none'). Test suite:
+418 assertions in 71 steps - the CPE steps now pin the single-source invariant and the matching tests
+load the bundled table exactly like a real `server_startup` does.

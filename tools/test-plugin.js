@@ -63,6 +63,7 @@ const meshServer = {
     webserver: { meshes: { 'mesh//grp1': { name: 'HQ' }, 'mesh//grp2': { name: 'Branch' } } }
 };
 const obj = factory({ parent: meshServer });
+obj.loadRemoteCpeTable(); // what server_startup does on a real server; since the v4.2.0 dedup the curated stage is ONLY cpe-table.json
 
 // stub CVE matching (the real one needs the multi-GB NVD index)
 const softwareVulns = [
@@ -232,16 +233,19 @@ steps.push(function (next) {
 // ---- CPE table handlers ----
 steps.push(function (next) {
     obj.customCpeEntries = [{ match: '^my tool', vendor: 'acme', product: 'tool' }];
+    var savedRemote = obj.remoteCpeEntries, savedLoadedAt = obj.cpeTableLoadedAt;
+    obj.applyCpeTableText({ entries: [{ match: '^mozilla firefox', vendor: 'mozilla', product: 'firefox' }, { match: '^sumatrapdf', vendor: 'sumatrapdfreader', product: 'sumatrapdf' }] });
     obj.handleAdminPostReq({ headers: XHDR, body: { action: 'get_cpe_table' } }, mockRes(function (d) {
-        const builtin = d.entries.filter(e => e.source === 'built-in');
-        check('get_cpe_table: built-in rows visible', builtin.length > 20, builtin.length);
+        const remote = d.entries.filter(e => e.source === 'remote');
+        check('get_cpe_table: maintained-table rows visible', remote.length === 2 && remote[0].vendor === 'mozilla', remote);
         check('get_cpe_table: custom rows visible', d.entries.some(e => e.source === 'custom' && e.match === '^my tool'));
         obj.handleAdminPostReq({ headers: XHDR, body: { action: 'delete_cpe_table', match: '^my tool', vendor: 'acme', product: 'tool' } },
             mockRes(function (d2) {
                 check('delete_cpe_table removes custom entry', d2.success === true && obj.customCpeEntries.length === 0, d2);
-                obj.handleAdminPostReq({ headers: XHDR, body: { action: 'delete_cpe_table', match: '/mozilla firefox/i', vendor: 'mozilla', product: 'firefox' } },
+                obj.handleAdminPostReq({ headers: XHDR, body: { action: 'delete_cpe_table', match: '^mozilla firefox', vendor: 'mozilla', product: 'firefox' } },
                     mockRes(function (d3) {
-                        check('built-in cannot be deleted via API', !!d3.error, d3);
+                        check('maintained-table rows cannot be deleted via the API (they live in cpe-table.json)', !!d3.error, d3);
+                        obj.remoteCpeEntries = savedRemote; obj.cpeTableLoadedAt = savedLoadedAt;
                         next();
                     }), user);
             }), user);
@@ -650,6 +654,7 @@ steps.push(function (next) {
     check('defMatch: unknown version keeps all-version defs', obj.defMatches({ part: 'a', kind: 'any' }, '') === true);
     var dp2 = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-verless-'));
     var obj2 = factory({ parent: { db: db, datapath: dp2, debug: function () { }, config: { settings: {} }, webserver: { meshes: {} } } });
+    obj2.loadRemoteCpeTable(); // same as the main instance: the curated table comes ONLY from cpe-table.json (v4.2.0)
     obj2.productIndex['mozilla|firefox'] = [
         { part: 'a', kind: 'range', endExc: '3.6.13', cves: [{ id: 'CVE-2008-1111', severity: 'HIGH', cvss: 7, description: 'old flood', published: '2008-06-01T00:00:00', references: [] }] },
         { part: 'a', kind: 'range', startInc: '1.0', endExc: '3.6.28', cves: [{ id: 'CVE-2011-2222', severity: 'CRITICAL', cvss: 9.5, description: 'ancient', published: '2011-03-01T00:00:00', references: [] }] }
@@ -1237,9 +1242,12 @@ steps.push(function (next) {
         pair('FileZilla Server') === 'filezilla-project:filezilla_server' && pair('Audacity 3.7') === 'audacityteam:audacity' && pair('Electron Fiddle') === 'electronjs:electron',
         [pair('Notepad++ (64-bit x64)'), pair('SumatraPDF'), pair('KeePass Password Safe 2.57'), pair('FileZilla 3.68.1')]);
     check('table: names without any NVD product are not mapped (pcvisit, chromium)', pair('pcvisit RemoteHost') === null && pair('Chromium') === null);
-    check('table: built-in seed agrees with the shipped table for the corrected rows',
-        obj.SOFTWARE_CPE_TABLE.filter(function (e) { return e.match.test('Notepad++'); })[0].product === 'notepad\\+\\+' &&
-        obj.SOFTWARE_CPE_TABLE.filter(function (e) { return e.match.test('SumatraPDF'); })[0].vendor === 'sumatrapdfreader');
+    check('table: single source of mappings - no seeded copy in the module code (v4.2.0 dedup)',
+        pluginSrc().indexOf('SOFTWARE_CPE_TABLE') < 0 && obj.SOFTWARE_CPE_TABLE === undefined);
+    var savedNone = obj.remoteCpeEntries; obj.remoteCpeEntries = null;
+    check('table: without any table file the curated stage is EMPTY (no hidden fallback list), custom/auto still work',
+        obj.activeSoftwareTable().length === 0 && obj.cpeTableStatus().source === 'none' && obj.cpeTableStatus().entries === 0, obj.cpeTableStatus());
+    obj.remoteCpeEntries = savedNone;
     check('table: dangerous regex shapes are rejected (nested quantifier, backreference), normal ones pass',
         obj.isSafeTableRegex('(a+)+') === false && obj.isSafeTableRegex('(\\w+\\s?)+$') === false && obj.isSafeTableRegex('(.*)\\1') === false &&
         obj.isSafeTableRegex('adobe acrobat( \\(64-bit\\))?') === true && tbl.entries.every(function (e) { return obj.isSafeTableRegex(e.match); }));

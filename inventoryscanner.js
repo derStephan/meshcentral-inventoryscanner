@@ -21,7 +21,7 @@
  * NVD feed is downloaded.
  *
  * @author derStephan
- * @version 4.1.0
+ * @version 4.2.0
  *
  * Transparency: This plugin was created with the assistance of Qwen 3.6 27B and Qwen 3.8 Flash Next.
  * Audits: 2026-11-06 (NVIDIA Nemotron 3 550B A55B) and 2026-11-11 (Claude, v3.0.1) via opencode - see AUDIT.md.
@@ -52,7 +52,7 @@ try { MODULE_CODE_VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, 'con
  *   lib/assessments.js      group ratings + false-positive flags, their store and write handlers
  *   lib/nvd.js              NVD feed download/cache/load + download log
  *   lib/nvdindex.js         CVE index built from the feeds, CPE criteria parsing, version compare
- *   lib/cpetable.js         name -> CPE tables: built-in seed, remote maintained table, custom UI rows
+ *   lib/cpetable.js         name -> CPE tables: maintained cpe-table.json (the only curated copy), custom UI rows
  *   lib/matching.js         software name -> CPE resolution incl. automatic product-token matching
  *   lib/oslifecycle.js      distro packages judged by the OS lifecycle (endoflife.date) + OS-EOL
  *   lib/osscan.js           OS -> CPE mapping and the OS CVE scan (Windows release CPEs + build)

@@ -14,7 +14,7 @@
         .info { background-color: #e7f3ff; border-left: 4px solid #4a90d9; padding: 12px; margin-bottom: 16px; font-size: 13px; color: #555; }
         .controls { display: flex; gap: 10px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
         label { font-weight: 600; font-size: 14px; }
-        button { background-color: #4a90d9; color: #fff; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 600; }
+        button { background-color: #4a90d9; color: #fff; padding: 6px 14px; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 600; line-height: 18px; }
         button:hover { background-color: #357abd; }
         button:disabled { background-color: #ccc; cursor: not-allowed; }
         button.green { background-color: #28a745; }
@@ -23,7 +23,7 @@
         button.red:hover { background-color: #b02a37; }
         button.purple { background-color: #6f42c1; }
         button.purple:hover { background-color: #5a32a3; }
-        button.small { padding: 4px 10px; font-size: 12px; }
+        button.small { padding: 6px 10px; font-size: 12px; line-height: 18px; }
         table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 13px; }
         th, td { border: 1px solid #e0e0e0; padding: 8px; text-align: left; vertical-align: top; }
         th { background: #f8f9fa; cursor: pointer; user-select: none; position: sticky; top: 0; z-index: 1; white-space: nowrap; }
@@ -45,10 +45,10 @@
         .setgrid { display: grid; grid-template-columns: 280px 1fr; gap: 12px 16px; align-items: start; margin: 14px 0 22px 0; }
         .setgrid > label { font-weight: 600; font-size: 13px; padding-top: 6px; }
         .setgrid .hint { color: #66737f; font-size: 12px; margin-top: 4px; }
-        .srcsel { padding: 4px; border: 1px solid #ddd; border-radius: 4px; font-size: 11px; color: #555; background: #fff; }
+        .srcsel { padding: 6px 4px; border: 1px solid #ddd; border-radius: 4px; font-size: 11px; color: #555; background: #fff; line-height: 18px; }
         .srcsel:disabled { color: #98a3ad; }
         .num { width: 90px; }
-        .override select, .override input, select, input[type="text"] { padding: 6px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; }
+        .override select, .override input, select, input[type="text"] { padding: 6px 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; line-height: 18px; }
         .override input { width: 220px; }
         .override-set { background: #e7f3ff; border-left: 3px solid #4a90d9; padding: 4px 8px; margin-top: 6px; font-size: 12px; }
         .manual { color: #8a6d3b; }
@@ -73,15 +73,16 @@
         .location-selector input[type="checkbox"] { width: 16px; height: 16px; accent-color: #4a90d9; }
         .location-selector .loc-all { border-top: 1px solid #e0e4ea; padding-top: 8px; margin-top: 4px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
         .location-selector .loc-actions { margin-top: 12px; display: flex; gap: 8px; }
-        .location-toggle { position: fixed; top: 80px; right: 20px; z-index: 999; padding: 8px 16px; background: #0b3d6b; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 600; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+        .location-toggle { position: fixed; top: 80px; right: 20px; z-index: 999; padding: 6px 14px; background: #0b3d6b; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 600; line-height: 18px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
         .location-toggle:hover { background: #154d80; }
         .table-container { overflow-x: auto; }
         .filter-row { display: flex; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
-        .filter-input { padding: 6px 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; flex: 1; min-width: 150px; }
-        .filter-select { padding: 6px 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; }
-        .comment-inp { width: 200px; padding: 6px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px; }
-        .rating-sel { padding: 6px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px; }
+        .filter-input { padding: 6px 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; line-height: 18px; flex: 1; min-width: 150px; }
+        .filter-select { padding: 6px 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; line-height: 18px; }
+        .comment-inp { width: 200px; padding: 6px 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px; line-height: 18px; }
+        .rating-sel { padding: 6px 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px; line-height: 18px; }
         .desc { color: #666; font-size: 12px; max-width: 320px; }
+        .cvsnote { color: #66737f; font-size: 11px; font-weight: 400; margin-top: 3px; max-width: 250px; cursor: help; }
         .devlist { font-size: 12px; color: #444; }
         .devlist b { color: #0b3d6b; }
         #scanStatus { font-size: 13px; color: #666; }
@@ -91,11 +92,10 @@
 <body>
     <div class="topnav">
         <a href="#" class="navtab active" data-tab="assessment">Assessment</a>
-        <a href="#" class="navtab" data-tab="settings">Settings</a>
-        <a href="#" class="navtab" data-tab="cpe">CPE Mapping</a>
         <a href="#" class="navtab" data-tab="updates">Updates</a>
         <a href="#" class="navtab" data-tab="os">OS Updates</a>
         <a href="#" class="navtab" data-tab="deploy">Deploy</a>
+        <a href="#" class="navtab" data-tab="settings">Settings</a>
         <span class="navsep"></span>
         <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=report" target="_blank" rel="noopener">Vulnerability Report</a>
         <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=deviceReport" target="_blank" rel="noopener">Device Report</a>
@@ -108,8 +108,8 @@
     <div class="container">
         <h1 id="pageTitle">Vulnerability Assessment</h1>
         <div class="status">
-            NVD database: {{#if totalCves}}{{#if lastUpdate}}last updated {{lastUpdate}}{{else}}loaded{{/if}}{{else}}not downloaded yet{{/if}} &middot; Indexed CVEs: {{totalCves}} &middot;
-            Scheduled scans: {{#if scanIntervalHours}}every {{scanIntervalHours}}h{{else}}disabled{{/if}}{{#if lastScan}} (last run {{lastScan}}){{/if}} &middot; plugin v{{version}}
+            <span id="statusMeta">NVD database: {{#if totalCves}}{{#if lastUpdate}}last updated {{lastUpdate}}{{else}}loaded{{/if}}{{else}}not downloaded yet{{/if}} &middot; Indexed CVEs: {{totalCves}} &middot;
+            Scheduled scans: {{#if scanIntervalHours}}every {{scanIntervalHours}}h{{else}}disabled{{/if}}{{#if lastScan}} (last run {{lastScan}}){{/if}} &middot;</span> plugin v{{version}}
         </div>
         <div class="tab-content active" id="tab-assessment">
             <div class="info">
@@ -196,8 +196,9 @@
 
                 <label for="setCpeTableEnabled">Update mapping table from repository</label>
                 <div><input type="checkbox" id="setCpeTableEnabled">
-                    <div class="hint">The curated table is maintained as <code>cpe-table.json</code> in this plugin's GitHub repository and
-                    re-downloaded with every NVD feed refresh. Without network access (or with this off) the built-in fallback table stays active.</div></div>
+                    <div class="hint">The curated table is maintained as <code>cpe-table.json</code> in this plugin's GitHub repository,
+                    shipped inside the plugin and re-downloaded with every NVD feed refresh. Off (or unreachable): only your custom
+                    entries below and the automatic matching remain - never a silent second copy in the code.</div></div>
 
                 <label for="setCpeTableUrl">Mapping table URL</label>
                 <div><input type="text" id="setCpeTableUrl" style="width:420px">
@@ -266,32 +267,30 @@
                 <button id="resetSettingsBtn" class="red">Reset all to config.json</button>
             </div>
             <div id="settingsMsg"></div>
-        </div>
 
-        <div class="tab-content" id="tab-cpe">
+            <h3>CPE mapping (installed program name &rarr; CVE codes)</h3>
             <div class="info">
                 Every NVD CVE names the affected software with a technical code, a <strong>CPE</strong> like
-                <code>cpe:...:mozilla:firefox</code>. This page is the dictionary that tells the scanner which
+                <code>cpe:...:mozilla:firefox</code>. This table is the dictionary that tells the scanner which
                 code belongs to which program on your PCs:
                 <ul style="margin:6px 0 6px 18px;padding:0;">
                     <li><strong>Regex</strong> is matched case-insensitively against the installed program name.</li>
                     <li><strong>Vendor / Product</strong> is the CPE code that gets searched in the CVE database.</li>
                 </ul>
-                Rows labelled <em>Remote</em> come from the table maintained in the plugin's GitHub repository
-                (downloaded automatically); rows labelled <em>Custom</em> are your own additions and are always
-                checked first, so they win over any remote row. Programs that match no row here are still checked
-                automatically against the product names present in the NVD data ("Auto-map" in the Settings tab).
-                Only software where even that proves nothing is listed as <em>not assessable</em> - never as "clean".
+                Rows labelled <em>Remote</em> come from the maintained table file <code>cpe-table.json</code>
+                (shipped with the plugin, refreshed from its repository URL); rows labelled <em>Custom</em> are
+                your own additions and are always checked first, so they win over any remote row. Programs that
+                match no row here are still checked automatically against the product names present in the NVD
+                data (the <em>Auto-map</em> switch above). Only software where even that proves nothing is listed
+                as <em>not assessable</em> - never as "clean".
                 <br><br>
                 <strong>Fix a wrong row:</strong> <em>Override</em> copies it as a custom entry you can edit,
                 <em>Delete</em> removes only your custom entries, never remote ones.
             </div>
-
             <div class="hint" id="cpeTableSourceInfo"></div>
             <div class="filter-row">
                 <input type="text" id="cpeFilter" class="filter-input" placeholder="Filter mappings by regex, vendor or product...">
             </div>
-
             <div class="table-container">
                 <table>
                     <thead>
@@ -306,8 +305,7 @@
                     <tbody id="cpeTableBody"></tbody>
                 </table>
             </div>
-
-            <h3>Add / Override Mapping</h3>
+            <h4 style="font-size:13px;color:#0b3d6b;margin:14px 0 6px 0;">Add / Override mapping</h4>
             <div class="controls">
                 <input id="cpeRegex" type="text" placeholder="Regex, e.g. ^SAS Studio" style="min-width:220px;">
                 <input id="cpeVendor" type="text" placeholder="CPE vendor, e.g. mozilla" style="min-width:160px;">
@@ -595,7 +593,7 @@
 
         // ---------- tabs ----------
 
-        var tabTitles = { assessment: 'Vulnerability Assessment', settings: 'Settings', cpe: 'Software → CPE Mapping', updates: 'Software Updates (winget)', os: 'Operating System Updates', deploy: 'Deploy Software' };
+        var tabTitles = { assessment: 'Vulnerability Assessment', settings: 'Settings', updates: 'Software Updates (winget)', os: 'Operating System Updates', deploy: 'Deploy Software' };
         var tabs = document.querySelectorAll('.navtab');
         for (var t = 0; t < tabs.length; t++) {
             tabs[t].addEventListener('click', function (e) {
@@ -613,6 +611,8 @@
                 if (name === 'updates') { loadWgTab(); }
                 if (name === 'os') { loadOsStatus(); }
                 if (name === 'deploy') { loadSwTab(); }
+                var sm = document.getElementById('statusMeta');
+                if (sm) { sm.style.display = ((name === 'assessment') || (name === 'settings')) ? '' : 'none'; }
                 var pt = document.getElementById('pageTitle');
                 if (pt && tabTitles[name]) { pt.textContent = tabTitles[name]; }
             });
@@ -1601,6 +1601,15 @@
             return out;
         }
 
+        // Short CVE headline under the link: enough to rate without opening nvd.nist.gov,
+        // the full text stays in the tooltip (v4.2.0).
+        function cveNote(r) {
+            var d = String(r.description || '').replace(/\s+/g, ' ').trim();
+            if (d === '') { return ''; }
+            var snip = (d.length > 85) ? (d.slice(0, 85).replace(/[,.;\s]*$/, '') + ' ...') : d;
+            return '<div class="cvsnote" title="' + esc(d) + '">' + esc(snip) + '</div>';
+        }
+
         function renderTable() {
             var rows = visibleRows();
             var html = '<table><thead><tr>';
@@ -1621,9 +1630,9 @@
 
                 html += '<tr data-cve="' + esc(r.cve) + '">';
                 if (/^CVE-\d{4}-\d{4,}$/.test(r.cve)) {
-                    html += '<td><a href="https://nvd.nist.gov/vuln/detail/' + esc(r.cve) + '" target="_blank" rel="noopener">' + esc(r.cve) + '</a></td>';
+                    html += '<td><a href="https://nvd.nist.gov/vuln/detail/' + esc(r.cve) + '" target="_blank" rel="noopener">' + esc(r.cve) + '</a>' + cveNote(r) + '</td>';
                 } else {
-                    html += '<td><b>' + esc(r.cve) + '</b></td>';
+                    html += '<td><b>' + esc(r.cve) + '</b>' + cveNote(r) + '</td>';
                 }
                 html += '<td><span class="sev sev-' + esc(sev.replace(/ /g, '-')) + '">' + esc(sev) + '</span></td>';
                 html += '<td>' + esc(r.cvss) + '</td>';
@@ -1801,7 +1810,7 @@
                     html += '<td><span class="badge badge-custom">Custom</span></td>';
                     html += '<td><button class="small red del-cpe-btn">Delete</button></td>';
                 } else {
-                    html += '<td><span class="badge badge-builtin">' + (e.source === 'remote' ? 'Remote' : 'Built-in') + '</span></td>';
+                    html += '<td><span class="badge badge-builtin">Remote</span></td>';
                     html += '<td><button class="small override-cpe-btn">Override</button></td>';
                 }
                 html += '</tr>';
@@ -1820,7 +1829,7 @@
                 var csi = $('cpeTableSourceInfo');
             if (csi) { csi.innerHTML = (ct.source === 'remote')
                     ? ('Active table: maintained CPE table - ' + (ct.origin === 'downloaded' ? 'downloaded from ' + esc(ct.url || '') : (ct.origin === 'bundled' ? 'copy shipped with the plugin' : 'local copy on this server (refreshed from ' + esc(ct.url || '') + ')')) + ' (updated ' + esc(ct.updated || '?') + ')' + (ct.enabled ? '' : ' - automatic refresh is OFF'))
-                    : ('Active table: built-in fallback' + (ct.enabled ? ' (remote copy not fetched yet - retried with every feed update)' : ' (automatic refresh is OFF)')); }
+                    : ('No mapping table file could be loaded on this server - only custom entries and the automatic matcher (Auto-map) apply. Check the URL/refresh setting below or reinstall the plugin (it ships cpe-table.json).'); }
                 renderCpeTable();
             }).catch(function (e) { showMsg('cpeMsg', 'Failed to load the CPE table: ' + e.message, false); });
         }
@@ -1852,7 +1861,7 @@
                 $('cpeVendor').value = vendor;
                 $('cpeProduct').value = product;
                 $('cpeProduct').focus();
-                showMsg('cpeMsg', 'Values copied to the form below. Adjust them and press Add - your custom entry takes precedence over the built-in mapping.', true);
+                showMsg('cpeMsg', 'Values copied to the form below. Adjust them and press Add - your custom entry takes precedence over the maintained table.', true);
             }
         });
 
@@ -1873,7 +1882,7 @@
                 $('cpeRegex').value = '';
                 $('cpeVendor').value = '';
                 $('cpeProduct').value = '';
-                showMsg('cpeMsg', 'Mapping saved to custom-cpe.json (takes precedence over the built-in table).', true);
+                showMsg('cpeMsg', 'Mapping saved to custom-cpe.json (takes precedence over the maintained table).', true);
                 loadCpeTable();
             }).catch(function (err) { showMsg('cpeMsg', 'Save failed: ' + err.message, false); });
         });
