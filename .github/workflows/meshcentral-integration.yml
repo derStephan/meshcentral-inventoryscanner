@@ -188,7 +188,7 @@ jobs:
         run: |
           set -e
           # device group via meshctrl over a real websocket login
-          MCG="wss://127.0.0.1:443 --loginuser ciadmin --loginpass $CI_PW"
+          MCG="--url wss://127.0.0.1:443 --loginuser ciadmin --loginpass $CI_PW"
           GRPCREATE=$(docker exec mc node /opt/meshcentral/meshcentral/meshctrl.js $MCG adddevicegroup --name CI-Group 2>&1)
           echo "meshctrl: $GRPCREATE"
           GROUPID=$(printf '%s' "$GRPCREATE" | sed -n 's#^ok mesh//##p' | tr -d '\r')
