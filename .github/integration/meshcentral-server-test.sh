@@ -199,14 +199,15 @@ if [ -n "$AGENTID" ]; then ok "the agent shows online in sw_devices ($AGENTID)";
 export AG_ENV="$AGENTID"
 post_auth --data 'action=sw_devices' >/dev/null
 chkjq '...and it is a LINUX device' 'any(.devices[]; .id==env.AG_ENV and .platform=="linux")'
-# deterministically re-arm the collector: save_settings runs rescheduleAll(), whose first
-# inventory pass fires 20 s later against all ONLINE agents - the connect-hook stagger can be
-# up to 5 minutes, so the wait loop repeats the arm every few seconds until the file lands
-for _i in $(seq 1 130); do
+# Arm the collector EXACTLY once: save_settings -> rescheduleAll -> collectAllOnline 20 s later
+# and every 60 s after that. Re-arming inside the wait loop would invalidate the previous pass
+# (timerGen++), so patience is what we wait with - plus the connect-hook's own stagger timer.
+post_auth --data 'action=save_settings' --data 'scanIntervalHours=0' --data 'updateHours=8760' --data 'anyCveMaxAgeYears=5' --data 'collectIntervalMinutes=1' --data 'notifyThreshold=HIGH' --data 'notifyOnScan=true' --data 'notifyUnratedRepeat=false' --data 'autoProductMatch=true' --data 'cpeTableEnabled=true' --data 'distroManaged=true' --data 'osLifecycleEnabled=true' --data 'collectOnAgentConnect=true' --data 'scanMeshes=' --data 'notifyMeshIds=' --data 'notifySeverities=' --data 'cpeTableUrl=' --data 'osLifecycleUrl=' >/dev/null
+SWF=''
+for _i in $(seq 1 150); do
     SWF=$(ls "$DATA"/plugins/inventoryscanner/data/*/software.json 2>/dev/null | head -n1)
     [ -n "$SWF" ] && break
-    post_auth --data 'action=save_settings' --data 'scanIntervalHours=0' --data 'updateHours=8760' --data 'anyCveMaxAgeYears=5' --data 'collectIntervalMinutes=1' --data 'notifyThreshold=HIGH' --data 'notifyOnScan=true' --data 'notifyUnratedRepeat=false' --data 'autoProductMatch=true' --data 'cpeTableEnabled=true' --data 'distroManaged=true' --data 'osLifecycleEnabled=true' --data 'collectOnAgentConnect=true' --data 'scanMeshes=' --data 'notifyMeshIds=' --data 'notifySeverities=' --data 'cpeTableUrl=' --data 'osLifecycleUrl=' >/dev/null
-    sleep 5
+    sleep 4
 done
 if [ -n "$SWF" ] && jq -e 'type=="array" and (length>0) and (.[0]|has("name"))' "$SWF" >/dev/null 2>&1; then ok 'the plugin collected a real software list over the agent channel'; else bad 'no collected software.json from the agent'; fi
 chk 'software CSV export'                             200 "$(get_auth '&action=export&type=software')"
