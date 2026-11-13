@@ -209,7 +209,7 @@ for _i in $(seq 1 150); do
     [ -n "$SWF" ] && break
     sleep 4
 done
-if [ -n "$SWF" ] && jq -e 'type=="array" and (length>0) and (.[0]|has("name"))' "$SWF" >/dev/null 2>&1; then ok 'the plugin collected a real software list over the agent channel'; else bad 'no collected software.json from the agent'; fi
+if [ -n "$SWF" ] && jq -e '((.apps? // .) | type=="array") and ((.apps? // .)|length>0) and (((.apps? // .)[0])|has("name"))' "$SWF" >/dev/null 2>&1; then ok 'the plugin collected a real software list over the agent channel'; else bad 'no collected software.json from the agent'; fi
 chk 'software CSV export'                             200 "$(get_auth '&action=export&type=software')"
 if grep -qw mag "$BODY"; then ok 'the CSV contains the agent host'; else bad 'agent host missing from CSV'; fi
 [ "$(wc -c < "$BODY")" -gt 400 ] && ok 'the CSV carries collected rows' || bad 'CSV still empty after collection'
