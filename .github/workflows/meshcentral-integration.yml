@@ -219,8 +219,9 @@ jobs:
       - name: Collect server and plugin logs
         if: always() && steps.decide.outputs.run == 'true'
         run: |
-          docker logs mc  > meshcentral-server.log 2>&1 || true
-          docker logs mag > meshcentral-agent.log  2>&1 || true
+          docker logs -t mc  > meshcentral-server.log 2>&1 || true
+          docker logs -t mag > meshcentral-agent.log  2>&1 || true
+          find mc-data/plugins/inventoryscanner/data -type f -exec echo "=== {} ===" \; -exec head -c 600 {} \; > plugin-collected-data.txt 2>/dev/null || true
 
       - name: Upload logs
         if: always() && steps.decide.outputs.run == 'true'
@@ -230,8 +231,10 @@ jobs:
           path: |
             meshcentral-server.log
             meshcentral-agent.log
+            plugin-collected-data.txt
             mc-data/plugins/inventoryscanner/*.log
             mc-data/plugins/inventoryscanner/*.json
+            mc-data/plugins/inventoryscanner/data/**
             mc-data/nvd/*.log
           if-no-files-found: warn
           retention-days: 10

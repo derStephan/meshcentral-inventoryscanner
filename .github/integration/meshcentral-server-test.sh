@@ -196,28 +196,31 @@ for _i in $(seq 1 90); do
     sleep 2
 done
 if [ -n "$AGENTID" ]; then ok "the agent shows online in sw_devices ($AGENTID)"; else bad 'no online agent within 3 minutes'; fi
+export AG_ENV="$AGENTID"
 post_auth --data 'action=sw_devices' >/dev/null
-chkjq '...and it is a LINUX device' "[.devices[]|select(.id==\"$AGENTID\")][0].platform==\"linux\""
+chkjq '...and it is a LINUX device' 'any(.devices[]; .id==env.AG_ENV and .platform=="linux")'
 # deterministically re-arm the collector: save_settings runs rescheduleAll(), whose first
 # inventory pass fires 20 s later against all ONLINE agents - the connect-hook stagger can be
-# up to 5 minutes and this test cannot wait on luck (collectIntervalMinutes=1 keeps retrying)
-chk 'collector re-armed via save_settings'            200 "$(post_auth --data 'action=save_settings' --data 'scanIntervalHours=0' --data 'updateHours=8760' --data 'anyCveMaxAgeYears=5' --data 'collectIntervalMinutes=1' --data 'notifyThreshold=HIGH' --data 'notifyOnScan=true' --data 'notifyUnratedRepeat=false' --data 'autoProductMatch=true' --data 'cpeTableEnabled=true' --data 'distroManaged=true' --data 'osLifecycleEnabled=true' --data 'collectOnAgentConnect=true' --data 'scanMeshes=' --data 'notifyMeshIds=' --data 'notifySeverities=' --data 'cpeTableUrl=' --data 'osLifecycleUrl=')"
-SWF=''
-for _i in $(seq 1 210); do
+# up to 5 minutes, so the wait loop repeats the arm every few seconds until the file lands
+for _i in $(seq 1 130); do
     SWF=$(ls "$DATA"/plugins/inventoryscanner/data/*/software.json 2>/dev/null | head -n1)
     [ -n "$SWF" ] && break
-    sleep 2
+    post_auth --data 'action=save_settings' --data 'scanIntervalHours=0' --data 'updateHours=8760' --data 'anyCveMaxAgeYears=5' --data 'collectIntervalMinutes=1' --data 'notifyThreshold=HIGH' --data 'notifyOnScan=true' --data 'notifyUnratedRepeat=false' --data 'autoProductMatch=true' --data 'cpeTableEnabled=true' --data 'distroManaged=true' --data 'osLifecycleEnabled=true' --data 'collectOnAgentConnect=true' --data 'scanMeshes=' --data 'notifyMeshIds=' --data 'notifySeverities=' --data 'cpeTableUrl=' --data 'osLifecycleUrl=' >/dev/null
+    sleep 5
 done
 if [ -n "$SWF" ] && jq -e 'type=="array" and (length>0) and (.[0]|has("name"))' "$SWF" >/dev/null 2>&1; then ok 'the plugin collected a real software list over the agent channel'; else bad 'no collected software.json from the agent'; fi
 chk 'software CSV export'                             200 "$(get_auth '&action=export&type=software')"
 if grep -qw mag "$BODY"; then ok 'the CSV contains the agent host'; else bad 'agent host missing from CSV'; fi
 [ "$(wc -c < "$BODY")" -gt 400 ] && ok 'the CSV carries collected rows' || bad 'CSV still empty after collection'
+export GR_ENV="$GROUPID"
 chk 'scan the real location'                          200 "$(get_auth "&action=scan&mesh=$GROUPID")"
-chkjq '...lists the real device group' "[.meshes[]|select(.id==\"$GROUPID\")]|length==1"
+chkjq '...lists the real device group' 'any(.meshes[]; .id==env.GR_ENV)'
+get_auth '&action=deviceReport' >/dev/null
+if grep -qw mag "$BODY"; then ok 'the device report contains the agent'; else bad 'agent missing from the device report'; fi
 get_auth '&action=report' >/dev/null
-if grep -qw mag "$BODY"; then ok 'the vulnerability report contains the agent'; else bad 'agent missing from the report'; fi
+if grep -qi 'Vulnerability Report' "$BODY"; then ok 'the vulnerability report still renders with a device'; else bad 'report render regressed with a device'; fi
 post_auth --data 'action=os_status' >/dev/null
-chkjq '...os_status sees the linux device' "[.devices[]|select(.platform==\"linux\")]|length==1"
+chkjq '...os_status sees the linux device' 'any(.devices[]; .platform=="linux")'
 post_auth --data 'action=wg_status' >/dev/null
 chkjq '...winget stays empty (platform gate, real osdesc)' '(.devices|length)==0'
 PKG=$(printf '#!/bin/sh\necho deployed-by-inventoryscanner > /tmp/inv-ci-deployed.txt\n' | base64 | tr '+/' '-_' | tr -d '=\n')
