@@ -4,16 +4,21 @@
 # meshcentral/meshcentral Docker container (CI administration only - see the workflow that
 # pipes this file in). It touches no plugin code and publishes nothing.
 #
-# The server runs with ARGS=--nousers: every loopback request gets a site-admin session of
-# the default domain (the dummy user is exactly the account class the plugin's
-# isAuthorizedAdmin gate expects). curl, jq and bash ship with the MeshCentral image.
+# The server runs a REAL admin account: the workflow provisions 'ciadmin' with MeshCentral's own
+# one-shot CLIs (--createaccount + --adminaccount) and starts the server with ARGS="--user ciadmin",
+# which auto-establishes the site-admin session on the first root request - exactly the account
+# class (siteadmin 0xFFFFFFFF, default domain) the plugin's isAuthorizedAdmin gate demands.
+# curl, jq, bash and meshctrl.js ship with the MeshCentral image.
+# One live LINUX mesh agent (the server's own meshagents?id=6 binary, driven by the server's own
+# meshsettings?id=... install material) is attached to a 'CI-Group' device group - the agent
+# sections below prove the collector, the inventory CSV/reports and the whole software-deploy
+# pipeline (wget + agentdownload cookie + SHA-256 + runcommands) against a genuine agent.
 #
 # env input:  PLUGIN_VER - the version from the plugin's config.json (must show in the panel)
 #
 # Deliberately NEVER called here: update_nvd (would start downloading hundreds of MB of NVD
-# feeds - CI seeds a 0-CVE feed file instead), wg_run and os_run (they would open command
-# sessions against agents that do not exist in this job). Those engines are covered by the
-# mocked behavioral suite tools/test-plugin.js, which the same workflow runs natively.
+# feeds - CI seeds a 0-CVE feed file instead), wg_run / os_run (Windows/OS batches against the
+# one agent make no sense; the winget engine is covered by the mocked suite tools/test-plugin.js).
 
 set -u
 BASE=https://127.0.0.1
@@ -141,7 +146,7 @@ chkjq '...no windows devices, nothing queued' '(.devices|type=="array") and ((.d
 chk 'wg_programs'                                     200 "$(post_auth --data 'action=wg_programs')"
 chkjq '...no package results yet' '(.packages|type=="array") and ((.packages|length)==0)'
 chk 'os_status'                                       200 "$(post_auth --data 'action=os_status')"
-chkjq '...full surface, no devices' '(.devices|type=="array") and (.current|type=="object") and ((.devices|length)==0)'
+chkjq '...full surface' '(.devices|type=="array") and (.current|type=="object")'
 
 echo
 echo "== software deploy engine (library + tasks, device-less) =="
@@ -152,7 +157,7 @@ chkjq '...answers the counts' 'has("added") and has("removed") and (.files|type=
 chk 'sw_serverfiles'                                  200 "$(post_auth --data 'action=sw_serverfiles')"
 chkjq '...folders listed' '(.folders|type=="array")'
 chk 'sw_devices'                                      200 "$(post_auth --data 'action=sw_devices')"
-chkjq '...no devices yet' '(.devices|type=="array") and ((.devices|length)==0)'
+chkjq '...device list is an array' '(.devices|type=="array")'
 chk 'sw_status'                                       200 "$(post_auth --data 'action=sw_status')"
 chkjq '...no tasks' '(.tasks|type=="array") and ((.tasks|length)==0) and has("queued")'
 chk 'sw_create_task validates the file id'            200 "$(post_auth --data 'action=sw_create_task' --data 'source=library' --data 'fileId=zzzz' --data 'nodeIds=node//x')"
@@ -177,7 +182,57 @@ chkjq '...with an error' 'has("error")'
 chk 'get_nvdlog'                                      200 "$(post_auth --data 'action=get_nvdlog')"
 chkjq '...answers' 'has("lines")'
 chk 'get_locations'                                   200 "$(post_auth --data 'action=get_locations')"
-chkjq '...all locations listed' '(.locations|type=="array") and ((.locations|length)==0)'
+chkjq '...the CI device group is listed' '[.locations[]|select(.name=="CI-Group")]|length==1'
+GROUPID=$(jq -r '[.locations[]|select(.name=="CI-Group")][0].id // empty' "$BODY")
+if [ -n "$GROUPID" ]; then ok "group id captured ($GROUPID)"; else bad 'group id missing'; fi
+
+echo
+echo "== live linux agent: online, collected, deployed =="
+AGENTID=''
+for _i in $(seq 1 90); do
+    post_auth --data 'action=sw_devices' >/dev/null
+    AGENTID=$(jq -r '[.devices[]|select(.online==true)][0].id // empty' "$BODY")
+    [ -n "$AGENTID" ] && break
+    sleep 2
+done
+if [ -n "$AGENTID" ]; then ok "the agent shows online in sw_devices ($AGENTID)"; else bad 'no online agent within 3 minutes'; fi
+post_auth --data 'action=sw_devices' >/dev/null
+chkjq '...and it is a LINUX device' "[.devices[]|select(.id==\"$AGENTID\")][0].platform==\"linux\""
+SWF=''
+for _i in $(seq 1 60); do
+    SWF=$(ls "$DATA"/plugins/inventoryscanner/data/*/software.json 2>/dev/null | head -n1)
+    [ -n "$SWF" ] && break
+    sleep 2
+done
+if [ -n "$SWF" ] && jq -e 'type=="array" and (length>0) and (.[0]|has("name"))' "$SWF" >/dev/null 2>&1; then ok 'the plugin collected a real software list over the agent channel'; else bad 'no collected software.json from the agent'; fi
+chk 'software CSV export'                             200 "$(get_auth '&action=export&type=software')"
+if grep -qw mag "$BODY"; then ok 'the CSV contains the agent host'; else bad 'agent host missing from CSV'; fi
+[ "$(wc -c < "$BODY")" -gt 400 ] && ok 'the CSV carries collected rows' || bad 'CSV still empty after collection'
+chk 'scan the real location'                          200 "$(get_auth "&action=scan&mesh=$GROUPID")"
+chkjq '...lists the real device group' "[.meshes[]|select(.id==\"$GROUPID\")]|length==1"
+get_auth '&action=report' >/dev/null
+if grep -qw mag "$BODY"; then ok 'the vulnerability report contains the agent'; else bad 'agent missing from the report'; fi
+post_auth --data 'action=os_status' >/dev/null
+chkjq '...os_status sees the linux device' "[.devices[]|select(.platform==\"linux\")]|length==1"
+post_auth --data 'action=wg_status' >/dev/null
+chkjq '...winget stays empty (platform gate, real osdesc)' '(.devices|length)==0'
+PKG=$(printf '#!/bin/sh\necho deployed-by-inventoryscanner > /tmp/inv-ci-deployed.txt\n' | base64 | tr '+/' '-_' | tr -d '=\n')
+chk 'sw_upload commits a .sh installer'               200 "$(post_auth --data 'action=sw_upload' --data 'uploadId=0a0b0c0d0e0f' --data 'name=inv-ci.sh' --data 'index=0' --data-urlencode "data=$PKG" --data 'last=1')"
+chkjq '...done + library entry' '.done==true and (.file.id|type=="string") and .file.ext=="sh"'
+FILEID=$(jq -r .file.id "$BODY")
+chk 'sw_create_task for the agent'                    200 "$(post_auth --data 'action=sw_create_task' --data 'source=library' --data "fileId=$FILEID" --data "nodeIds=$AGENTID")"
+chkjq '...task created, one device' 'has("taskId") and (.devices==1)'
+TID=$(jq -r .taskId "$BODY")
+STATE='pending'
+for _i in $(seq 1 90); do
+    post_auth --data 'action=sw_status' >/dev/null
+    STATE=$(jq -r "[.tasks[]|select(.id==\"$TID\")][0].devices[0].state // \"lost\"" "$BODY")
+    case "$STATE" in ok|failed|error|no-file|timeout|unsupported|cancelled) break ;; esac
+    sleep 2
+done
+if [ "$STATE" = 'ok' ]; then ok "the agent ran the deployed package (state ok)"; else bad "deploy ended with state '$STATE'"; fi
+post_auth --data 'action=sw_status' >/dev/null
+chkjq '...reported exit code 0' "[.tasks[]|select(.id==\"$TID\")][0].devices[0].exit==0"
 
 echo
 echo '=================================================='

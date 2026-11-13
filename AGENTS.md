@@ -809,10 +809,18 @@ npm test           # = tools/check.js && tools/test-plugin.js && tools/test-view
 CI (`.github/workflows/meshcentral-integration.yml`, pure administration - it never touches plugin code
 or releases): `npm test` on every push/PR (node 18 + 24), plus a live-container run: the current
 `meshcentral/meshcentral` Docker image with the plugin installed flat under `<datapath>/plugins/inventoryscanner`
-(`plugins.list` loader, `--nousers` admin session, a 0-CVE NVD feed file so startup never downloads gigabytes) and
-**every pluginadmin.ashx route driven by curl** via `.github/integration/meshcentral-server-test.sh`. The daily
-schedule re-runs the container test only when Ylianst/MeshCentral published a release that is not yet marked
-verified (cache key = release tag); `workflow_dispatch` runs it on demand, optionally against the `master` image.
+(`plugins.list` loader, a 0-CVE NVD feed file so startup never downloads gigabytes) driven by
+`.github/integration/meshcentral-server-test.sh`, which calls **every pluginadmin.ashx route** AND a **live
+linux agent**: a Debian-variant container downloads the agent binary (`/meshagents?id=6`) and its install
+material (`/meshsettings?id=`, both without login, exactly like the real installers) from the server, so the
+collector round trip, the CSV/report views over a genuinely collected software list and one end-to-end .sh
+deploy (sw_upload -> task -> agent wget + SHA-256 check + runcommands -> state ok, exit code 0, marker file
+verified inside the agent container) are proven, not mocked. Auth model of the CI server: `ciadmin` created by
+MeshCentral's own `--createaccount`/`--adminaccount` one-shot CLIs, session auto-established via `--user ciadmin`
+(a dotted cert name + `agentaliasdns` are required, otherwise MeshCentral silently drops to LAN mode and agents
+get MeshServer=local). The daily schedule re-runs the container test only when Ylianst/MeshCentral published a
+release that is not yet marked verified (cache key = release tag); `workflow_dispatch` runs it on demand,
+optionally against the `master` image.
 
 Data dumps from support sessions (CSV exports, browser output TXTs) live OUTSIDE the repo (they sit in the
 MeshCentral install folder) and root `/*.txt` + `/*.csv` are gitignored as a guard - never copy them in.

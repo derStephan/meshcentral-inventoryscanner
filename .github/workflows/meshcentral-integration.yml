@@ -1,19 +1,22 @@
 # CI administration only: this workflow never changes plugin code and never publishes a
 # release. It verifies the plugin against the CURRENT MeshCentral server, in the same shape
-# a production install has on disk (flat layout under <datapath>/plugins/inventoryscanner).
+# a production install has on disk (flat layout under <datapath>/plugins/inventoryscanner),
+# with ONE REAL LINUX MESH AGENT attached so the agent-facing paths (inventory collector,
+# reports over collected data, software deploy via wget + SHA-256 + runcommands) run for real.
 #
 # Runs:
 #   - every change to the repository (push to the default branch, and every pull request):
-#       the mocked behavioral suite (npm test) plus the live-container route test, always.
+#       the mocked behavioral suite (npm test) plus the live-container test, always.
 #   - once per day (schedule): only when Ylianst/MeshCentral published a release that has not
 #       been verified against this code yet (a cache marker keyed by the release tag gates it).
 #   - by hand (workflow_dispatch): always, with an optional image tag (latest = current
 #       release, master = current nightly build).
 #
-# Facts this workflow relies on were verified against the MeshCentral sources
-# (pluginHandler.js: settings.plugins.list loads <datapath>/plugins/<name> without a DB
-# entry; meshcentral.js --nousers: single-admin mode whose session is loopback-bound - so the
-# functional test runs INSIDE the container via docker exec; webserver.js pluginadmin.ashx).
+# Facts this workflow relies on were verified against the MeshCentral sources and a live
+# end-to-end rehearsal (meshcentral.js: --createaccount/--adminaccount one-shot CLIs and the
+# --user auto-login session; webserver.js: pluginadmin.ashx, /meshagents?id=6 + /meshsettings
+# served agent-side without a session, agentaliasdns for the agent connect URL - a dotted
+# cert name is REQUIRED or the server silently degrades to LAN mode / MeshServer=local).
 
 name: MeshCentral integration
 
@@ -61,11 +64,13 @@ jobs:
       - run: npm test
 
   integration:
-    name: Live MeshCentral container (${{ github.event_name == 'workflow_dispatch' && inputs.mc_image || 'latest' }})
+    name: Live MeshCentral + linux agent (${{ github.event_name == 'workflow_dispatch' && inputs.mc_image || 'latest' }})
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     env:
       MC_IMAGE: ${{ github.event_name == 'workflow_dispatch' && inputs.mc_image || 'latest' }}
+      # throwaway credentials for the disposable CI server - never a real secret
+      CI_PW: CiTest-4251
     steps:
       - uses: actions/checkout@v4
 
@@ -108,11 +113,11 @@ jobs:
           cat > mc-data/config.json <<'EOF'
           {
             "settings": {
-              "cert": "localhost",
+              "cert": "mc.invalid",
               "port": 443,
               "redirPort": 0,
-              "AgentPong": 300,
               "SelfUpdate": false,
+              "agentaliasdns": "mc",
               "plugins": { "enabled": true, "list": ["inventoryscanner"] }
             },
             "domains": {
@@ -132,13 +137,26 @@ jobs:
           printf '{"version":"2.0","vulnerabilities":[]}' > "mc-data/nvd/nvdcve-2.0-$(date -d '+3 days' +%Y).json"
           echo "plugin version under test: $(jq -r .version mc-data/plugins/inventoryscanner/config.json)"
 
-      - name: Start the MeshCentral container
+      - name: Provision the admin account (MeshCentral one-shot CLIs, server stopped)
         if: steps.decide.outputs.run == 'true'
         run: |
           set -e
           docker pull --quiet "meshcentral/meshcentral:${MC_IMAGE}"
-          docker run -d --name mc \
-            -e ARGS=--nousers \
+          docker network create mcnet
+          for args in "--createaccount ciadmin --pass $CI_PW" "--adminaccount ciadmin"; do
+            docker run --rm --entrypoint node \
+              -v "$PWD/mc-data:/opt/meshcentral/meshcentral-data" \
+              "meshcentral/meshcentral:${MC_IMAGE}" \
+              /opt/meshcentral/meshcentral/meshcentral.js \
+              --configfile /opt/meshcentral/meshcentral-data/config.json $args
+          done
+
+      - name: Start the MeshCentral server container
+        if: steps.decide.outputs.run == 'true'
+        run: |
+          set -e
+          docker run -d --name mc --network mcnet \
+            -e "ARGS=--user ciadmin" \
             -v "$PWD/mc-data:/opt/meshcentral/meshcentral-data" \
             "meshcentral/meshcentral:${MC_IMAGE}"
           echo 'waiting for the web server (first start generates certificates)...'
@@ -163,7 +181,24 @@ jobs:
             echo "- server version: \`$(docker exec mc jq -r .version /opt/meshcentral/meshcentral/package.json)\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Functional test of every plugin route
+      - name: Attach one live linux agent (server's own binaries + install material)
+        if: steps.decide.outputs.run == 'true'
+        run: |
+          set -e
+          # device group via meshctrl over a real websocket login
+          MCG="wss://127.0.0.1:443 --loginuser ciadmin --loginpass $CI_PW"
+          GRPCREATE=$(docker exec mc node /opt/meshcentral/meshcentral/meshctrl.js $MCG AddDeviceGroup --name CI-Group 2>&1)
+          echo "meshctrl: $GRPCREATE"
+          GROUPID=$(printf '%s' "$GRPCREATE" | sed -n 's#^ok mesh//##p' | tr -d '\r')
+          if [ -z "$GROUPID" ]; then echo '::error::could not create the CI device group'; exit 1; fi
+          # the agent container fetches its connect material from the server exactly like a real
+          # install script would (meshagents?id=6 = linux x86-64 binary, meshsettings?id= = .msh)
+          docker run -d --name mag --network mcnet --entrypoint /bin/sh \
+            "meshcentral/meshcentral:${MC_IMAGE}-debian" \
+            -c "cd /root && curl -ksLo meshagent https://mc/meshagents?id=6 && curl -ksLo meshagent.msh 'https://mc/meshsettings?id=$GROUPID' && chmod +x meshagent && ./meshagent run; sleep 3500"
+          echo "agent container started for group $GROUPID"
+
+      - name: Functional test of every plugin route + the live agent
         if: steps.decide.outputs.run == 'true'
         run: |
           set -e
@@ -171,10 +206,17 @@ jobs:
           docker exec -i -e PLUGIN_VER="$PLUGIN_VER" mc bash -s \
             < .github/integration/meshcentral-server-test.sh
 
+      - name: Verify the deployed package really executed on the agent
+        if: steps.decide.outputs.run == 'true'
+        run: |
+          docker exec mag test -f /tmp/inv-ci-deployed.txt
+          echo "the agent ran the SHA-256 verified deploy artifact end to end" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Collect server and plugin logs
         if: always() && steps.decide.outputs.run == 'true'
         run: |
-          docker logs mc > meshcentral-server.log 2>&1 || true
+          docker logs mc  > meshcentral-server.log 2>&1 || true
+          docker logs mag > meshcentral-agent.log  2>&1 || true
 
       - name: Upload logs
         if: always() && steps.decide.outputs.run == 'true'
@@ -183,6 +225,7 @@ jobs:
           name: meshcentral-integration-logs-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             meshcentral-server.log
+            meshcentral-agent.log
             mc-data/plugins/inventoryscanner/*.log
             mc-data/plugins/inventoryscanner/*.json
             mc-data/nvd/*.log
