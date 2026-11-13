@@ -21,6 +21,7 @@ P="$BASE/pluginadmin.ashx?pin=inventoryscanner"
 DATA=/opt/meshcentral/meshcentral-data
 HDRC='X-InvScanner-Request: 1'
 BODY=/tmp/inv-ci-body
+CKV=''
 PASS=0
 FAILS=0
 FAILED_NAMES=''
@@ -29,10 +30,10 @@ ok()  { PASS=$((PASS+1)); echo "PASS  $1"; }
 bad() { FAILS=$((FAILS+1)); FAILED_NAMES="$FAILED_NAMES
  - $1"; echo "FAIL  $1"; }
 
-get_auth()   { curl -ks --max-time 30 -H "Cookie: xid=$XID" -o "$BODY" -w '%{http_code}' "$P$1"; }
+get_auth()   { curl -ks --max-time 30 -H "Cookie: $CKV" -o "$BODY" -w '%{http_code}' "$P$1"; }
 get_anon()   { curl -ks --max-time 30 -o "$BODY" -w '%{http_code}' "$P$1"; }
-post_auth()  { curl -ks --max-time 30 -H "Cookie: xid=$XID" -H "$HDRC" -o "$BODY" -w '%{http_code}' -X POST "$P" "$@"; }
-post_nohdr() { curl -ks --max-time 30 -H "Cookie: xid=$XID" -o "$BODY" -w '%{http_code}' -X POST "$P" "$@"; }
+post_auth()  { curl -ks --max-time 30 -H "Cookie: $CKV" -H "$HDRC" -o "$BODY" -w '%{http_code}' -X POST "$P" "$@"; }
+post_nohdr() { curl -ks --max-time 30 -H "Cookie: $CKV" -o "$BODY" -w '%{http_code}' -X POST "$P" "$@"; }
 post_anon()  { curl -ks --max-time 30 -H "$HDRC" -o "$BODY" -w '%{http_code}' -X POST "$P" "$@"; }
 
 chk()    { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (got HTTP $3, want $2)"; fi; }
@@ -41,8 +42,11 @@ chkfile(){ if [ -e "$2" ]; then ok "$1"; else bad "$1 (missing: $2)"; fi; }
 
 echo "== session and auth gates =="
 HDRS=$(curl -ks -D - -o /dev/null "$BASE/")
-XID=$(printf '%s' "$HDRS" | sed -n 's/.*xid=\([^;]*\).*/\1/p' | head -n1 | tr -d '\r')
+XID=$(printf '%s' "$HDRS"  | sed -n 's/.*[Cc]ookie: xid=\([^;]*\).*/\1/p'      | head -n1 | tr -d '\r')
+XSIG=$(printf '%s' "$HDRS" | sed -n 's/.*[Cc]ookie: xid\.sig=\([^;]*\).*/\1/p' | head -n1 | tr -d '\r')
 if [ -n "$XID" ]; then ok 'GET / establishes an admin session cookie'; else bad 'no xid session cookie from GET /'; printf '%s\n' "$HDRS" | head -n 20; fi
+CKV="xid=$XID"
+if [ -n "$XSIG" ]; then CKV="$CKV; xid.sig=$XSIG"; fi
 
 chk 'panel GET without a session is refused'           401 "$(get_anon '&action=show')"
 chk 'panel POST without a session is refused'          401 "$(post_anon --data 'action=get_locations')"
@@ -56,8 +60,9 @@ chk 'GET with an unknown action 404s'                  404 "$(get_auth '&action=
 echo
 echo "== GET routes: scan, reports, CSV export =="
 chk 'scan with no mesh parameter'                      200 "$(get_auth '&action=scan')"
-chkjq 'scan response shape' '(.cves|type=="array") and (.meshes|type=="array")'
+chkjq '...answers the contract error' 'has("error")'
 chk 'scan with a location that does not exist'         200 "$(get_auth '&action=scan&mesh=mesh//CI-Location')"
+chkjq 'scan response shape' '(.cves|type=="array") and (.meshes|type=="array") and has("flaggedCount") and has("totalCves")'
 chk 'vulnerability report renders'                     200 "$(get_auth '&action=report')"
 if grep -qi 'Vulnerability Report' "$BODY"; then ok 'report view content'; else bad 'report view content'; fi
 chk 'device report renders'                            200 "$(get_auth '&action=deviceReport')"
