@@ -595,8 +595,11 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   `IsInstalled=0 and IsHidden=0 and Type='Software'` -> download -> install. Mode update skips the "Upgrades"
   classification (`WU_UPGRADES_CATEGORY`, language independent); mode upgrade sets `TargetReleaseVersion=1`,
   `ProductVersion='Windows 11'`, `TargetReleaseVersionInfo=<rel>` under `HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate`
-  and restores/removes them afterwards. The target is validated `^\d{2}H[12]$` (throws otherwise). Shared transcript
-  helper `psTranscriptLines` (same protected folders as winget, file `invscanner-osupdate.log`).
+   and restores/removes them afterwards. The target is validated `^\d{2}H[12]$` (throws otherwise). The running
+   `wuauserv` caches the policy, so the upgrade mode restarts the service (`Stop-Service`/`Start-Service`, errors
+   swallowed) right before the search and again after the restore - without that the search answers
+   "ok: 0 found" until the next scheduled scan (issue #1, fixed in v4.2.2). Shared transcript
+   helper `psTranscriptLines` (same protected folders as winget, file `invscanner-osupdate.log`).
 - Linux script (`osBuildLinuxScript`, transported by `osLinuxTransport` = `sh -c "$(echo b64 | base64 -d | gzip -dc)"
   < /dev/null`): every package manager call reads /dev/null and logs to `/var/log/invscanner-osupdate.log` (symlink
   refused). States `ok | failed | unsupported | reboot-needed`. Upgrade = Ubuntu only: dist-upgrade, then
@@ -829,7 +832,7 @@ MeshCentral install folder) and root `/*.txt` + `/*.csv` are gitignored as a gua
   inline-script syntax/`{{`-hazard check, JSON validity of config files, and view-name↔render-name consistency over
   the WHOLE JS tree (the `res.render()` calls live in `lib/routes.js`/`lib/reports.js` since v3.5.1).
   Must run anywhere (no dependencies).
-- `tools/test-plugin.js`: 418 behavioral assertions (71 steps) against the real module (mocked MeshCentral DB/webserver):
+- `tools/test-plugin.js`: 419 behavioral assertions (71 steps) against the real module (mocked MeshCentral DB/webserver):
   the module wiring itself (every lib file attaches, a fresh instance exposes the same function surface, no
   module-level locals in `lib/`), locations grouping & counting, manual-rating severity override, FP exclusion, host-name preference, coverage
   numbers, multi-mesh scan/`mixed` logic, all POST handlers incl. validation/rejections, routes, admin gating
@@ -955,11 +958,16 @@ empty (custom + auto matcher still work, the UI says so). No POST action, route 
 `get_cpe_table` `source` values are now 'remote'/'custom' (plus `cpeTable.source` 'remote'|'none'). Test suite:
 418 assertions in 71 steps - the CPE steps now pin the single-source invariant and the matching tests
 load the bundled table exactly like a real `server_startup` does.
-v4.2.1 (this release): table layout fixes, no behaviour change. winget Packages view: Package+Id merged (id under
+v4.2.1: table layout fixes, no behaviour change. winget Packages view: Package+Id merged (id under
 the name), the four count columns merged into one `N ready, N ok, N failed, N skipped` cell, Actions stacked
 vertically - the table finally fits the screen. winget Devices view: Device/Group/Online/Excluded/Actions get
 fixed compact widths so `Last run` takes the remaining width (that is where the interesting text is). Deploy:
 the location/device picker wraps (flex) instead of scrolling sideways, and the selection summary (and the create
 confirm) count devices inside an already-ticked location as part of that location ("1 whole location(s) + 2
 additional device(s)") - the old "1 device(s) + 1 whole location(s)" double count is gone; the POST body still
-sends every ticked id (the server task store keys by node id, so duplicates were and are harmless).
+ sends every ticked id (the server task store keys by node id, so duplicates were and are harmless).
+v4.2.2 (this release): fix for issue #1 - the OS release upgrade ended in "ok: 0 found" because the running
+wuauserv cached the TargetReleaseVersion policy and only re-reads it on a service restart; the upgrade script
+now restarts wuauserv right before the search and again after the policy restore (update mode never touches it).
+Security: the CodeQL `js/bad-tag-filter` alert on tools/check.js is fixed - the inline-<script> extraction regex
+is now case-insensitive and tolerates tag attributes (`/<script\b[^>]*>([\s\S]*?)<\/script>/i`).

@@ -50,7 +50,9 @@ Please report security vulnerabilities by opening an issue.
   to one node, one file and 5 minutes, and it is minted per dispatch.
 - **CSV formula injection** (CWE-1236): values starting with `= + - @ tab CR` are prefixed with `'`.
 - **HTML:** the views use only escaped Handlebars output (`{{...}}`, never `{{{...}}}`); the panel script
-  escapes every dynamic value with `esc()` before inserting HTML.
+  escapes every dynamic value with `esc()` before inserting HTML. The panel's own inline `<script>` is a static
+  file (no interpolation), and the verification tool that extracts it (`tools/check.js`) matches the tag
+  case-insensitively and with attributes, so no variant of the tag can hide a block from the syntax check.
 - **Ids:** CVE ids `CVE-\d{4}-\d{4,}` or `WINDOWS-UPDATES`; mesh ids `^mesh/[^:]+$` (prevents key poisoning in
   `assessments.json`) on every write and on the scan query; node ids `^node/[^:]{1,100}$` for the updater.
 
@@ -122,6 +124,7 @@ Please report security vulnerabilities by opening an issue.
 |------|---------|-------|-------|--------|
 | 2026-11-06 | AI (opencode) | NVIDIA Nemotron 3 550B A55B | Formal & functional verification (v2.x) | 1 bug fixed, dead code removed |
 | 2026-11-11 | AI (opencode) | Claude Opus 5.5 | Independent full audit of v3.0.0: server, agent scripts, update/uninstall, OWASP Top 10, texts, docs, tests | 17 findings, all fixed in v3.0.1 |
+| 2026-11-13 | GitHub Code Scanning (CodeQL, javascript-typescript) | - | Whole JS tree of v4.2.1 | 1 alert (`js/bad-tag-filter`, tools/check.js) - fixed in v4.2.2 |
 
 See [AUDIT.md](AUDIT.md) for the detailed reports in chronological order.
 

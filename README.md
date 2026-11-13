@@ -154,8 +154,9 @@ plus *OS updates* / *OS Upgrade* per device row:
   "Current" comes exclusively from the endoflife.date data (newest Windows 11 release, newest Ubuntu LTS) - there is
   no built-in fallback version. If that data is missing, switched off or older than 30 days, the release state is
   shown as **unknown** together with the reason, and nothing is upgraded. Windows 10/11: Windows Update is pointed at
-  the current release with the documented `TargetReleaseVersion` policy and installs it; the previous policy values
-  are restored afterwards. Ubuntu: `apt-get dist-upgrade`, then `do-release-upgrade` (one release step per run; if a
+  the current release with the documented `TargetReleaseVersion` policy and installs it; the policy is applied
+  immediately by restarting the Windows Update service (before the search and again after the restore), and the
+  previous policy values are restored afterwards. Ubuntu: `apt-get dist-upgrade`, then `do-release-upgrade` (one release step per run; if a
   reboot is pending first, the device reports *reboot-needed* - reboot, then run it again). Other distributions and
   Windows Server are shown in the table but not upgraded automatically.
 

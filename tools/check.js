@@ -74,7 +74,7 @@ for (const f of libFiles) {
 const assPath = path.join(viewsDir, 'assessment.handlebars');
 if (fs.existsSync(assPath)) {
     const src = fs.readFileSync(assPath, 'utf8');
-    const m = src.match(/<script>([\s\S]*?)<\/script>/);
+    const m = src.match(/<script\b[^>]*>([\s\S]*?)<\/script>/i);
     report('assessment.handlebars has an inline <script>', !!m);
     if (m) {
         const js = m[1];

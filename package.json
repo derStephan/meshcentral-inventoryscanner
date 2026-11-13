@@ -1,6 +1,6 @@
 {
   "name": "meshcentral-inventoryscanner",
-  "version": "4.2.1",
+  "version": "4.2.2",
   "description": "MeshCentral plugin: inventory CSV exports, offline NVD CVE scanning, group-wide vulnerability assessment, printable audit reports and scheduled scans with notifications.",
   "main": "inventoryscanner.js",
   "scripts": {

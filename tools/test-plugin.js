@@ -1565,6 +1565,10 @@ steps.push(function (next) {
     check('os win script: upgrade sets and restores TargetReleaseVersion, never reboots',
         wsG.indexOf("$invTarget = '25H2'") >= 0 && wsG.indexOf("'TargetReleaseVersionInfo' -Value $invTarget") >= 0 && wsG.indexOf('Remove-ItemProperty') >= 0 &&
         !/Restart-Computer|shutdown/i.test(wsG));
+    check('os win script (issue #1): upgrade makes the running wuauserv re-read the policy (service restart before the search AND after the restore), update mode never touches the service',
+        (wsG.match(/Start-Service -Name wuauserv/g) || []).length === 2 && wsG.indexOf('Stop-Service -Name wuauserv') < wsG.indexOf('Microsoft.Update.Session') &&
+        wsG.indexOf('Remove-ItemProperty') < wsG.lastIndexOf('Start-Service -Name wuauserv') && wsG.lastIndexOf('Start-Service -Name wuauserv') < wsG.indexOf('ConvertTo-Json') &&
+        !/wuauserv|Restart-Service/i.test(wsU));
     check('os win script: an unvalidated target refuses to build', (function () { try { oO.osBuildWindowsScript('upgrade', "25H2';x"); return false; } catch (e) { return true; } })());
     var openers = wsG.split(String.fromCharCode(10)).filter(function (l) { return /[({]\s*$/.test(l); });
     check('os win script: one statement per line', openers.length === 0, openers.slice(0, 2));
