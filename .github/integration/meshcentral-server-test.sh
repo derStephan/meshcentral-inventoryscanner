@@ -198,6 +198,10 @@ done
 if [ -n "$AGENTID" ]; then ok "the agent shows online in sw_devices ($AGENTID)"; else bad 'no online agent within 3 minutes'; fi
 post_auth --data 'action=sw_devices' >/dev/null
 chkjq '...and it is a LINUX device' "[.devices[]|select(.id==\"$AGENTID\")][0].platform==\"linux\""
+# deterministically re-arm the collector: save_settings runs rescheduleAll(), whose first
+# inventory pass fires 20 s later against all ONLINE agents - the connect-hook stagger can be
+# up to 5 minutes and this test cannot wait on luck (collectIntervalMinutes=1 keeps retrying)
+chk 'collector re-armed via save_settings'            200 "$(post_auth --data 'action=save_settings' --data 'scanIntervalHours=0' --data 'updateHours=8760' --data 'anyCveMaxAgeYears=5' --data 'collectIntervalMinutes=1' --data 'notifyThreshold=HIGH' --data 'notifyOnScan=true' --data 'notifyUnratedRepeat=false' --data 'autoProductMatch=true' --data 'cpeTableEnabled=true' --data 'distroManaged=true' --data 'osLifecycleEnabled=true' --data 'collectOnAgentConnect=true' --data 'scanMeshes=' --data 'notifyMeshIds=' --data 'notifySeverities=' --data 'cpeTableUrl=' --data 'osLifecycleUrl=')"
 SWF=''
 for _i in $(seq 1 210); do
     SWF=$(ls "$DATA"/plugins/inventoryscanner/data/*/software.json 2>/dev/null | head -n1)

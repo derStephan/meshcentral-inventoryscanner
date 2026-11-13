@@ -118,6 +118,7 @@ jobs:
               "redirPort": 0,
               "SelfUpdate": false,
               "agentaliasdns": "mc",
+              "debug": "plugin:inventory_scanner",
               "plugins": { "enabled": true, "list": ["inventoryscanner"] }
             },
             "domains": {
