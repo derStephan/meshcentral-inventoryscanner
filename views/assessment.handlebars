@@ -94,6 +94,7 @@
         <a href="#" class="navtab" data-tab="settings">Settings</a>
         <a href="#" class="navtab" data-tab="cpe">CPE Mapping</a>
         <a href="#" class="navtab" data-tab="updates">Updates</a>
+        <a href="#" class="navtab" data-tab="deploy">Deploy</a>
         <span class="navsep"></span>
         <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=report" target="_blank" rel="noopener">Vulnerability Report</a>
         <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=deviceReport" target="_blank" rel="noopener">Device Report</a>
@@ -420,6 +421,69 @@
             <div><button id="refreshOsLogBtn" class="small">Refresh log</button> <span id="osLogInfo" class="hint"></span></div>
             <pre id="osLog" style="max-height:260px;overflow:auto;background:#0f1720;color:#cfe3f5;padding:8px;border-radius:6px;font-size:11px;margin-top:6px;white-space:pre-wrap;">(not loaded yet)</pre>
         </div>
+
+        <div class="tab-content" id="tab-deploy">
+            <div class="info">
+                Install an <strong>MSI / EXE / DEB / RPM / shell installer</strong> on selected devices. Upload a package from this PC
+                (it lands in the plugin's own library on the server), pick a file from <strong>MeshCentral's Server Files</strong>
+                (the per-group folders of the Files tab), or place a file in <code>&lt;datapath&gt;/plugins/inventoryscanner/software/files/</code>
+                and press <em>Rescan</em>. Choose devices one by one <strong>or whole locations</strong>, optionally add command-line
+                parameters. The server copies the package into its temp area and every device fetches it over the agent's own
+                authenticated download channel - the <strong>SHA-256 is verified on the device before anything runs</strong>. Offline devices
+                are <strong>queued and install automatically as soon as they reconnect</strong>. Installs run as SYSTEM (Windows) / root
+                (Linux), silently, and <strong>no device is ever rebooted</strong> (exit code 3010/1641 shows as "ok - reboot pending").
+                Every answer (state + exit code) appears per device, in the device's event list and in the deploy log below.
+            </div>
+
+            <h3>Installer library</h3>
+            <div class="controls">
+                <input type="file" id="swFileInput">
+                <button id="swUploadBtn" class="green">Upload to library</button>
+                <span id="swUploadInfo" class="hint"></span>
+                <button id="swRescanBtn" class="small">Rescan server folder</button>
+            </div>
+            <div class="table-container"><table>
+                <thead><tr><th style="width:280px;">Name</th><th style="width:60px;">Type</th><th style="width:100px;">Size</th><th style="width:140px;">SHA-256</th><th style="width:150px;">Added</th><th>By</th><th style="width:90px;"></th></tr></thead>
+                <tbody id="swLibBody"><tr><td colspan="7" style="color:#888">Loading...</td></tr></tbody>
+            </table></div>
+
+            <h3>New deployment</h3>
+            <div class="controls">
+                <label>Source:
+                    <select id="swSource">
+                        <option value="library">Plugin library (uploaded)</option>
+                        <option value="serverfile">MeshCentral Server Files (Files tab)</option>
+                    </select>
+                </label>
+                <select id="swFileSel" style="min-width:260px;"></select>
+                <select id="swSfFolder" style="min-width:200px;display:none;"></select>
+                <select id="swSfFile" style="min-width:260px;display:none;"></select>
+            </div>
+            <div class="controls">
+                <label>Command-line parameters: <input id="swArgs" type="text" style="min-width:420px" placeholder="optional, e.g. /qn REBOOT=ReallySuppress  (appended to msiexec; passed to the program for other types)"></label>
+            </div>
+            <div class="hint" style="margin-bottom:6px;">Tick <b>whole locations</b> or single devices (both combine). Windows and Linux devices are supported; phones and devices without a reported OS are listed as not supported and never touched.</div>
+            <div class="table-container" style="max-height:300px;overflow:auto;"><table>
+                <thead><tr><th style="width:320px;">Location</th><th>Devices</th></tr></thead>
+                <tbody id="swTargetBody"><tr><td colspan="2" style="color:#888">Loading...</td></tr></tbody>
+            </table></div>
+            <div class="controls">
+                <button id="swDeployBtn" class="purple">Deploy (now or on next connect)</button>
+                <span id="swSelInfo" class="hint"></span>
+            </div>
+            <div id="swMsg"></div>
+
+            <h3>Tasks</h3>
+            <div><button id="swRefreshBtn" class="small">Refresh</button> <span id="swRunInfo" class="hint"></span></div>
+            <div class="table-container"><table>
+                <thead><tr><th>Package</th><th style="width:70px;">Type</th><th>Arguments</th><th style="width:330px;">Result</th><th style="width:170px;">Actions</th></tr></thead>
+                <tbody id="swTaskBody"><tr><td colspan="5" style="color:#888">Loading...</td></tr></tbody>
+            </table></div>
+
+            <h3>Deploy log</h3>
+            <div><button id="refreshSwLogBtn" class="small">Refresh log</button> <span id="swLogInfo" class="hint"></span></div>
+            <pre id="swLog" style="max-height:260px;overflow:auto;background:#0f1720;color:#cfe3f5;padding:8px;border-radius:6px;font-size:11px;margin-top:6px;white-space:pre-wrap;">(not loaded yet)</pre>
+        </div>
     </div>
 
     <div id="invFloat" style="display:none;position:fixed;top:18px;left:50%;transform:translateX(-50%);color:#fff;padding:10px 22px;border-radius:8px;z-index:9999;font-weight:600;box-shadow:0 4px 14px rgba(0,0,0,.35);transition:opacity .6s;max-width:80%;"></div>
@@ -529,7 +593,7 @@
 
         // ---------- tabs ----------
 
-        var tabTitles = { assessment: 'Vulnerability Assessment', settings: 'Settings', cpe: 'Software → CPE Mapping', updates: 'Software & OS Updates' };
+        var tabTitles = { assessment: 'Vulnerability Assessment', settings: 'Settings', cpe: 'Software → CPE Mapping', updates: 'Software & OS Updates', deploy: 'Deploy Software' };
         var tabs = document.querySelectorAll('.navtab');
         for (var t = 0; t < tabs.length; t++) {
             tabs[t].addEventListener('click', function (e) {
@@ -545,6 +609,7 @@
                 var target = document.getElementById('tab-' + name);
                 if (target) { target.classList.add('active'); }
                 if (name === 'updates') { loadWgTab(); loadOsStatus(); }
+                if (name === 'deploy') { loadSwTab(); }
                 var pt = document.getElementById('pageTitle');
                 if (pt && tabTitles[name]) { pt.textContent = tabTitles[name]; }
             });
@@ -1006,6 +1071,361 @@
             if (act === 'upd' && window.confirm('Run OS updates on this ONE device now? No reboot is triggered.')) { osRun('update', id); }
             if (act === 'upg' && window.confirm('Upgrade the OS release of this ONE device now? This can take hours. No reboot is triggered.')) { osRun('upgrade', id); }
         });
+
+        // ---------- software deploy (v4.0.0) ----------
+
+        var swApp = { files: [], parts: [], limits: null, devices: [], locations: [], sfolders: [], sfloaded: false, tasks: [], open: {} };
+        var swPollTimer = null;
+
+        function swFmtSize(n) {
+            n = Number(n) || 0;
+            if (n >= 1073741824) { return (n / 1073741824).toFixed(2) + ' GB'; }
+            if (n >= 1048576) { return (n / 1048576).toFixed(1) + ' MB'; }
+            if (n >= 1024) { return (n / 1024).toFixed(0) + ' KB'; }
+            return n + ' B';
+        }
+
+        function swDevLabel(id) {
+            var ds = swApp.devices || [];
+            for (var i = 0; i < ds.length; i++) { if (ds[i].id === id) { return ds[i].given || ds[i].host || id; } }
+            return id;
+        }
+
+        function renderSwLibrary() {
+            var html = '';
+            var list = swApp.files || [];
+            for (var i = 0; i < list.length; i++) {
+                var f = list[i];
+                html += '<tr><td>' + esc(f.name) + '</td><td>' + esc(f.ext) + '</td><td>' + swFmtSize(f.size) + '</td>';
+                html += '<td><code>' + esc(String(f.sha256 || '').substring(0, 16)) + '…</code></td>';
+                html += '<td style="font-size:11px">' + esc(fmtLocal(f.time)) + '</td><td>' + esc(f.by || '') + '</td>';
+                html += '<td><button class="small red" data-swact="delfile" data-swfid="' + esc(f.id) + '">Delete</button></td></tr>';
+            }
+            if (html === '') { html = '<tr><td colspan="7" style="color:#888">' + (list.length === 0 ? 'Library is empty - upload a package or use the server folder + Rescan.' : '') + '</td></tr>'; }
+            $('swLibBody').innerHTML = html;
+            renderSwFileSel();
+        }
+
+        function renderSwFileSel() {
+            var sel = $('swFileSel');
+            var cur = sel.value;
+            var html = '';
+            (swApp.files || []).forEach(function (f) { html += '<option value="' + esc(f.id) + '">' + esc(f.name) + ' (' + swFmtSize(f.size) + ')</option>'; });
+            sel.innerHTML = html === '' ? '<option value="">(library is empty)</option>' : html;
+            if (cur) { sel.value = cur; }
+        }
+
+        function swUpdateSourceUi() {
+            var src = $('swSource').value;
+            $('swFileSel').style.display = (src === 'library') ? '' : 'none';
+            $('swSfFolder').style.display = (src === 'serverfile') ? '' : 'none';
+            $('swSfFile').style.display = (src === 'serverfile') ? '' : 'none';
+            if (src === 'serverfile' && !swApp.sfloaded) { loadSwServerFiles(); }
+        }
+
+        function renderSwServerFiles() {
+            var html = '';
+            (swApp.sfolders || []).forEach(function (f, i) { html += '<option value="' + i + '">' + esc(f.name) + '</option>'; });
+            $('swSfFolder').innerHTML = html === '' ? '<option value="">(no server files found)</option>' : html;
+            swRenderSfFiles();
+        }
+
+        function swRenderSfFiles() {
+            var i = parseInt($('swSfFolder').value, 10);
+            var f = (swApp.sfolders || [])[i];
+            var html = '';
+            if (f) { f.files.forEach(function (x) { html += '<option value="' + esc(x.name) + '">' + esc(x.name) + ' (' + swFmtSize(x.size) + ')</option>'; }); }
+            $('swSfFile').innerHTML = html === '' ? '<option value="">(folder empty or unreadable)</option>' : html;
+        }
+
+        function loadSwServerFiles() {
+            post('sw_serverfiles', {}).then(function (d) {
+                if (d.error) { $('swSfFolder').innerHTML = '<option value="">' + esc(d.error) + '</option>'; return; }
+                swApp.sfolders = d.folders || [];
+                swApp.sfloaded = true;
+                renderSwServerFiles();
+            }).catch(function (ex) { $('swSfFolder').innerHTML = '<option value="">load failed</option>'; });
+        }
+
+        function renderSwTargets() {
+            var byMesh = {};
+            (swApp.devices || []).forEach(function (d) { var k = d.meshid || '?'; if (!byMesh[k]) { byMesh[k] = []; } byMesh[k].push(d); } );
+            var html = '';
+            (swApp.locations || []).forEach(function (loc) {
+                var devs = byMesh[loc.id] || [];
+                var cells = devs.map(function (d) {
+                    var off = d.online ? '' : ' <span style="color:#a33">(offline)</span>';
+                    var pt = (d.platform === 'other') ? ' <span style="color:#8a6d3b" title="no Windows/Linux OS reported - never touched">[?]</span>' : '';
+                    return '<label style="font-weight:400;margin-right:10px;white-space:nowrap"><input type="checkbox" class="swDevc" value="' + esc(d.id) + '"' + (d.platform === 'other' ? ' disabled' : '') + '> ' + esc(d.given || d.host) + off + pt + '</label>';
+                }).join('');
+                html += '<tr><td style="vertical-align:top"><label style="font-weight:600;white-space:nowrap"><input type="checkbox" class="swLocc" value="' + esc(loc.id) + '"> ' + esc(loc.name) + '</label><div class="hint">' + devs.length + ' device(s)</div></td><td>' + (cells || '<span class="hint">no devices</span>') + '</td></tr>';
+            });
+            if (html === '') { html = '<tr><td colspan="2" style="color:#888">No device groups found.</td></tr>'; }
+            $('swTargetBody').innerHTML = html;
+            swUpdateSelInfo();
+        }
+
+        function swUpdateSelInfo() {
+            var n = 0, m = 0, c = document.querySelectorAll('#swTargetBody .swDevc'), l = document.querySelectorAll('#swTargetBody .swLocc'), i;
+            for (i = 0; i < c.length; i++) { if (c[i].checked) { n++; } }
+            for (i = 0; i < l.length; i++) { if (l[i].checked) { m++; } }
+            $('swSelInfo').textContent = n + ' device(s) + ' + m + ' whole location(s) selected';
+        }
+
+        function renderSwTasks() {
+            var html = '';
+            var list = swApp.tasks || [];
+            for (var i = 0; i < list.length; i++) {
+                var t = list[i];
+                var c = t.counts || {};
+                var res = '<b>' + (c.ok || 0) + ' ok</b>, <span style="color:' + ((c.failed || 0) > 0 ? '#a33' : '#556') + '">' + (c.failed || 0) + ' failed</span>';
+                if ((c.queued || 0) > 0) { res += ', <span style="color:#8a6d3b">' + c.queued + ' queued (waiting for connect)</span>'; }
+                if ((c.running || 0) > 0) { res += ', <span style="color:#06c">' + c.running + ' running</span>'; }
+                if ((c.other || 0) > 0) { res += ', ' + c.other + ' cancelled/unsupported'; }
+                var open = swApp.open[t.id] === true;
+                var hasDevices = (t.devices || []).length > 0;
+                if (hasDevices) { res += ' <button class="small" data-swact="tgl" data-swtid="' + esc(t.id) + '">' + (open ? 'hide' : 'list') + '</button>'; }
+                if (t.total > (t.devices || []).length) { res += ' <span class="hint">(first ' + (t.devices || []).length + ' of ' + t.total + ')</span>'; }
+                html += '<tr><td>' + esc(t.fileName) + (t.done ? '' : ' <span class="badge badge-mixed">open</span>') + '</td><td>' + esc(t.ext || '') + '</td>';
+                html += '<td style="font-size:11px"><code>' + esc(t.args || '') + '</code></td>';
+                html += '<td style="font-size:11px">' + res + '<div class="hint">' + esc(fmtLocal(t.created)) + ' by ' + esc(t.createdBy || '?') + (t.sourceType === 'serverfile' ? ' (server file)' : '') + '</div></td>';
+                html += '<td style="white-space:nowrap">';
+                html += '<button class="small" data-swact="retry" data-swtid="' + esc(t.id) + '">Retry open</button> ';
+                html += (t.done ? '' : '<button class="small red" data-swact="cancel" data-swtid="' + esc(t.id) + '">Cancel</button>');
+                html += '</td></tr>';
+                if (open && hasDevices) {
+                    html += '<tr><td colspan="5" style="background:#f6f8fb"><table style="margin:0"><thead><tr><th style="width:200px;">Device</th><th style="width:90px;">State</th><th style="width:120px;">Exit</th><th>Note</th><th style="width:140px;">Time</th></tr></thead><tbody>';
+                    (t.devices || []).forEach(function (d) {
+                        var col = '#556';
+                        if (d.state === 'ok') { col = d.reboot ? '#8a6d3b' : '#1d7a3a'; }
+                        else if (['failed', 'error', 'no-file', 'timeout'].indexOf(d.state) >= 0) { col = '#a33'; }
+                        else if (d.state === 'running') { col = '#06c'; }
+                        else if (d.state === 'queued') { col = '#8a6d3b'; }
+                        html += '<tr><td>' + esc(swDevLabel(d.node)) + '</td><td style="color:' + col + ';font-weight:600">' + esc(d.state) + '</td>';
+                        html += '<td>' + (d.exit == null ? '' : (esc(d.exit) + ' / 0x' + esc(wgHexExit(d.exit)))) + '</td>';
+                        html += '<td style="font-size:11px">' + esc(d.note || '') + (d.platform ? ' <span class="hint">(' + esc(d.platform) + ')</span>' : '') + '</td>';
+                        html += '<td style="font-size:11px">' + esc(fmtLocal(d.time)) + '</td></tr>';
+                    });
+                    html += '</tbody></table></td></tr>';
+                }
+            }
+            if (html === '') { html = '<tr><td colspan="5" style="color:#888">No deploy tasks yet.</td></tr>'; }
+            $('swTaskBody').innerHTML = html;
+            var runningNow = false;
+            for (var k = 0; k < list.length; k++) { var cc = list[k].counts || {}; if ((cc.queued || 0) > 0 || (cc.running || 0) > 0) { runningNow = true; } }
+            $('swRunInfo').textContent = runningNow ? ('tasks in progress - ' + (list.filter(function (x) { var y = x.counts || {}; return (y.queued || 0) > 0 || (y.running || 0) > 0; })).length + ' open task(s), refreshing every 10 s') : '';
+            return runningNow;
+        }
+
+        function loadSwFiles() {
+            return post('sw_files', {}).then(function (d) {
+                if (d.error) { showMsg('swMsg', d.error, false); return; }
+                swApp.files = d.files || [];
+                swApp.parts = d.parts || [];
+                swApp.limits = d.limits || null;
+                renderSwLibrary();
+            });
+        }
+
+        function loadSwDevices() {
+            return post('sw_devices', {}).then(function (d) {
+                if (d && d.devices) { swApp.devices = d.devices; renderSwTargets(); }
+            });
+        }
+
+        function loadSwTasks() {
+            return post('sw_status', {}).then(function (d) {
+                if (d && d.tasks) { swApp.tasks = d.tasks; var run = renderSwTasks(); swPollTasks(run); }
+            });
+        }
+
+        function loadSwLog() {
+            post('get_log', { type: 'deploy' }).then(function (data) {
+                if (data.error) { $('swLog').textContent = data.error; return; }
+                $('swLog').textContent = (data.lines && data.lines.length) ? localizeLog(data.lines).join(String.fromCharCode(10)) : '(empty)';
+                $('swLogInfo').textContent = data.note || ((data.lines || []).length + ' lines · ' + (data.file || ''));
+            }).catch(function (ex) { $('swLog').textContent = 'Failed: ' + ex.message; });
+        }
+
+        function loadSwTab() {
+            post('get_locations', {}).then(function (l) {
+                if (l && l.locations) { swApp.locations = l.locations; renderSwTargets(); }
+                loadSwFiles().catch(function (ex) { showMsg('swMsg', 'Files: ' + ex.message, false); });
+                loadSwDevices().catch(function () { });
+                loadSwTasks().catch(function () { });
+                loadSwLog();
+                swUpdateSourceUi();
+            }).catch(function (ex) { showMsg('swMsg', 'Failed to load the deploy tab: ' + ex.message, false); });
+            if (swApp.sfloaded) { renderSwServerFiles(); }
+        }
+
+        function swPollTasks(run) {
+            if (swPollTimer != null) { clearTimeout(swPollTimer); swPollTimer = null; }
+            if (!run) { loadSwLog(); return; }
+            swPollTimer = setTimeout(function () { loadSwTasks(); loadSwLog(); }, 10000);
+        }
+
+        // ---- chunked upload (urlencoded base64url stays below the server's 100kb body limit) ----
+
+        function swRandomHex(n) {
+            var a = new Uint8Array(n), i;
+            if (self.crypto && crypto.getRandomValues) { crypto.getRandomValues(a); } else { for (i = 0; i < n; i++) { a[i] = Math.floor(Math.random() * 256); } }
+            var out = '';
+            for (i = 0; i < a.length; i++) { out += ('0' + a[i].toString(16)).slice(-2); }
+            return out;
+        }
+
+        function swReadSlice(file, start, end, cb) {
+            try {
+                if (file.arrayBuffer) {
+                    file.slice(start, end).arrayBuffer().then(function (b) { cb(null, new Uint8Array(b)); }, function (e) { cb(e); });
+                    return;
+                }
+            } catch (e0) { }
+            try {
+                var r = new FileReader();
+                r.onload = function () { cb(null, new Uint8Array(r.result)); };
+                r.onerror = function () { cb(new Error('file read failed')); };
+                r.readAsArrayBuffer(file.slice(start, end));
+            } catch (e1) { cb(e1); }
+        }
+
+        function swB64url(u8) {
+            var s = '', CH = 8192;
+            for (var i = 0; i < u8.length; i += CH) {
+                s += String.fromCharCode.apply(null, Array.prototype.slice.call(u8.subarray(i, Math.min(i + CH, u8.length))));
+            }
+            return btoa(s).replace(/\+/g, '-').replace(/\//g, '_');
+        }
+
+        function swUploadFile(file) {
+            if (file == null) { showMsg('swMsg', 'Choose a file first.', false); return; }
+            var extM = /\.([A-Za-z0-9]{1,4})$/.exec(file.name);
+            var ext = extM ? extM[1].toLowerCase() : '';
+            if (!extM || (swApp.limits && (swApp.limits.exts || []).indexOf(ext) < 0)) {
+                showMsg('swMsg', 'Unsupported file type - allowed: ' + (((swApp.limits && swApp.limits.exts) || ['msi', 'exe', 'deb', 'rpm', 'sh']).join(', ')) + '.', false);
+                return;
+            }
+            if (file.size <= 0) { showMsg('swMsg', 'The file is empty.', false); return; }
+            if (swApp.limits && file.size > swApp.limits.maxBytes) { showMsg('swMsg', 'File exceeds the size limit (' + swFmtSize(swApp.limits.maxBytes) + ').', false); return; }
+            var chunk = (swApp.limits && swApp.limits.chunkBytes) || 49152;
+            var uploadId = swRandomHex(16);
+            var size = file.size;
+            var i = 0, retries = 0;
+            var fail = function (msg) { $('swUploadInfo').textContent = ''; showMsg('swMsg', 'Upload failed: ' + msg, false); };
+            var step = function () {
+                var start = i * chunk, end = Math.min(size, start + chunk);
+                $('swUploadInfo').textContent = 'Uploading ' + file.name + ' - ' + swFmtSize(end) + ' / ' + swFmtSize(size) + ' (' + Math.round(100 * end / size) + '%)';
+                swReadSlice(file, start, end, function (rerr, u8) {
+                    if (rerr) { fail(rerr.message); return; }
+                    post('sw_upload', { uploadId: uploadId, name: file.name, index: i, data: swB64u8(u8), last: (end >= size) ? 'true' : 'false' }).then(function (d) {
+                        if (d.done) { $('swUploadInfo').textContent = ''; showMsg('swMsg', '"' + d.file.name + '" is in the library (sha256 ' + String(d.file.sha256).substring(0, 16) + '...).', true); loadSwFiles(); return; }
+                        if (d.error) {
+                            if (retries++ < 6 && typeof d.next === 'number' && d.next >= 0 && d.next <= i + 1) { i = d.next; step(); return; }
+                            if (retries++ < 6 && d.restart === true) { i = 0; step(); return; }
+                            fail(d.error); return;
+                        }
+                        retries = 0;
+                        i = (typeof d.next === 'number') ? d.next : i + 1;
+                        if (start >= size && end >= size) { return; } // fully sent (the last chunk answered done)
+                        step();
+                    }).catch(function (ex) {
+                        if (retries++ < 6) { setTimeout(step, 2500); return; } // network blip: resume at the same index
+                        fail(ex.message);
+                    });
+                });
+            };
+            step();
+        }
+
+        function swB64u8(u8) { return swB64url(u8); }
+
+        $('swUploadBtn').addEventListener('click', function () {
+            var inp = $('swFileInput');
+            swUploadFile((inp && inp.files && inp.files.length > 0) ? inp.files[0] : null);
+        });
+        $('swRescanBtn').addEventListener('click', function () {
+            post('sw_rescan_library', {}).then(function (d) {
+                if (d.error) { showMsg('swMsg', d.error, false); return; }
+                showMsg('swMsg', 'Rescan: ' + (d.added || 0) + ' added, ' + (d.removed || 0) + ' removed' + (d.failed ? (', ' + d.failed + ' unreadable') : '') + '.', true);
+                loadSwFiles();
+            }).catch(function (ex) { showMsg('swMsg', 'Rescan failed: ' + ex.message, false); });
+        });
+        $('swLibBody').addEventListener('click', function (e) {
+            var b = e.target;
+            while (b && b !== this && !(b.getAttribute && b.getAttribute('data-swact'))) { b = b.parentNode; }
+            if (!b || b === this) { return; }
+            if (b.getAttribute('data-swact') === 'delfile') {
+                var fid = b.getAttribute('data-swfid');
+                if (!window.confirm('Remove this installer from the library? Running tasks keep their staged copy.')) { return; }
+                post('sw_delete_file', { fileId: fid }).then(function (d) {
+                    if (d.error) { showMsg('swMsg', d.error, false); return; }
+                    showMsg('swMsg', 'Removed from the library.', true);
+                    loadSwFiles();
+                }).catch(function (ex) { showMsg('swMsg', 'Delete failed: ' + ex.message, false); });
+            }
+        });
+        $('swSource').addEventListener('change', swUpdateSourceUi);
+        $('swSfFolder').addEventListener('change', swRenderSfFiles);
+        $('swTargetBody').addEventListener('change', swUpdateSelInfo);
+        $('swDeployBtn').addEventListener('click', function () {
+            var src = $('swSource').value;
+            var body = { source: src, args: $('swArgs').value };
+            var name = '';
+            if (src === 'library') {
+                var fid = $('swFileSel').value;
+                var f = (swApp.files || []).filter(function (x) { return x.id === fid; })[0];
+                if (!f) { showMsg('swMsg', 'Pick a library file first.', false); return; }
+                body.fileId = fid; name = f.name;
+            } else {
+                var i = parseInt($('swSfFolder').value, 10);
+                var sf = (swApp.sfolders || [])[i];
+                var nm = $('swSfFile').value;
+                if (!sf || !nm) { showMsg('swMsg', 'Pick a server file first.', false); return; }
+                body.meshId = sf.meshId; body.fileName = nm; name = nm;
+            }
+            var nodeIds = [], meshIds = [], c, j;
+            c = document.querySelectorAll('#swTargetBody .swDevc');
+            for (j = 0; j < c.length; j++) { if (c[j].checked) { nodeIds.push(c[j].value); } }
+            c = document.querySelectorAll('#swTargetBody .swLocc');
+            for (j = 0; j < c.length; j++) { if (c[j].checked) { meshIds.push(c[j].value); } }
+            if (nodeIds.length === 0 && meshIds.length === 0) { showMsg('swMsg', 'Select devices or whole locations first.', false); return; }
+            if (!window.confirm('Install "' + name + '" on ' + nodeIds.length + ' selected device(s) and all devices of ' + meshIds.length + ' location(s)?\nOffline devices are queued and install when they reconnect. This runs the installer as SYSTEM/root and never reboots a device.')) { return; }
+            body.nodeIds = nodeIds.join(',');
+            body.meshIds = meshIds.join(',');
+            post('sw_create_task', body).then(function (d) {
+                if (d.error) { showMsg('swMsg', d.error, false); return; }
+                showMsg('swMsg', 'Task ' + d.taskId + ' created for ' + d.devices + ' device(s): ' + d.note, true);
+                loadSwTasks();
+                loadSwLog();
+            }).catch(function (ex) { showMsg('swMsg', 'Deploy failed: ' + ex.message, false); });
+        });
+        $('swTaskBody').addEventListener('click', function (e) {
+            var b = e.target;
+            while (b && b !== this && !(b.getAttribute && b.getAttribute('data-swact'))) { b = b.parentNode; }
+            if (!b || b === this) { return; }
+            var act = b.getAttribute('data-swact'), tid = b.getAttribute('data-swtid');
+            if (act === 'tgl') { swApp.open[tid] = !(swApp.open[tid] === true); renderSwTasks(); return; }
+            if (act === 'retry') {
+                if (!window.confirm('Retry every device of this task that is not ok (queued, failed, timed out or never reached)?')) { return; }
+                post('sw_retry_task', { taskId: tid }).then(function (d) {
+                    if (d.error) { showMsg('swMsg', d.error, false); return; }
+                    showMsg('swMsg', 'Retrying ' + d.devices + ' device(s).', true);
+                    loadSwTasks();
+                }).catch(function (ex) { showMsg('swMsg', 'Retry failed: ' + ex.message, false); });
+                return;
+            }
+            if (act === 'cancel') {
+                if (!window.confirm('Cancel the queued devices of this task? Running installs finish normally.')) { return; }
+                post('sw_cancel_task', { taskId: tid }).then(function (d) {
+                    if (d.error) { showMsg('swMsg', d.error, false); return; }
+                    showMsg('swMsg', d.note || 'Cancelled.', true);
+                    loadSwTasks();
+                }).catch(function (ex) { showMsg('swMsg', 'Cancel failed: ' + ex.message, false); });
+            }
+        });
+        $('swRefreshBtn').addEventListener('click', function () { loadSwDevices(); loadSwTasks(); loadSwLog(); });
+        $('refreshSwLogBtn').addEventListener('click', loadSwLog);
 
         // ---------- floating location selector ----------
 

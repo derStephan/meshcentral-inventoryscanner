@@ -1,9 +1,9 @@
 {
   "name": "Inventory & Vulnerability Scanner",
   "shortName": "inventoryscanner",
-  "version": "3.6.0",
+  "version": "4.0.0",
   "author": "derStephan",
-  "description": "Hardware/software inventory CSV exports, offline NVD vulnerability scanning with honest coverage (drivers/firmware separated), group ratings, scheduled notifications, printable reports, opt-in winget auto-updates incl. fleet-wide per-package update/uninstall, and on-demand OS updates / OS release upgrades for Windows and Linux.",
+  "description": "Hardware/software inventory CSV exports, offline NVD vulnerability scanning with honest coverage (drivers/firmware separated), group ratings, scheduled notifications, printable reports, opt-in winget auto-updates incl. fleet-wide per-package update/uninstall, on-demand OS updates / release upgrades, and software deployment: install MSI/EXE/DEB/RPM packages on selected devices or whole locations (reconnect queue, SHA-256 verified, never an automatic reboot).",
   "hasAdminPanel": true,
   "homepage": "https://github.com/derStephan/meshcentral-inventoryscanner",
   "changelogUrl": "https://github.com/derStephan/meshcentral-inventoryscanner/commits/main",

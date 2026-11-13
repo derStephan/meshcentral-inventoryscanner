@@ -11,7 +11,9 @@
  *    administrator rates every CVE found in a group. The rating is **group-wide**
  *    (applies to all devices in the group) and requires a mandatory comment.
  *  - printable reports, scheduled scans with notifications, a winget software
- *    updater and OS update/upgrade batches - implemented in lib/, see below.
+ *    updater, OS update/upgrade batches and software deployment (install an
+ *    MSI/EXE/DEB/... on selected devices, queued until they reconnect) -
+ *    implemented in lib/, see below.
  *
  * Only existing MeshCentral plugin/DB APIs are used. All actions are gated on a
  * full site administrator (<code>user.siteadmin === 0xFFFFFFFF</code>, i.e.
@@ -19,7 +21,7 @@
  * NVD feed is downloaded.
  *
  * @author derStephan
- * @version 3.6.0
+ * @version 4.0.0
  *
  * Transparency: This plugin was created with the assistance of Qwen 3.6 27B and Qwen 3.8 Flash Next.
  * Audits: 2026-11-06 (NVIDIA Nemotron 3 550B A55B) and 2026-11-11 (Claude, v3.0.1) via opencode - see AUDIT.md.
@@ -60,6 +62,11 @@ try { MODULE_CODE_VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, 'con
  *   lib/winget.js           winget engine: script builder, transport, queue, replies, scheduling
  *   lib/winget-handlers.js  winget POST handlers (config, batch run, device status, packages)
  *   lib/osupdate.js         OS update / OS release upgrade engine + its handlers
+ *   lib/swstore.js          deploy foundation: installer library, upload parts, task store,
+ *                           staging in <filespath>/tmp, agentdownload cookie, name/arg quoting
+ *   lib/swdeploy.js         deploy engine: install scripts, wget+runcommands dispatch,
+ *                           reconnect queue, results and events
+ *   lib/swdeploy-handlers.js deploy POST handlers (library, upload, server files, devices, tasks)
  *   lib/reports.js          panel scan aggregation + buildOverallReport + the two report routes
  *   lib/csv.js              CSV helpers, the shared node CSV builder, the export route
  *   lib/nodes.js            node/sysinfo helpers (fetch, group/host names, synthetic findings)
@@ -78,6 +85,7 @@ try { MODULE_CODE_VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, 'con
 const modules = [
     'lifecycle', 'settings', 'assessments', 'nvd', 'nvdindex', 'cpetable', 'matching', 'oslifecycle',
     'osscan', 'inventory', 'collector', 'scheduling', 'winget', 'winget-handlers', 'osupdate',
+    'swstore', 'swdeploy', 'swdeploy-handlers',
     'reports', 'csv', 'nodes', 'routes', 'browser'
 ];
 
@@ -165,6 +173,16 @@ module.exports.inventoryscanner = function (parent) {
     obj.osResultsPath = path.join(obj.meshServer.datapath, 'plugins', 'inventoryscanner', 'os-results.json');
     /** @type {string} OS update log (shown in the UI, rotated at ~5 MB). */
     obj.osLogPath = path.join(obj.meshServer.datapath, 'plugins', 'inventoryscanner', 'os-update.log');
+    /** @type {string} Index of the installer library (v4.0.0, lib/swdeploy.js). */
+    obj.swStorePath = path.join(obj.meshServer.datapath, 'plugins', 'inventoryscanner', 'software.json');
+    /** @type {string} Folder holding the stored installer files, one per id (lib/swdeploy.js). */
+    obj.swFilesDir = path.join(obj.meshServer.datapath, 'plugins', 'inventoryscanner', 'software', 'files');
+    /** @type {string} Folder holding in-progress chunked uploads (survives a server restart). */
+    obj.swPartsDir = path.join(obj.meshServer.datapath, 'plugins', 'inventoryscanner', 'software', 'parts');
+    /** @type {string} Deploy tasks incl. their per-device states (state file, lib/swdeploy.js). */
+    obj.swTasksPath = path.join(obj.meshServer.datapath, 'plugins', 'inventoryscanner', 'deploy-tasks.json');
+    /** @type {string} Software deploy log (shown in the UI, rotated at ~5 MB). */
+    obj.swLogPath = path.join(obj.meshServer.datapath, 'plugins', 'inventoryscanner', 'software-deploy.log');
 
     // ---- Feature modules (the list at the top of this file documents who does what) ----
     modules.forEach(function (name) {

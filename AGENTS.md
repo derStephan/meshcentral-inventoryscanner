@@ -75,8 +75,8 @@ Consequences an agent must respect:
 - **Attach order is wiring, not logic.** Nothing is called at attach time (the factory body of every
   module contains only assignments), so the order in `modules` only documents layering: lifecycle →
   settings/assessments → data (nvd, nvdindex, cpetable, matching, oslifecycle, osscan, inventory) →
-  collectors/engines (collector, scheduling, winget, winget-handlers, osupdate) → output
-  (reports, csv, nodes) → routes → browser.
+  collectors/engines (collector, scheduling, winget, winget-handlers, osupdate, swstore, swdeploy,
+  swdeploy-handlers) → output (reports, csv, nodes) → routes → browser.
 - **Functions that were local helpers are now members too** (`obj.formatCsvField`, `obj.timestamp`,
   `obj.parseMeshIds`, `obj.isFindingId`, `obj.boolSetting`, `obj.safeNodeDir`, `obj.fetchSysinfo`,
   `obj.httpGetToFile`, `obj.winRelNum`, `obj.ubuRelNum`, `obj.MAX_TIMEOUT_MS`) - same reason: they are
@@ -104,6 +104,9 @@ Consequences an agent must respect:
 | `lib/winget.js` | `wgBuildScript`/`wgTransport`/queue/pump/watchdogs, results+log persistence, `wgNodeDue`/`wgSweepOnce`/`scheduleWingetUpdates`, `psTranscriptLines`, `wingetConfig` |
 | `lib/winget-handlers.js` | `wg_get_config`, `wg_save_config`, `wg_run`, `wg_status`, `wg_programs` handlers |
 | `lib/osupdate.js` | OS batch engine: `osBuildWindowsScript`, `osBuildLinuxScript`, `osLinuxTransport`, targeting/`osUpgradeInfo`/`osUrgency`, `os_run` + `os_status` handlers |
+| `lib/swstore.js` | deploy foundation: installer library index/folders, resumable upload parts, task store load/save/prune, staging into `<filespath>/tmp`, `swDownloadCookie` (agentdownload), name/args/extension sanitizers, `swEnsureStaged` |
+| `lib/swdeploy.js` | deploy engine: `swBuildWindowsScript`/`swBuildLinuxScript`, `swWgetCommand`, queue/pump/`swDispatchNode`/`swHandleResponse`/watchdogs, `swOnNodeConnect`/`swSweepOnce`/`scheduleSwSweep`, `swTaskDoneCheck`, `swCreateTask`/`swTaskView` |
+| `lib/swdeploy-handlers.js` | `sw_files`, `sw_upload`, `sw_delete_file`, `sw_rescan_library`, `sw_serverfiles`, `sw_devices`, `sw_create_task`, `sw_status`, `sw_retry_task`, `sw_cancel_task` handlers |
 | `lib/reports.js` | `scanMeshCves`, `scanMultiMeshCves`, `assessmentScan` (the `action=scan` route), `summarizeDeviceSwVer`, `buildOverallReport`, `vulnerabilityReport`, `deviceReport` |
 | `lib/csv.js` | CSV formatting helpers, `buildCsvForNodes`, the `action=export` route |
 | `lib/nodes.js` | `fetchSysinfo`, `scanNodeSoftware`, `getGroupName`, `getHostName`, `windowsUpdatesFinding` |
@@ -135,6 +138,11 @@ sub-domain admins of a multi-tenant server are refused since v3.0.1):
    stated **CPE coverage percentage** so findings-only views can't be misread as "all clean".
 5. **Scheduled scans + notifications** (server-side Node timers, restart-proof, monthly-capable) with per-group
    severity thresholds and an optional repeat-until-rated mode.
+6. **Software deployment** (Deploy tab, v4.0.0): install an MSI/EXE/MSP/DEB/RPM/SH package on explicitly chosen
+   devices or whole locations - package from the browser-uploaded library, from MeshCentral's Server Files or from
+   the plugin's server folder; optional command-line arguments; offline devices are QUEUED and install on reconnect;
+   every delivery is SHA-256 verified on the device before it runs; results per device (state + exit code) plus
+   toast/event-log feedback. Nothing ever installs on its own - a task exists only because an admin created it.
 
 ## Verified API facts (do not guess)
 
@@ -202,7 +210,25 @@ Based on official MeshCentral source (`pluginHandler.js`, `webserver.js`, `db.js
   Stored per node under `<datapath>/plugins/inventoryscanner/data/<nodeid>/{software,windowsupdates}.json`.
   Only Critical/Important pending updates count towards the `WINDOWS-UPDATES` finding.
 - **Notifications:** `obj.meshServer.DispatchEvent(['*'], obj, {type:'notify', ...})` — ephemeral browser toast for
-  logged-in admins + entry in the server event log. No built-in email.
+   logged-in admins + entry in the server event log. No built-in email.
+- **Server → device file delivery (v4.0.0, verified in webserver.js `handleUploadFileBatch` +
+  `handleAgentDownloadFile` and agents/meshcore.js `case 'wget'`/`serverFetchFile`):** a message
+  `{action:'wget', overwrite:true, createFolder, urlpath:'/<domainurl>agentdownload.ashx?c='+cookie, path, folder,
+  servertlshash}` sent over the agent's websocket makes the agent HTTPS-GET that URL **from its own server target**
+  (`getServerTargetUrlEx('*/')` → `mesh.ServerUrl`) and stream the body to `path`. The URL is served WITHOUT a
+  session: `agentdownload.ashx` requires `?c=` = `parent.encodeCookie({a:'tmpdl', d:domainId, nid:nodeid, f:file},
+  parent.loginCookieEncryptionKey)` and then serves `<filespath>/tmp/<f>` (`f` through `common.IsFilenameValid`);
+  the cookie is decoded with a **5-minute** timeout → mint it at dispatch time, never earlier. TLS is trusted by
+  comparing the server certificate to the control-channel hash (`servertlshash` = hex of
+  `webserver.webCertificateFullHashs[domain]`, unless `args.ignoreagenthashcheck`) — no certificate import on
+  devices. **wget answers NOTHING to the server** (failures surface only as session-less console text), and a
+  non-`overwrite` wget silently skips an existing file → the deploy engine always uses `overwrite:true` + a unique
+  random file name and lets the install script verify the SHA-256 before executing. Upstream batch upload sends
+  wget only to agents connected to THIS server (its own `TODO: peer servers`) — same limitation here.
+- **MeshCentral's file layout (verified `getServerFilePath`/`handleUploadFileBatch`):** server files live under
+  `parent.filespath` (= `<install>/meshcentral-files` or `settings.filespath`) as
+  `domain[-<x>]/mesh-<group>` (Server Files of a device group) and `domain[-<x>]/user-<id>` (My Files);
+  the agent-download staging area is the fixed `<filespath>/tmp` folder.
 
 ## Plugin routes & data contracts (current state)
 
@@ -237,7 +263,17 @@ POST body `action=`:
     failed packages additionally get one `FAILED` line per package in `winget-update.log`, and upgraded
      packages that match (exactly or as substring) an ignore entry raise a `WARNING` line there |
 | `wg_programs` | — | the PACKAGES view (v3.0.0): aggregates `wgResults` per package id -> `{packages:[{id,name,ready,ok,failed,skipped,devices:[{node,label,state,from,to,time,dry}]}],note}` (≤400 packages, ≤200 devices each, sorted by ready+failed). `label` = admin given name first, then host name, then id; results of deleted devices are dropped; `not-installed` counts into `skipped` |
-| `get_log` | `type` = nvd\|winget\|os | whitelisted log tail (last 300 lines) |
+| `get_log` | `type` = nvd\|winget\|os\|deploy | whitelisted log tail (last 300 lines) |
+| `sw_files` | — | installer library `{files:[{id,name,ext,size,sha256,time,by}], parts:[{uploadId,bytes}], limits:{chunkBytes,maxBytes,exts}, note}` |
+| `sw_upload` | `uploadId` (hex 8..40), `name`, `index`, `data` (base64url ≤ `chunkBytes` raw), `last` | chunked upload into `software/parts/<id>.part`; `{ok,next}`, order-error `{error,next,have}` or `{done,file}` (hash computed, committed as immutable `<newid>.<ext>`) |
+| `sw_delete_file` | `fileId` | removes an unused library entry + its file; refused (error) while a NOT-done task references it |
+| `sw_rescan_library` | — | indexes files placed in `software/files/` on the server (renamed to `<id>.<ext>`, display name kept), drops vanished entries; `{added,removed,failed,files}` |
+| `sw_serverfiles` | — | MeshCentral Server Files listing `{folders:[{meshId,name,files:[{name,size,time}]}], note}` from `<filespath>/domain[-x]/mesh-<grp>`, dot-files/invalid names hidden |
+| `sw_devices` | — | every non-deleted node `{devices:[{id,host,given,group,meshid,online,platform:'windows'\|'linux'\|'other',os}]}` (platform via `osPlatformOf`) |
+| `sw_create_task` | `source` ('library'\|'serverfile'), `fileId` or (`meshId`+`fileName`), `args?`, `nodeIds`(csv) and/or `meshIds`(csv) | validates everything (ids, name, ext ∈ SW_EXTS, args via `swSafeArgs`), expands locations, caps at `SW_MAX_DEVICES` (500), creates the task and queues all devices → `{taskId, devices, note}`; offline devices stay 'queued' until connect/sweep |
+| `sw_status` | — | `{tasks:[{id,created,fileName,ext,args,size,sha256,done,sourceType,createdBy,counts:{ok,failed,queued,running,other},devices:[≤150 {node,state,time,exit,note,platform,reboot}],total}], active, queued, running}` (open tasks first, ≤60) |
+| `sw_retry_task` | `taskId` (hex-validated, hasOwnProperty), optional `nodeIds` | re-queues not-ok devices (default: everything but ok/running) → `{success, devices}` |
+| `sw_cancel_task` | `taskId` | queued devices → 'cancelled' (running sessions finish normally), queue entries dropped → `{success, cancelled, note}` |
 | `os_run` | `mode` = update\|upgrade, optional `nodeIds` (csv) | v3.5.0 manual OS batch (`osStartBatch`); `update` = every non-excluded node with `osPlatformOf` windows\|linux, `upgrade` = only nodes where `osUpgradeInfo` says outdated AND has a method; explicit ids are filtered by the same rule; {busy} while a winget or OS batch runs |
 | `os_status` | — | every Windows/Linux node: `platform, os, online, excluded, outdated, upgradable, target, note, last, pending` + `running, mode, active, queued, current:{windows11, ubuntuLts}` |
 | `update_nvd` | — | starts `runNvdUpdate(true)` (background) and answers {started:true} / {alreadyRunning:true}; concurrent runs skip via the `nvdUpdateRunning` flag |
@@ -331,6 +367,14 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   Save posts the full field set, "Reset all" posts `reset=true`. The group table is filled client-side from
   `get_locations`; all-checked or none-checked is sent as an empty list = "all groups".
 
+- Deploy tab (v4.0.0): library table + `<input type=file>` upload (FileReader chunks → `sw_upload`, sequential
+  POSTs with resume-on-gap, progress text), source switch plugin-library ⇄ MeshCentral Server Files (two selects,
+  filled by `sw_files` / `sw_serverfiles`), arguments input, location+device picker from `get_locations` +
+  `sw_devices` (offline flagged, non-Windows/Linux disabled), and the task list from `sw_status` with per-row
+  expander (device state, decimal+hex exit code, note) plus Retry-open / Cancel buttons. Uploads and tasks poll
+  every 10 s while anything is open. The tab MUST keep sending the `X-InvScanner-Request` header on every POST
+  (the shared `post()` helper does - a new fetch path must use it).
+
 ## Upgrade path (verified; user decision: NO polling)
 
 - The swap lives INSIDE server_startup (event-driven, called by MeshCentral after installPlugin);
@@ -376,6 +420,14 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
 <plugins/inventoryscanner>/winget-update.log     batch log, rotated at ~5 MB
 <plugins/inventoryscanner>/os-results.json       last OS update/upgrade run per device (drives os_status)
 <plugins/inventoryscanner>/os-update.log         OS batch log, rotated at ~5 MB
+<plugins/inventoryscanner>/software.json         deploy: installer library index (v4.0.0)
+<plugins/inventoryscanner>/software/files/       stored installers <id>.<ext> (immutable ids)
+<plugins/inventoryscanner>/software/parts/       in-progress chunked uploads <uploadId>.part
+<plugins/inventoryscanner>/deploy-tasks.json     deploy tasks + per-device states (drives sw_status)
+<plugins/inventoryscanner>/software-deploy.log   deploy log, rotated at ~5 MB
+<datapath>/../meshcentral-files/tmp/invsw-*.ext   staging for the agent wget (MeshCentral's own temp area;
+                                  swept after task close and >24 h; NOT under the plugin folder, because
+                                  agentdownload.ashx serves exclusively from <filespath>/tmp)
 <plugins/inventoryscanner>/data/<nodeid>/        collected software + windowsupdates JSON per device
 ```
 - On the client the updater writes `invscanner-winget.log` next to `meshagent.exe` (fallback: the protected
@@ -532,6 +584,57 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   `reboot-needed` (the tool refuses to run then). `Prompt=never` is reported, never changed.
 - Never any reboot (asserted by tests).
 
+## Software deploy engine (v4.0.0, verified contracts)
+
+- Three modules: `swstore` (library + task store + staging + cookie), `swdeploy` (scripts, dispatch,
+  reconnect queue), `swdeploy-handlers` (routes). State: `obj.swFiles/swTasks/swUploads/swQueue/swPending/swActive`.
+- **Delivery is MeshCentral's own batch-upload mechanism** (see the verified API fact): stage to
+  `<filespath>/tmp/invsw-<16hex>-<12hex>.<ext>` (one copy per TASK, hashed ASYNC from the copy), then per device
+  and per attempt: send `{action:'wget', overwrite:true, urlpath:'/<domainurl>agentdownload.ashx?c='+cookie(nid,f),
+  path, folder, servertlshash}` followed by a runcommands script on the SAME agent socket (wget starts instantly,
+  the script polls). Cookies are minted PER DISPATCH (5-minute decode timeout) - also for retries.
+- **Scripts** (`swBuildWindowsScript`/`swBuildLinuxScript`, one statement per line, PS parser + `sh -n` asserted):
+  wait up to `SW_FILE_WAIT_MIN` (15 min) for the file, verify SHA-256 (`Get-FileHash ... -ieq` / `sha256sum`),
+  NOTHING runs before the check passes; then `msiexec /i "..." /qn /norestart <args>` (`/update ... /quiet` for .msp),
+  `Start-Process -FilePath <file> -ArgumentList <args> -Wait` (exe/bin), or `dpkg -i` / `rpm -Uvh` / `sh` (Linux,
+  `DEBIAN_FRONTEND=noninteractive`, stdin `< /dev/null`, output to `/var/log/invscanner-deploy.log`), delete the
+  staged file, answer `@@INVSWD@@{json}` with `state ok|failed|error|no-file`, `exit`, `reboot`, `name`. Windows
+  transcript via `psTranscriptLines('invscanner-deploy.log')` (protected folders, same as winget). Exit 3010/1641 =
+  ok + reboot pending; **a reboot is never triggered**. A .msi/.msp on Linux answers failed ('Windows installer')
+  without executing.
+- **Sessions**: `invscanner-sw-<node>` on the shared routeAgentCommand hook (`onAgentResponse` checks sw → os → wg;
+  session-less answers are only taken while `swPending[node]` exists; console text accumulates on `.cbuf` and is
+  consumed only when the marker parses; console lines of an sw session are mirrored into software-deploy.log).
+  Watchdog 2 h (`SW_RUN_TIMEOUT_MS`), parallel `SW_MAX_PARALLEL = 2`. The winget/OS pumps skip nodes with an sw
+  session and vice versa (one runcommands session per agent, verified in meshcore.js).
+- **Reconnect queue**: every queued device of a task is re-tried by `hook_agentCoreIsStable` →
+  `obj.swOnNodeConnect(nodeid)` (staggered like collection) and by `swSweepOnce` every `SW_SWEEP_MS` (10 min,
+  gen-guarded chain via `scheduleSwSweep`, also invoked from `rescheduleAll`). A device still 'running' but with NO
+  pending session (socket died mid-script) is reset to 'queued' on load, connect and sweep - nothing is ever lost
+  to a restart (`swLoadTasks` does the same after a server crash).
+- **Task states**: `queued → running → ok | failed | error | no-file | timeout | unsupported | cancelled`
+  (final set `swIsFinal`); when no device is open, `swTaskDoneCheck` closes the task, deletes the staged copy,
+  logs a summary and raises the admin toast; every device also gets the node event (`wgRaiseNodeEvent`, reused
+  intentionally - the message text is 'Software deploy: ...').
+- **Library**: `software.json` index + immutable `software/files/<id>.<ext>` + resumable `software/parts/<uid>.part`
+  (parts reload into `obj.swUploads` so an interrupted upload can resume; its display name is re-adopted from the
+  next chunk's `name` field). `sw_rescan_library` indexes manually placed files under THEIR name and renames them
+  to `<id>.<ext>`. Server-side deletions are visible via the rescan button.
+- **Validation**: file ids `^[a-f0-9]{12}$`, task ids `^[a-f0-9]{8,32}$` (+ hasOwnProperty lookup), upload ids
+  `^[a-f0-9]{8,40}$`, extensions must be in `SW_EXTS`, node/mesh ids as everywhere, args through `swSafeArgs`
+  (control chars → spaces, ≤500), names through `swSanitizeName` (basename, ≤200); the server-file path is derived
+  ONLY from DB mesh ids + listed names and re-validated against `<filespath>/domain.../mesh-...` at dispatch
+  (traversal impossible); every staged name is server-generated. Agents scripts contain zero caller-typed text
+  beyond the quoted args/name fields.
+- **Limits**: `SW_CHUNK_BYTES 49152` raw per POST (base64url stays below body-parser's 100kb urlencoded default -
+  the pluginadmin route does NOT raise it, verified in webserver.js), `SW_MAX_FILE_BYTES` 2 GB, `SW_MAX_DEVICES`
+  500/task, `SW_MAX_TASKS` 100 (pruned finished-first by creation date), staged files older than a day are swept
+  (`swCleanStaleStaging` at startup and per sweep) unless an open task names them.
+- **No configuration section, no automation**: a deploy NEVER runs by itself - tasks exist only because an admin
+  created them. The winget `excludeNodes` list is intentionally NOT consulted (the admin selects targets
+  explicitly; the device picker shows the flag). Multi-server peering: like upstream batch upload, only agents
+  connected to THIS server get wget (`wsagents`), peers stay queued.
+
 ## Design decisions (with reasons)
 
 1. **Two-stage matching (Dependency-Check style, fully offline):** custom entries + curated `SOFTWARE_CPE_TABLE`
@@ -601,6 +704,19 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
 15. **Publisher evidence (v3.1.0):** `deriveVendorFromPublisher` falls back to `vendorFromPublisherIndex`: the
     publisher without legal forms is accepted as vendor ONLY when that exact token is an application vendor in the
     loaded feeds (`cpeVendorTokens`); the product still has to be proven by the token matcher.
+16. **Deploy delivery through the agent's own wget (v4.0.0):** alternatives were considered and rejected - chunking
+    a binary through runcommands lines (8 KiB/cmd, seconds per MB, no integrity) and an HTTPS URL the script fetches
+    (would need the OS to trust the MeshCentral certificate). `wget` + the `agentdownload.ashx` cookie is the exact
+    mechanism MeshCentral's own batch upload uses (verified end-to-end in upstream source), it works on every agent
+    platform and every port/mTLS setup without touching devices' certificate stores. Because wget answers nothing,
+    the SHA-256 check inside the install script is the ack: no file, no match -> `no-file`, nothing executed.
+    Files stage in MeshCentral's `<filespath>/tmp` (the ONLY folder agentdownload serves) and are deleted with the
+    task; the library itself lives in the plugin folder so an uninstall removes it (documented).
+17. **Deploy is never automatic (v4.0.0):** unlike the winget updater there is no enable-switch and no schedule -
+    a task exists only because an admin created it with explicit packages and explicit targets. Offline devices
+    queue (that is the user requirement "install when the device is back"); the winget exclusion list is
+    deliberately not consulted (selection IS the opt-in, and silent de-selection would be dishonest feedback -
+    the picker shows the flag instead).
 
 ## Configuration keys & precedence
 
@@ -617,6 +733,9 @@ never touches config.json). The config.json keys below remain the fallback/seed:
   `osLifecycleUrl` (default `https://endoflife.date/api/`, https, must end with `/`), `osUpgradeUrgentDays`
   (default 365, integer 0..3650; outside that range the default applies).
 - `inventoryScanner` (note: one letter less than the section above): `collectIntervalMinutes`, `collectOnAgentConnect`.
+- **Software deploy has NO settings keys (v4.0.0) by design**: no switch, no schedule, no mesh list - a task
+  exists only because an admin created it on the Deploy tab. Its limits are constants in `lib/swstore.js` /
+  `lib/swdeploy.js` (SW_*). Do not "helpfully" add a `softwareDeploy` section without updating this paragraph.
 - `wingetUpdater` (sibling section, own Updates-tab form): `enabled` (default **false**), `intervalHours` (deprecated, ignored),
   `updateMeshes` (array; scheduled batches ONLY run on these - empty means NOTHING runs on purpose),
   `excludeNodes` (node ids), `ignorePackages` ([{id,note}] - never upgraded, additionally `winget pin add
@@ -674,7 +793,7 @@ MeshCentral install folder) and root `/*.txt` + `/*.csv` are gitignored as a gua
   inline-script syntax/`{{`-hazard check, JSON validity of config files, and view-name↔render-name consistency over
   the WHOLE JS tree (the `res.render()` calls live in `lib/routes.js`/`lib/reports.js` since v3.5.1).
   Must run anywhere (no dependencies).
-- `tools/test-plugin.js`: 343 behavioral assertions (65 steps) against the real module (mocked MeshCentral DB/webserver):
+- `tools/test-plugin.js`: 417 behavioral assertions (71 steps) against the real module (mocked MeshCentral DB/webserver):
   the module wiring itself (every lib file attaches, a fresh instance exposes the same function surface, no
   module-level locals in `lib/`), locations grouping & counting, manual-rating severity override, FP exclusion, host-name preference, coverage
   numbers, multi-mesh scan/`mixed` logic, all POST handlers incl. validation/rejections, routes, admin gating
@@ -683,7 +802,12 @@ MeshCentral install folder) and root `/*.txt` + `/*.csv` are gitignored as a gua
   save/revert/reset roundtrips incl. validation rejections (and that a Settings-tab save/reset keeps the
   `wingetUpdater` section), timer-generation invalidation, per-cycle collector config, OS update/upgrade engine
   (scripts, targeting, release state `current|available|urgent|unknown` incl. the urgency window boundary, fleet
-  upgrade `scope`, `os_status`).
+  upgrade `scope`, `os_status`), and the v4.0.0 software deploy engine (script builders incl. PS/sh syntax parsers,
+  chunked/resumable upload, staging + per-dispatch cookie, wget/runcommands shapes, ok/failed/no-file/console
+  answers, watchdog, reconnect queue, retry/cancel, server-files listing + traversal rejection, delete guard,
+  platform gate, args-quote invariant, 401/403 on the new actions, restart reset of orphaned 'running').
+  The winget `due:` fixtures pin `now` to local noon - with bare Date.now() they failed when the suite ran
+  between 00:00 and 02:00 (found while extending the suite for v4.0.0).
   Two structural guards run with them: a `mockRes` object must be answered **exactly once** and every step must call
   `next()` **exactly once** - a handler that answers twice (e.g. an exception escaping a synchronous nested test chain
   into the route's `try/catch`) would otherwise silently replay the rest of the suite. The package run is verified
@@ -769,7 +893,16 @@ v3.5.1: STRUCTURE only - the 6,010-line `inventoryscanner.js` became a ~175-line
 `lib/` modules by feature area (see "Architecture"); behaviour, routes, data shapes and generated agent scripts
 are unchanged, which is exactly what the (unchanged, then extended) test suite proves. check.js and the upgrade
 test now understand the module tree.
-v3.6.0 (this release): OS upgrade urgency - release state `current|available|urgent|unknown` from the support end
+v3.6.0: OS upgrade urgency - release state `current|available|urgent|unknown` from the support end
 of the installed release (endoflife.date, per edition) and the new setting `osUpgradeUrgentDays` (default 365); two
 fleet buttons "force OS Upgrade (urgent)" / "(all)" (`os_run scope`, required for a fleet upgrade). Fix: the
 Settings tab's save/reset no longer wipes the `wingetUpdater` section of `scanner-settings.json`.
+v4.0.0 (this release): software deployment (Deploy tab) - install MSI/MSP/EXE/DEB/RPM/SH on chosen devices or whole
+locations, packages from chunked browser upload, from MeshCentral Server Files or from the plugin's server folder;
+optional command-line arguments; delivery via the agent's own wget + agentdownload cookie (MeshCentral's own
+batch-upload transport, verified in upstream source), SHA-256 verified on the device BEFORE execution; offline
+devices queue and install on reconnect (agent-connect hook + 10 min sweep); results per device (state, decimal+hex
+exit code, note), device event + admin toast + software-deploy.log. Never automatic, never a reboot. New modules
+swstore/swdeploy/swdeploy-handlers; the winget and OS pumps now also honour `swPending` (one runcommands session
+per agent). Test suite: 417 assertions in 71 steps (the winget `due:` fixtures got the midnight fix described in
+the Testing section).

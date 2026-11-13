@@ -4,8 +4,9 @@
 
 Turns your MeshCentral server into a software inventory and vulnerability scanner that works **offline**: CSV
 exports for audits, an NVD-based CVE scan of everything your devices have installed, a shared assessment panel
-where the team rates findings per location, printable audit reports, scheduled scans with notifications - and an
-opt-in software updater based on the official **winget** package manager.
+where the team rates findings per location, printable audit reports, scheduled scans with notifications - an
+opt-in software updater based on the official **winget** package manager, and a **deploy** tab that installs
+your own MSI/EXE/DEB packages on the devices you choose, queuing offline machines until they reconnect.
 
 **Who it is for:** MeshCentral site administrators who need to answer *which software is installed where, what has
 known CVEs, what has the team already reviewed, and what is left to do* - without buying a commercial scanner and
@@ -43,6 +44,12 @@ without sending inventory data to anyone.
   Update agent) or runs the Linux package manager upgrade; *force OS Upgrade* brings outdated releases (e.g.
   Windows 11 23H2, Ubuntu 22.04) to the current one, marked *urgent* when the installed release runs out of support.
   Never reboots a device.
+* **Software deployment (Deploy tab)** - install an **MSI / MSP / EXE / DEB / RPM / shell installer** on the devices
+  you pick (single machines or whole locations): upload the package from your PC into the plugin's library, take it
+  from MeshCentral's Server Files, or place it in the plugin's server folder. Optional command-line parameters,
+  **offline devices install automatically as soon as they reconnect**, every transfer is **SHA-256 verified on the
+  device before anything runs**, and no device is ever rebooted. Per device you get state + exit code + the
+  installer's own message.
 
 ## Requirements
 
@@ -53,6 +60,9 @@ without sending inventory data to anyone.
   maintained mapping table) and `endoflife.date` (OS support dates). All matching runs locally.
 * Several GB of free disk under `<datapath>/nvd/` for the feed data.
 * Agents that have been online at least once, so their software list can be collected.
+* For deploying software (optional, Deploy tab): nothing to open or install on the devices - the package travels
+  over the agent's existing connection to the server (MeshCentral's own batch-upload mechanism, so the agent must
+  be able to reach the server's own web port, which it already does every second).
 
 ## Installation
 
@@ -76,17 +86,19 @@ without sending inventory data to anyone.
 
 Updates need no ceremony: push a new version here and every server offers **Upgrade** on the Plugins page.
 Uninstall: remove the plugin on that page - MeshCentral deletes `<datapath>/plugins/inventoryscanner/` including the
-collected inventory, settings and update results. The NVD feeds, ratings and scan history stay in `<datapath>/nvd/`;
-delete that folder too if you want them gone. On clients, an updater transcript may remain next to `meshagent.exe`
-or in `C:\ProgramData\InventoryScanner`.
+collected inventory, settings, update results and the deploy package library. The NVD feeds, ratings and scan history
+stay in `<datapath>/nvd/`; delete that folder too if you want them gone. Staged deploy copies in MeshCentral's own
+`meshcentral-files/tmp` are removed with the task, at the latest by the next server start (sweep for files older
+than 24 h). On clients, an updater transcript may remain next to `meshagent.exe` or in `C:\ProgramData\InventoryScanner`
+(installs additionally log to `invscanner-deploy.log` there).
 
 ## Day-to-day use
 
 **Panel** - `My Server → Plugins → Inventory & Vulnerability Scanner`, or the *Vulnerability Assessment* toolbar
 button. Pick the locations you work on (floating *Locations* button, remembered per browser), then use one
 aggregated table of unique findings: sort by any column, filter by text/severity/status, rate a finding for all
-affected locations in one action, or mark it a false positive (with undo). The **Settings**, **CPE Mapping** and
-**Updates** tabs live on the same page.
+affected locations in one action, or mark it a false positive (with undo). The **Settings**, **CPE Mapping**,
+**Updates** and **Deploy** tabs live on the same page.
 
 **A finding never claims a version that is not on every device.** If the affected machines run different
 versions, the row shows *varies (N)* and the per-device truth is one hover away - the exact per-device list is
@@ -183,6 +195,20 @@ distribution name:
 | Arch Linux, Manjaro | `pacman -Syu` | no |
 | Alpine | `apk update` + `apk upgrade` | no |
 
+**Deploying software (Deploy tab)** - three ways to get the package onto a device: **Upload** an MSI/EXE/DEB/...
+from your PC (the panel uploads it in chunks into the plugin's library on the server), pick a file from
+**MeshCentral's Server Files** (the per-location folders you already know from the Files tab), or place a file in
+`<datapath>/plugins/inventoryscanner/software/files/` on the server and press **Rescan**. Then tick devices or
+**whole locations**, add command-line parameters if the installer needs them, and confirm: every online device
+fetches the package through its existing agent connection (no new ports, no share passwords, the agent verifies
+the **SHA-256** the server computed before executing anything) and runs it silently as SYSTEM/root. **Offline
+devices are queued and install by themselves the moment they reconnect** - that is the whole point of the task
+list. Each device row shows `ok / failed / queued / running ...` with the installer's exit code (decimal and
+hex, e.g. 3010 = "ok, but a reboot is pending - the plugin never reboots for you"); finished tasks also raise a
+notification for every logged-in admin and an entry on the device's own event page. Retry failed devices with
+one click; a cancel only drops devices that never started. Like everything else on the server: only full site
+administrators can deploy, and nothing installs without a task an admin created.
+
 * **force OS updates** installs the pending package updates *within* the installed release on every distribution
   in the table. A device without any of these package managers reports *unsupported*.
 * **force OS Upgrade** (new release) is automated for **Ubuntu only**: the device must report `ID=ubuntu` in
@@ -228,6 +254,10 @@ which table is in force.
 * Admin-only: every endpoint and the toolbar export re-check your site-administrator rights server-side; every
   changing request must come from the plugin's own page (request-header check against cross-site requests).
 * The updater writes its client transcript only to folders that standard users cannot write to.
+* Deployed packages stay on the server; delivery rides the existing agent connection (a one-shot, 5-minute
+  download ticket per device and dispatch) and is SHA-256 verified on the device before it executes. Installers
+  run as SYSTEM/root because machine-wide installation is the use case - so the Deploy tab is gated like every
+  other endpoint and tasks never run automatically.
 * Output is hardened: HTML escaping on render, CSV formula-injection neutralization, strict id validation on
   every write.
 * The updater runs one self-logging PowerShell script per device; every run ends up in a server-side log and in the
@@ -248,6 +278,11 @@ which table is in force.
   device also keeps a transcript of every updater run next to `meshagent.exe` (or in the admin-only folder
   `C:\ProgramData\InventoryScanner`) - that is the place to look when the server side stays silent.
 * **Reports look wrong** - check the inventory age first: offline devices show their last collected state.
+* **A deploy task stays "queued (waiting for connect)"** - the device has not been online since the task was
+  created; the queue is server-side and survives restarts. It says *no-file* once it ran but the download never
+  arrived (a firewall between agent and server's web port is the usual cause - the same path the agent itself
+  uses, so this only happens with exotic per-port rules). The device's `invscanner-deploy.log` (Windows: next to
+  `meshagent.exe` or `C:\ProgramData\InventoryScanner`; Linux: `/var/log/`) has the client-side view.
 
 ## Known limitations
 

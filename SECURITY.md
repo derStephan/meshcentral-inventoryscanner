@@ -19,6 +19,11 @@ Please report security vulnerabilities by opening an issue.
 - The winget updater runs PowerShell **as SYSTEM** on Windows devices (MeshCentral `runcommands`,
   `runAsUser: 0`). It is **off by default**; automatic runs need the switch AND explicitly selected device groups.
   Manual runs (Run now, per device, per package incl. *Uninstall everywhere*) are confirmed in the browser.
+- The deploy engine runs admin-chosen installers **as SYSTEM (Windows) / root (Linux)** - that is the feature
+  (machine-wide installation). There is **no automation at all**: code only ever runs because a site admin created
+  a task for explicitly selected devices, and what runs is always a library/server-files file the admin picked,
+  never a path or command typed into the form. The package bytes are SHA-256 verified **on the device** before
+  execution; a mismatch or missing download answers `no-file` and executes nothing.
 
 ### Access control (OWASP A01)
 - Every GET/POST route and the device-list toolbar hook require `user.siteadmin === 0xFFFFFFFF` **and**
@@ -35,6 +40,14 @@ Please report security vulnerabilities by opening an issue.
 - **Agent scripts:** every package id that reaches PowerShell matches `^[A-Za-z0-9._+-]{1,128}$` and is embedded
   in single quotes with quote doubling; invalid ids are dropped (ignore list) or reduce the run to a no-op
   (`$invOnly = ''`). The script travels as one base64(gzip) line, so no shell metacharacters are interpreted.
+- **Deploy scripts (v4.0.0):** file names go through `swSanitizeName` (basename, hostile chars removed), only
+  `SW_EXTS` types run, extensions/hashes/ids in the scripts are server-generated regex-cleaned values, and command
+  arguments lose all control characters (`swSafeArgs`, ≤500 chars) before being embedded **single-quoted with
+  complete shell quoting** (PowerShell `''`, POSIX `'\''`). Tests assert the quoting and that a hostile args/name
+  string can never produce a second command on a script line (plus the real PowerShell/sh parsers run over the
+  generated scripts). The staged file names are `invsw-<16hex>-<12hex>.<ext>` from a CSPRNG - an attacker who can
+  write the target temp folder cannot guess a name to pre-create. The download ticket (`tmpdl` cookie) is bound
+  to one node, one file and 5 minutes, and it is minted per dispatch.
 - **CSV formula injection** (CWE-1236): values starting with `= + - @ tab CR` are prefixed with `'`.
 - **HTML:** the views use only escaped Handlebars output (`{{...}}`, never `{{{...}}}`); the panel script
   escapes every dynamic value with `esc()` before inserting HTML.
@@ -59,7 +72,12 @@ Please report security vulnerabilities by opening an issue.
   An existing folder with another owner, or a reparse point, is refused; then the run continues without a
   transcript. User-writable locations (plain `%ProgramData%`, `%TEMP%`) are not used (since v3.0.1).
 - winget is resolved from HKLM App Paths, then the admin-only WindowsApps package folder, then PATH.
-- No reboot is ever triggered (`--allow-reboot` is never used).
+- No reboot is ever triggered (`--allow-reboot` is never used); the deploy scripts likewise carry no reboot command
+  (exit 3010/1641 is *reported* as "ok, reboot pending", asserted by the tests).
+- Deploy transcripts (Windows `invscanner-deploy.log`, Linux `/var/log/invscanner-deploy.log`) land only in the
+  same protected/checked locations as the updater transcripts; the staged copy under `<filespath>/tmp` is deleted
+  when the task closes, and stale copies are swept after 24 h. Server Files sources resolve strictly inside
+  `<filespath>/domain[-x]/mesh-<group>` (mesh ids from the DB, names re-validated, traversal rejected - tested).
 - The inventory collector asks agents with the minimum rights value (8) needed for the read; uninstall
   requests are never sent through the inventory channel.
 
@@ -74,6 +92,9 @@ Please report security vulnerabilities by opening an issue.
 ### Input validation
 - Severity values whitelisted (CRITICAL, HIGH, MEDIUM, LOW, UNKNOWN); numeric settings range-checked
   (e.g. intervals 0-87600 h); comments ≤ 1000 characters; ignore list ≤ 500 entries.
+- Deploy: extensions whitelisted (msi/msp/exe/deb/rpm/sh/bin), upload chunks 48 KiB below the server's 100 kb
+  body limit, files ≤ 2 GiB, ≤ 500 devices per task, ≤ 100 stored tasks, ids regexed before any object lookup
+  or path join.
 
 ### Defaults
 | Setting | Default |
@@ -84,6 +105,7 @@ Please report security vulnerabilities by opening an issue.
 | NVD feed refresh | every 168 h |
 | Version-less CVE suppression | older than 5 years |
 | winget updater | **off** |
+| Software deploy | manual-only, no automation exists |
 
 ### Known limitations (accepted)
 - GET endpoints (reports, CSV export) can be opened by any page the admin visits, like every MeshCentral page; the

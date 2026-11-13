@@ -678,7 +678,9 @@ steps.push(function (next) {
     check('prune: python minors coexist', p3.length === 2, p3);
     var p4 = obj.pruneSuperseded([{ name: 'Acme Tool', version: '', publisher: 'Acme' }, { name: 'Acme Tool', version: '2.0', publisher: 'Acme' }]);
     check('prune: unversioned row is never superseded', p4.length === 2, p4);
-    var now = Date.now();
+    // Pinned to local noon: with Date.now() the "2h ago today" fixture silently fell onto
+    // YESTERDAY when the suite ran between 00:00 and 02:00 local time (found during v4.0.0).
+    var now = (function () { var nd = new Date(); nd.setHours(12, 0, 0, 0); return nd.getTime(); })();
     var iso = function (msAgo) { return new Date(now - msAgo).toISOString(); };
     check('due: never ran', obj.wgNodeDue('node//x', {}, now) === true);
     check('due: ran 2h ago today', obj.wgNodeDue('node//x', { 'node//x': { time: iso(2 * 3600 * 1000) } }, now) === false);
@@ -1775,6 +1777,456 @@ steps.push(function (next) {
     if (shOk == null) { console.log('SKIP os script: sh -n (no POSIX shell available)'); }
     else { check('os linux script: sh -n reports no syntax errors', shOk === true); }
     next();
+});
+
+// ---- v4.0.0 software deploy: script builders ----
+steps.push(function (next) {
+    var taskW = { stageFile: 'invsw-0123456789abcdef-fedcba9876543210.msi', sha256: 'ab'.repeat(32), ext: 'msi', fileName: "Tool'set up.msi", args: "/qn DIR='C:\\x' FOO=1" };
+    var sW = obj.swBuildWindowsScript(taskW);
+    check('deploy win script: waits for the wget file and verifies SHA-256 before running anything',
+        sW.indexOf("$invStage = 'C:\\Windows\\Temp\\invsw-0123456789abcdef-fedcba9876543210.msi'") >= 0 &&
+        sW.indexOf('Get-FileHash') >= 0 && sW.indexOf('-ieq $invHash') >= 0 && sW.indexOf('AddMinutes($invWaitMin)') >= 0);
+    check('deploy win script: silent msiexec with /qn /norestart, exit 3010/1641 reported ok+reboot, never reboots itself',
+        sW.indexOf('/i "') >= 0 && sW.indexOf('/qn /norestart') >= 0 && sW.indexOf('$invExit -eq 3010') >= 0 &&
+        !/Restart-Computer|shutdown/i.test(sW));
+    check('deploy win script: single quotes in file name and args are doubled (PowerShell quoting), marker before Stop-Transcript',
+        sW.indexOf("$invName = 'Tool''set up.msi'") >= 0 && sW.indexOf("$invArgs = '/qn DIR=''C:\\x'' FOO=1'") >= 0 &&
+        sW.indexOf(obj.SW_MARKER) < sW.indexOf('Stop-Transcript') && sW.indexOf('invscanner-deploy.log') >= 0);
+    check('deploy win script: a missing download answers state no-file and is never executed',
+        sW.indexOf("state='no-file'") >= 0 && sW.indexOf('break }') >= 0);
+    var msp = obj.swBuildWindowsScript({ stageFile: 'invsw-x.msp', sha256: taskW.sha256, ext: 'msp', fileName: 'p.msp', args: '' });
+    check('deploy win script: .msp uses msiexec /update /quiet', msp.indexOf('/update "') >= 0 && msp.indexOf('/quiet /norestart') >= 0);
+    var ex = obj.swBuildWindowsScript({ stageFile: 'invsw-x.exe', sha256: taskW.sha256, ext: 'exe', fileName: 'a.exe', args: '--silent' });
+    check('deploy win script: .exe runs through Start-Process -Wait with the raw arguments',
+        ex.indexOf('Start-Process -FilePath $invStage -ArgumentList $invArgs -Wait -PassThru') >= 0);
+    var openers = sW.split(String.fromCharCode(10)).filter(function (l) { return /[({]\s*$/.test(l); });
+    check('deploy win script: one statement per line', openers.length === 0, openers.slice(0, 2));
+    var sC = obj.swBuildWindowsScript({ stageFile: 'invsw-x.bin', sha256: taskW.sha256, ext: 'bin', fileName: 'f.bin', args: "a\nb\r'c" });
+    check('deploy: control characters never reach a script line',
+        sC.split(String.fromCharCode(10)).every(function (l) { return l.indexOf('\r') < 0; }) && sC.indexOf("$invArgs = 'a b ''c'") >= 0);
+
+    var taskL = { stageFile: 'invsw-0123456789abcdef-fedcba9876543210.deb', sha256: 'cd'.repeat(32), ext: 'deb', fileName: 'Pkg 1.0.deb', args: '--force-confnew' };
+    var sL = obj.swBuildLinuxScript(taskL);
+    check('deploy linux script: sha256sum check, dpkg noninteractive, stdin from /dev/null, never reboots',
+        sL.indexOf('sha256sum') >= 0 && sL.indexOf('dpkg -i "$F"') >= 0 && sL.indexOf('DEBIAN_FRONTEND=noninteractive') >= 0 &&
+        sL.indexOf('< /dev/null') >= 0 && !/shutdown -r|systemctl reboot/.test(sL));
+    var sR = obj.swBuildLinuxScript({ stageFile: 'invsw-x.rpm', sha256: 'ab'.repeat(32), ext: 'rpm', fileName: 'r.rpm', args: '' });
+    var sB = obj.swBuildLinuxScript({ stageFile: 'invsw-x.bin', sha256: 'ab'.repeat(32), ext: 'bin', fileName: 'run.bin', args: '-q' });
+    check('deploy linux script: rpm and direct bin cases, chmod 700 before direct execution',
+        sR.indexOf('rpm -Uvh "$F"') >= 0 && sB.indexOf('set -- "$F" $ARGS') >= 0 && sB.indexOf('chmod 700') >= 0);
+    var sQ = obj.swBuildLinuxScript({ stageFile: 'invsw-x.sh', sha256: 'ab'.repeat(32), ext: 'sh', fileName: 'a b.sh', args: "x'y" });
+    check('deploy linux script: single quotes in args use the \'"\'" escape idiom', sQ.indexOf("ARGS='x'\\''y'") >= 0, sQ.split(String.fromCharCode(10)).slice(3, 4));
+    var sM = obj.swBuildLinuxScript({ stageFile: 'invsw-x.msi', sha256: 'ab'.repeat(32), ext: 'msi', fileName: 'w.msi', args: '' });
+    check('deploy linux script: a Windows package on Linux is refused, never executed', sM.indexOf('cannot be deployed to Linux') >= 0);
+    next();
+});
+
+// Fixture for the deploy route tests: mocked MeshCentral with a files area, cookie issuer and
+// capturing agents. Every step builds its own fixture so test order never matters.
+function makeDeployFixture() {
+    var fx = { sent: [], events: [], cookies: [] };
+    fx.dp = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-deploy-'));
+    fx.fsp = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-files-'));
+    fx.nodes = [
+        { _id: 'node//w1', meshid: 'mesh//grp1', rname: 'swin1', name: 'WinOne', osdesc: 'Microsoft Windows 11 Pro - 25H2/26200' },
+        { _id: 'node//l1', meshid: 'mesh//grp2', rname: 'sux1', name: 'LinOne', osdesc: 'Ubuntu 24.04.1 LTS' },
+        { _id: 'node//mac1', meshid: 'mesh//grp1', rname: 'mac1', name: 'MacOne', osdesc: 'macOS 15' },
+        { _id: 'node//off1', meshid: 'mesh//grp2', rname: 'offwin', name: 'OffOne', osdesc: 'Microsoft Windows 10' }
+    ];
+    var dbW = {
+        GetAllType: function (t, cb) { cb(null, t === 'node' ? fx.nodes.slice() : meshes.slice()); },
+        Get: function (id, cb) {
+            if (sysinfo[id]) { cb(null, [sysinfo[id]]); return; }
+            for (const n of fx.nodes) { if (n._id === id) { cb(null, [n]); return; } }
+            cb(null, []);
+        }
+    };
+    fx.agents = {};
+    fx.node = function (id) { fx.agents[id] = { send: function (m) { fx.sent.push(JSON.parse(m)); } }; };
+    fx.offlineNode = function (id) { delete fx.agents[id]; };
+    fx.ms = {
+        db: dbW, datapath: fx.dp, filespath: fx.fsp, args: {}, debug: function () { },
+        config: { settings: {} },
+        webserver: { meshes: { 'mesh//grp1': { name: 'HQ' }, 'mesh//grp2': { name: 'Branch' } }, wsagents: fx.agents, webCertificateFullHashs: { '': Buffer.from([0x01, 0x02, 0x3f]) } },
+        DispatchEvent: function (t, s, e) { fx.events.push(e); },
+        encodeCookie: function (o) { fx.cookies.push(o); return 'ck' + fx.cookies.length; },
+        loginCookieEncryptionKey: Buffer.alloc(80, 7)
+    };
+    fx.o = factory({ parent: fx.ms });
+    fx.o.swLoadFiles(); fx.o.swLoadTasks();
+    fx.post = function (body, cb) { fx.o.handleAdminPostReq({ headers: XHDR, body: body }, mockRes(cb), user); };
+    fx.wait = function (cond, done, timeoutMs) {
+        var tries = 0, cap = Math.ceil((timeoutMs || 6000) / 10);
+        (function poll() { if (cond()) { return done(); } if (++tries > cap) { return done(); } setTimeout(poll, 10); })();
+    };
+    fx.shaOf = function (buf) { return require('crypto').createHash('sha256').update(buf).digest('hex'); };
+    fx.data = Buffer.alloc(49152 + 1000);
+    for (var xi = 0; xi < fx.data.length; xi++) { fx.data[xi] = xi % 251; }
+    fx.gunz = function (cmd, re) { var mm = String(cmd).match(re); return mm ? require('zlib').gunzipSync(Buffer.from(mm[1], 'base64')).toString('utf8') : ''; };
+    fx.upload = function (cb) {
+        var uid = 'aabbccddeeff0011223344', o = fx.o, chunk = o.SW_CHUNK_BYTES, data = fx.data, i = 0;
+        var step = function () {
+            var start = i * chunk, end = Math.min(data.length, start + chunk);
+            fx.post({ action: 'sw_upload', uploadId: uid, name: '..\\evil.msi', index: i, data: data.slice(start, end).toString('base64url'), last: (end >= data.length) ? 'true' : 'false' }, function (d) {
+                if (d.done) { return cb(d.file); }
+                if (d.error) { return cb(null, d.error); }
+                i++; step();
+            });
+        };
+        step();
+    };
+    fx.task = function (body, cb) { fx.post(Object.assign({ action: 'sw_create_task', source: 'library', args: '' }, body), cb); };
+    return fx;
+}
+
+// ---- v4.0.0 deploy: installer library, chunked upload, rescan, delete ----
+steps.push(function (next) {
+    var fx = makeDeployFixture();
+    fx.post({ action: 'sw_files' }, function (f0) {
+        check('deploy files: empty library reports a chunk size that keeps every POST below the 100kb urlencoded body limit',
+            !f0.error && f0.files.length === 0 && f0.limits.chunkBytes === fx.o.SW_CHUNK_BYTES && f0.limits.chunkBytes * 2 < 100000 &&
+            f0.limits.exts.indexOf('msi') >= 0 && f0.limits.exts.indexOf('zip') < 0, f0.limits);
+        fx.post({ action: 'sw_upload', uploadId: 'ZZZZ', name: 'a.msi', index: 0, data: '', last: 'false' }, function (badId) {
+            check('deploy upload: non-hex upload id rejected', !!badId.error, badId);
+            fx.post({ action: 'sw_upload', uploadId: 'aabbccddeeff0011223344', name: 'tool.zip', index: 0, data: 'aGk=', last: 'false' }, function (zip) {
+                check('deploy upload: unsupported extension refused (.zip is not an installer)', !!zip.error && /Unsupported file type/.test(zip.error), zip);
+                var uid = 'aabbccddeeff0011223344';
+                fx.post({ action: 'sw_upload', uploadId: uid, name: '..\\evil.msi', index: 0, data: fx.data.slice(0, fx.o.SW_CHUNK_BYTES).toString('base64url'), last: 'false' }, function (c0) {
+                    check('deploy upload: chunk 0 accepted, path stripped from the display name', c0.ok === true && c0.next === 1, c0);
+                    fx.post({ action: 'sw_upload', uploadId: uid, index: 2, data: 'aGk=', last: 'false' }, function (gap) {
+                        check('deploy upload: a skipped chunk is refused and names the resume point', !!gap.error && gap.next === 1 && gap.have === fx.o.SW_CHUNK_BYTES, gap);
+                        fx.upload(function (file, uerr) {
+                            check('deploy upload: committing yields id, size and a real sha256 (name "evil.msi")',
+                                !uerr && file && /^[a-f0-9]{12}$/.test(file.id) && file.size === fx.data.length && file.sha256 === fx.shaOf(fx.data) && file.name === 'evil.msi', uerr || file);
+                            check('deploy upload: stored under the library folder, part deleted, index persisted',
+                                fs.existsSync(path.join(fx.o.swFilesDir, file.id + '.msi')) && !fs.existsSync(path.join(fx.o.swPartsDir, uid + '.part')) &&
+                                JSON.parse(fs.readFileSync(fx.o.swStorePath, 'utf8'))[file.id].name === 'evil.msi');
+                            var fid = file.id;
+                            fx.post({ action: 'sw_upload', uploadId: 'ee'.repeat(10), name: 'e.msi', index: 0, data: '', last: 'true' }, function (emp) {
+                                check('deploy upload: an empty file is rejected at commit', !!emp.error && /empty/i.test(emp.error), emp);
+                                // interrupted upload survives a restart (parts dir reload)
+                                var uid3 = '1213141516';
+                                fx.post({ action: 'sw_upload', uploadId: uid3, name: 'resume.msi', index: 0, data: Buffer.alloc(1000, 7).toString('base64url'), last: 'false' }, function (r0) {
+                                    check('deploy upload: an interrupted upload survives swLoadFiles and can resume',
+                                        r0.ok === true && (function () { fx.o.swLoadFiles(); return fx.o.swUploads[uid3] && fx.o.swUploads[uid3].bytes === 1000; })(), fx.o.swUploads[uid3]);
+                                    postW2();
+                                });
+                            });
+                            function postW2() {
+                                fx.post({ action: 'sw_delete_file', fileId: fid }, function (delOk) {
+                                    check('deploy delete: unused library entry is removed with its file',
+                                        delOk.success === true && !fs.existsSync(path.join(fx.o.swFilesDir, fid + '.msi')) && fx.o.swFiles[fid] == null, delOk);
+                                    var strayId = 'abcdef012345';
+                                    fs.writeFileSync(path.join(fx.o.swFilesDir, strayId + '.exe'), 'MZ-exe-bytes');
+                                    fx.post({ action: 'sw_rescan_library' }, function (rs) {
+                                        var stray = (rs.files || []).filter(function (x) { return x.name === strayId + '.exe'; })[0];
+                                        check('deploy rescan: a file placed in the server folder is indexed (renamed to <id>.exe, hash, display name kept)',
+                                            rs.added === 1 && stray != null && stray.sha256 === fx.shaOf(Buffer.from('MZ-exe-bytes')) &&
+                                            /^[a-f0-9]{12}$/.test(String(stray.id || '')) && fs.existsSync(path.join(fx.o.swFilesDir, stray.id + '.exe')) &&
+                                            !fs.existsSync(path.join(fx.o.swFilesDir, strayId + '.exe')), rs);
+                                        fx.o.swLog('marker-line-for-the-log-test');
+                                        fx.post({ action: 'get_log', type: 'deploy' }, function (lg) {
+                                            check('deploy log: tail served under plugins/inventoryscanner/software-deploy.log',
+                                                lg.file === 'plugins/inventoryscanner/software-deploy.log' && lg.lines.some(function (l) { return l.indexOf('marker-line-for-the-log-test') >= 0; }), lg.file);
+                                            next();
+                                        });
+                                    });
+                                });
+                            }
+                        });
+                    });
+                });
+            });
+        });
+    });
+});
+
+// ---- v4.0.0 deploy: dispatch e2e, offline queue, retry, location expand ----
+steps.push(function (next) {
+    var fx = makeDeployFixture();
+    fx.node('node//w1');
+    fx.upload(function (file) {
+        fx.task({ fileId: file.id, args: '/qn FOO=1', nodeIds: 'node//w1' }, function (created) {
+            check('deploy task: create answers with a hex id and the device count', !created.error && /^[a-f0-9]{16}$/.test(created.taskId) && created.devices === 1, created);
+            fx.wait(function () { return fx.sent.length >= 2; }, function () {
+                var wget = fx.sent.filter(function (m) { return m.action === 'wget'; })[0];
+                var rc = fx.sent.filter(function (m) { return m.action === 'runcommands'; })[0];
+                var stageFile = wget ? String(wget.path || '').split(/[\\/]/).pop() : '';
+                check('deploy dispatch: the agent wget has the verified upstream shape (cookie urlpath, overwrite, folder, cert hash)',
+                    wget != null && wget.urlpath === '/agentdownload.ashx?c=ck1' && wget.overwrite === true && wget.consent === 0 &&
+                    wget.path === 'C:\\Windows\\Temp\\' + stageFile && wget.folder === 'C:\\Windows\\Temp' && wget.servertlshash === '01023f' &&
+                    /^invsw-[a-f0-9]{16}-[a-f0-9]{12}\.msi$/.test(stageFile), wget && wget.urlpath);
+                check('deploy dispatch: the tmpdl cookie is minted per device AT DISPATCH time (5-minute expiry honoured)',
+                    fx.cookies.length === 1 && fx.cookies[0].a === 'tmpdl' && fx.cookies[0].d === '' && fx.cookies[0].nid === 'node//w1' && fx.cookies[0].f === stageFile, fx.cookies[0]);
+                check('deploy dispatch: the installer is staged into <filespath>/tmp and the SHA-256 is taken from the COPY',
+                    fs.existsSync(path.join(fx.fsp, 'tmp', stageFile)) && fs.readFileSync(path.join(fx.fsp, 'tmp', stageFile)).length === fx.data.length &&
+                    fx.o.swTasks[created.taskId].sha256 === fx.shaOf(fx.data));
+                var scriptGz = rc ? fx.gunz(rc.cmds, /FromBase64String\('([A-Za-z0-9+\/=]+)'\)/) : '';
+                check('deploy dispatch: runcommands type 1 as SYSTEM, invscanner-sw session, hash + stage path inside the gzipped script',
+                    rc != null && rc.type === 1 && rc.runAsUser === 0 && rc.reply === true && String(rc.sessionid) === 'invscanner-sw-w1' &&
+                    scriptGz.indexOf(fx.shaOf(fx.data)) >= 0 && scriptGz.indexOf(stageFile) >= 0, rc && rc.sessionid);
+                check('deploy dispatch: device state running, task file written',
+                    fx.o.swTasks[created.taskId].devices['node//w1'].state === 'running' && fs.existsSync(fx.o.swTasksPath));
+                fx.post({ action: 'sw_status' }, function (st0) {
+                    var t0 = (st0.tasks || [])[0] || {};
+                    check('deploy status: open task shows the running device, sha and args',
+                        t0.done === false && t0.counts.running === 1 && t0.sha256 === fx.shaOf(fx.data) && t0.args === '/qn FOO=1' &&
+                        (t0.devices[0] || {}).node === 'node//w1', t0.counts);
+                    check('deploy reply: a winget-sessionized answer never consumes the deploy session',
+                        fx.o.onAgentResponse({ action: 'msg', type: 'runcommands', sessionid: 'invscanner-wg-w1', result: fx.o.SW_MARKER + '{"state":"ok"}' }, '', 'node//w1') === true &&
+                        fx.o.swPending['node//w1'] != null && fx.o.swTasks[created.taskId].devices['node//w1'].state === 'running');
+                    check('deploy reply: the marker JSON on our own session is consumed',
+                        fx.o.onAgentResponse({ action: 'msg', type: 'runcommands', sessionid: rc.sessionid, result: 'noise' + fx.o.SW_MARKER + '{"deploy":true,"state":"ok","name":"evil.msi","exit":0,"reboot":false,"error":""}' + String.fromCharCode(13, 10) }, '', 'node//w1') === true);
+                    check('deploy reply: task closes, staged file deleted, admins AND the device get the feedback',
+                        fx.o.swTasks[created.taskId].done === true && fx.o.swTasks[created.taskId].counts.ok === 1 &&
+                        !fs.existsSync(path.join(fx.fsp, 'tmp', stageFile)) &&
+                        fx.events.some(function (e) { return e.type === 'notify' && /evil\.msi/.test(String(e.value)); }) &&
+                        fx.events.some(function (e) { return e.etype === 'node' && e.nodeid === 'node//w1' && /deploy/i.test(String(e.msg)); }), fx.o.swTasks[created.taskId].counts);
+                    offlineFlow();
+                });
+            });
+        });
+    });
+
+    function offlineFlow() {
+        fx.upload(function (f2) {
+            fx.sent.length = 0;
+            fx.task({ fileId: f2.id, nodeIds: 'node//off1' }, function (tOff) {
+                check('deploy offline: a task for an offline device is created and stays queued - zero agent traffic',
+                    !tOff.error && fx.sent.length === 0 && fx.o.swTasks[tOff.taskId].devices['node//off1'].state === 'queued', [tOff, fx.sent.length]);
+                fx.post({ action: 'sw_delete_file', fileId: f2.id }, function (delOpen) {
+                    check('deploy delete guard: a file referenced by an OPEN task cannot be deleted', !!delOpen.error && /Open tasks/.test(delOpen.error), delOpen);
+                    fx.node('node//off1');
+                    fx.o.swOnNodeConnect('node//off1');
+                    fx.wait(function () { return fx.sent.length >= 2; }, function () {
+                        var wget2 = fx.sent.filter(function (m) { return m.action === 'wget'; })[0];
+                        var rc2 = fx.sent.filter(function (m) { return m.action === 'runcommands'; })[0];
+                        check('deploy offline: on reconnect the queued task dispatches automatically ("install when the device is back")',
+                            wget2 != null && fx.o.swTasks[tOff.taskId].devices['node//off1'].state === 'running', fx.sent.map(function (m) { return m.action; }));
+                        check('deploy offline: the late download gets a FRESH cookie',
+                            String(wget2.urlpath).indexOf('?c=ck') > 0 && fx.cookies[fx.cookies.length - 1].nid === 'node//off1', wget2 && wget2.urlpath);
+                        fx.o.onAgentResponse({ action: 'msg', type: 'runcommands', sessionid: rc2.sessionid, result: fx.o.SW_MARKER + '{"deploy":true,"state":"no-file","exit":null,"error":"the download never arrived"}' }, '', 'node//off1');
+                        check('deploy answer: no-file is final and counts as failed - nothing was executed on the device',
+                            fx.o.swTasks[tOff.taskId].devices['node//off1'].state === 'no-file' && fx.o.swTasks[tOff.taskId].done === true && fx.o.swTasks[tOff.taskId].counts.failed === 1);
+                        fx.sent.length = 0;
+                        fx.post({ action: 'sw_retry_task', taskId: tOff.taskId }, function (rt) {
+                            check('deploy retry: the not-ok device is queued again', !rt.error && rt.devices === 1, rt);
+                            fx.wait(function () { return fx.sent.length >= 2; }, function () {
+                                var rc3 = fx.sent.filter(function (m) { return m.action === 'runcommands'; })[0];
+                                fx.o.onAgentResponse({ action: 'msg', type: 'runcommands', sessionid: rc3.sessionid, result: fx.o.SW_MARKER + '{"deploy":true,"state":"ok","exit":0}' }, '', 'node//off1');
+                                check('deploy retry: re-staged with a fresh cookie and closed ok',
+                                    fx.cookies[fx.cookies.length - 1].nid === 'node//off1' && fx.o.swTasks[tOff.taskId].counts.ok === 1 && fx.o.swTasks[tOff.taskId].done === true);
+                                mixedFlow();
+                            });
+                        });
+                    });
+                });
+            });
+        });
+    }
+
+    function mixedFlow() {
+        fx.upload(function (f3) {
+            fx.node('node//mac1');
+            fx.sent.length = 0;
+            fx.task({ fileId: f3.id, meshIds: 'mesh//grp1' }, function (tMix) {
+                check('deploy locations: a whole location expands to its devices (w1 + mac1)', !tMix.error && tMix.devices === 2, tMix);
+                fx.wait(function () { return (fx.o.swTasks[tMix.taskId].devices['node//mac1'] || {}).state === 'unsupported' && fx.sent.some(function (m) { return m.action === 'runcommands'; }); }, function () {
+                    check('deploy platform gate: the macOS device ends unsupported and its agent never receives a script',
+                        !fx.sent.some(function (m) { return m.action === 'runcommands' && String(m.sessionid) === 'invscanner-sw-mac1'; }));
+                    var rcM = fx.sent.filter(function (m) { return m.action === 'runcommands'; })[0];
+                    fx.o.onAgentResponse({ action: 'msg', type: 'runcommands', sessionid: rcM.sessionid, result: fx.o.SW_MARKER + '{"deploy":true,"state":"failed","exit":1603,"error":""}' }, '', 'node//w1');
+                    var tv = fx.o.swTaskView(fx.o.swTasks[tMix.taskId]);
+                    check('deploy answer: failed keeps the exit code and closes the task (1603 shows decimal + hex in the UI)',
+                        fx.o.swTasks[tMix.taskId].done === true && tv.counts.failed === 1 && tv.counts.other === 1 &&
+                        tv.devices.some(function (x) { return x.exit === 1603; }), tv.counts);
+                    fx.post({ action: 'sw_delete_file', fileId: f3.id }, function (delDone) {
+                        check('deploy delete guard: after the task is done the file can be deleted again', delDone.success === true, delDone);
+                        next();
+                    });
+                });
+            });
+        });
+    }
+});
+
+// ---- v4.0.0 deploy: linux transport, console-channel answers, watchdog, cancel ----
+steps.push(function (next) {
+    var fx = makeDeployFixture();
+    fx.node('node//l1'); fx.node('node//w1');
+    fx.upload(function (file) {
+        fx.task({ fileId: file.id, nodeIds: 'node//l1' }, function (tL) {
+            fx.wait(function () { return fx.sent.length >= 2; }, function () {
+                var wgetL = fx.sent.filter(function (m) { return m.action === 'wget'; })[0];
+                var rcL = fx.sent.filter(function (m) { return m.action === 'runcommands'; })[0];
+                check('deploy linux: wget targets /var/tmp and the script rides runcommands type 3 (/bin/sh)',
+                    /^\/var\/tmp\/invsw-[a-f0-9-]+\.msi$/.test(wgetL.path) && rcL.type === 3 && String(rcL.sessionid) === 'invscanner-sw-l1', [wgetL.path, rcL.type]);
+                check('deploy linux: a foreign-session answer is not consumed by the deploy engine',
+                    fx.o.onAgentResponse({ action: 'msg', type: 'runcommands', sessionid: 'user//admin/xyz', result: 'x' }, '', 'node//l1') === false && fx.o.swPending['node//l1'] != null);
+                check('deploy linux: the answer may also arrive over the session-less console channel',
+                    fx.o.onAgentResponse({ action: 'msg', type: 'console', value: 'output...' + fx.o.SW_MARKER + '{"deploy":true,"state":"ok","name":"evil.msi","exit":0,"reboot":false}' + String.fromCharCode(10) }, '', 'node//l1') === true &&
+                    fx.o.swTasks[tL.taskId].done === true && fx.o.swTasks[tL.taskId].counts.ok === 1);
+                fx.sent.length = 0;
+                fx.task({ fileId: file.id, nodeIds: 'node//w1' }, function (tTo) {
+                    fx.wait(function () { return fx.o.swPending['node//w1'] != null; }, function () {
+                        fx.o.swTimeout(fx.o.swPending['node//w1']);
+                        check('deploy watchdog: a silent device ends in timeout and the session slot is freed',
+                            fx.o.swTasks[tTo.taskId].devices['node//w1'].state === 'timeout' && fx.o.swTasks[tTo.taskId].done === true &&
+                            fx.o.swPending['node//w1'] == null && fx.o.swActive === 0 &&
+                            fx.events.some(function (e) { return e.etype === 'node' && /timeout/i.test(String(e.msg)); }));
+                        fx.offlineNode('node//off1');
+                        fx.task({ fileId: file.id, nodeIds: 'node//off1' }, function (tC) {
+                            check('deploy cancel: offline device starts out queued', !tC.error && fx.o.swTasks[tC.taskId].devices['node//off1'].state === 'queued', tC);
+                            fx.post({ action: 'sw_cancel_task', taskId: tC.taskId }, function (cc) {
+                                check('deploy cancel: queued devices are cancelled and the task completes',
+                                    cc.success === true && cc.cancelled === 1 && fx.o.swTasks[tC.taskId].done === true && fx.o.swTasks[tC.taskId].counts.other === 1, cc);
+                                fx.post({ action: 'sw_cancel_task', taskId: 'constructor' }, function (badC) {
+                                    check('deploy cancel: a prototype-style task id is refused before any lookup', !!badC.error, badC);
+                                    next();
+                                });
+                            });
+                        });
+                    });
+                });
+            });
+        });
+    });
+});
+
+// ---- v4.0.0 deploy: validation, server files, devices view, gating, persistence ----
+steps.push(function (next) {
+    var fx = makeDeployFixture();
+    fx.node('node//w1');
+    fx.upload(function (file) {
+        fx.post({ action: 'sw_create_task', source: 'bogus', nodeIds: 'node//w1' }, function (badSrc) {
+            check('deploy validation: unknown source rejected', !!badSrc.error, badSrc);
+            fx.task({ fileId: file.id, nodeIds: 'node//nosuch' }, function (ghost) {
+                check('deploy validation: a node id not present on the server answers "No device matched" (never a phantom task)',
+                    !!ghost.error && /No device matched/.test(ghost.error) && Object.keys(fx.o.swTasks).length === 0, ghost);
+                fx.task({ fileId: file.id, meshIds: 'mesh//grp9' }, function (nomesh) {
+                    check('deploy validation: a location with no devices is an error', !!nomesh.error, nomesh);
+                    fx.post({ action: 'sw_create_task', source: 'library', fileId: 'ffffffffffff', nodeIds: 'node//w1' }, function (badFile) {
+                        check('deploy validation: unknown library id rejected', !!badFile.error, badFile);
+                        fx.task({ fileId: file.id, nodeIds: 'node//w1', args: "quiet\r\n$(reboot)" }, function (tA) {
+                            check('deploy validation: args lose control characters but keep their content',
+                                !tA.error && !/[\r\n]/.test(fx.o.swTasks[tA.taskId].args) && fx.o.swTasks[tA.taskId].args.indexOf('$(reboot)') >= 0, fx.o.swTasks[tA.taskId].args);
+                            var rcA = null;
+                            fx.wait(function () { rcA = fx.sent.filter(function (m) { return m.action === 'runcommands'; })[0] || null; return rcA != null; }, function () {
+                                var scr = fx.gunz(rcA.cmds, /FromBase64String\('([A-Za-z0-9+\/=]+)'\)/);
+                                check('deploy security: the args only appear inside the quoted $invArgs assignment, never as loose shell text',
+                                    scr.split(String.fromCharCode(10)).every(function (l) { return l.indexOf('$(reboot)') < 0 || /^\$invArgs = '/.test(l); }),
+                                    scr.split(String.fromCharCode(10)).filter(function (l) { return l.indexOf('reboot') >= 0; }).slice(0, 2));
+                                fx.o.onAgentResponse({ action: 'msg', type: 'runcommands', sessionid: rcA.sessionid, result: fx.o.SW_MARKER + '{"deploy":true,"state":"ok","exit":3010,"reboot":true}' }, '', 'node//w1');
+                                check('deploy answer: 3010 stores ok + reboot pending (the plugin itself never reboots)',
+                                    fx.o.swTasks[tA.taskId].devices['node//w1'].reboot === true && fx.o.swTasks[tA.taskId].counts.ok === 1);
+                                serverFiles();
+                            });
+                        });
+                    });
+                });
+            });
+        });
+    });
+
+    function serverFiles() {
+        var sfDir = path.join(fx.fsp, 'domain', 'mesh-grp1');
+        fs.mkdirSync(sfDir, { recursive: true });
+        fs.writeFileSync(path.join(sfDir, 'shared tool.msi'), fx.data);
+        fs.writeFileSync(path.join(sfDir, '.hidden'), 'x');
+        fx.post({ action: 'sw_serverfiles' }, function (sf) {
+            check('deploy serverfiles: MeshCentral Server Files folders are listed, dot-files hidden',
+                !sf.error && sf.folders.length === 1 && sf.folders[0].name === 'HQ' &&
+                sf.folders[0].files.length === 1 && sf.folders[0].files[0].name === 'shared tool.msi', sf.folders);
+            fx.post({ action: 'sw_create_task', source: 'serverfile', meshId: 'mesh//grp1', fileName: '../../etc/passwd', nodeIds: 'node//w1' }, function (trav) {
+                check('deploy serverfiles: path traversal in the file name is rejected', !!trav.error, trav);
+                fx.sent.length = 0;
+                fx.post({ action: 'sw_create_task', source: 'serverfile', meshId: 'mesh//grp1', fileName: 'shared tool.msi', nodeIds: 'node//w1' }, function (sft) {
+                    check('deploy serverfiles: task accepted', !sft.error && sft.devices === 1, sft);
+                    fx.wait(function () { return fx.sent.length >= 2; }, function () {
+                        var sfWget = fx.sent.filter(function (m) { return m.action === 'wget'; })[0];
+                        var sfStage = String(sfWget.path).split(/[\\/]/).pop();
+                        check('deploy serverfiles: the server file is staged through the same tmp channel with its hash',
+                            fs.existsSync(path.join(fx.fsp, 'tmp', sfStage)) && fx.o.swTasks[sft.taskId].sha256 === fx.shaOf(fx.data));
+                        var sfRc = fx.sent.filter(function (m) { return m.action === 'runcommands'; })[0];
+                        fx.o.onAgentResponse({ action: 'msg', type: 'runcommands', sessionid: sfRc.sessionid, result: 'junk without marker' }, '', 'node//w1');
+                        check('deploy answer: output without the marker is an error, never a silent success',
+                            fx.o.swTasks[sft.taskId].devices['node//w1'].state === 'error' && /no marker/.test(fx.o.swTasks[sft.taskId].devices['node//w1'].note));
+                        devicesAndGating();
+                    });
+                });
+            });
+        });
+    }
+
+    function devicesAndGating() {
+        fx.post({ action: 'sw_devices' }, function (dv) {
+            var w1 = dv.devices.filter(function (x) { return x.id === 'node//w1'; })[0];
+            var mac1 = dv.devices.filter(function (x) { return x.id === 'node//mac1'; })[0];
+            var off1 = dv.devices.filter(function (x) { return x.id === 'node//off1'; })[0];
+            check('deploy devices: every node with group, online flag and platform (mac = other, offline flagged)',
+                dv.devices.length === 4 && w1.online === true && w1.platform === 'windows' && w1.group === 'HQ' &&
+                mac1.platform === 'other' && off1.online === false, dv.devices.map(function (x) { return [x.id, x.online, x.platform]; }));
+            fx.o.handleAdminPostReq({ body: { action: 'sw_status' } }, mockRes(function (noHdr) {
+                check('deploy route: POST without the X-InvScanner-Request header -> 403', noHdr._status === 403, noHdr);
+                fx.o.handleAdminPostReq({ headers: XHDR, body: { action: 'sw_status' } }, mockRes(function (noRight) {
+                    check('deploy route: non-admin -> 401', noRight._status === 401, noRight);
+                    persistence();
+                }), { name: 'guest', siteadmin: 0, domain: '' });
+            }), user);
+        });
+    }
+
+    function persistence() {
+        var saved = JSON.parse(fs.readFileSync(fx.o.swTasksPath, 'utf8'));
+        var anyId = Object.keys(saved)[0];
+        saved[anyId].done = false; delete saved[anyId].finishTime;
+        var anyDev = Object.keys(saved[anyId].devices)[0];
+        saved[anyId].devices[anyDev].state = 'running';
+        fs.writeFileSync(fx.o.swTasksPath, JSON.stringify(saved));
+        var savedGen = global.__inventoryscannerInstanceGen;
+        var objR = factory({ parent: fx.ms });
+        objR.swLoadTasks();
+        global.__inventoryscannerInstanceGen = savedGen;
+        check('deploy persistence: after a restart a device stuck "running" (its session died) is reset to "queued" and runs again',
+            objR.swTasks[anyId] != null && objR.swTasks[anyId].devices[anyDev].state === 'queued', objR.swTasks[anyId] && objR.swTasks[anyId].devices[anyDev]);
+        check('deploy persistence: task records keep creator, source and stage name across restarts',
+            typeof objR.swTasks[anyId].created === 'string' && /^invsw-[a-f0-9]{16}-[a-f0-9]{12}\.msi$/.test(objR.swTasks[anyId].stageFile));
+        structural();
+    }
+
+    function structural() {
+        var src = pluginSrc();
+        check('deploy wiring: the collector routes invscanner-sw sessions and the reconnect hook calls the engine',
+            src.indexOf('invscanner-sw-') >= 0 && /obj\.swHandleResponse\(nodeid, command\)/.test(src) && /obj\.swOnNodeConnect\(swNode\)/.test(src));
+        check('deploy wiring: startup loads the store/tasks and arms the sweep; routes dispatch the sw actions',
+            /obj\.swLoadFiles\(\)/.test(src) && /obj\.swLoadTasks\(\)/.test(src) && /obj\.swCleanStaleStaging\(\)/.test(src) && /obj\.scheduleSwSweep\(\)/.test(src) &&
+            /action === 'sw_create_task'/.test(src) && /action === 'sw_upload'/.test(src));
+        check('deploy wiring: the winget and OS pumps skip nodes with a deploy session (one runcommands per agent)',
+            (src.match(/obj\.swPending != null && obj\.swPending\[nodeid\] != null/g) || []).length >= 2);
+        var cp = require('child_process');
+        var dir = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-swpp-'));
+        var p1 = path.join(dir, 'deploy.ps1');
+        fs.writeFileSync(p1, obj.swBuildWindowsScript({ stageFile: 'invsw-aa11.msi', sha256: 'ab'.repeat(32), ext: 'msi', fileName: 'a b.msi', args: "/qn X=1 'Y'" }));
+        var out = null;
+        try { out = cp.execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', "$t=$null;$e=$null;[void][System.Management.Automation.Language.Parser]::ParseFile('" + p1 + "',[ref]$t,[ref]$e);$e.Count"], { encoding: 'utf8', timeout: 60000 }); } catch (e) { out = null; }
+        if (out == null) { console.log('SKIP deploy script: PowerShell parser (PowerShell not available)'); }
+        else { check('deploy win script: PowerShell parser reports no errors', out.trim() === '0', out.trim()); }
+        var p2 = path.join(dir, 'deploy.sh');
+        fs.writeFileSync(p2, obj.swBuildLinuxScript({ stageFile: '/var/tmp/invsw-aa11.deb', sha256: 'ab'.repeat(32), ext: 'deb', fileName: 'a.deb', args: '' }));
+        var shOk = null;
+        ['sh', 'bash', 'C:\\Program Files\\Git\\bin\\sh.exe'].some(function (sh) { try { cp.execFileSync(sh, ['-n', p2], { stdio: 'pipe', timeout: 30000 }); shOk = true; return true; } catch (e) { if (e.status != null) { shOk = false; return true; } return false; } });
+        if (shOk == null) { console.log('SKIP deploy script: sh -n (no POSIX shell available)'); }
+        else { check('deploy linux script: sh -n reports no syntax errors', shOk === true); }
+        next();
+    }
+});
+
+// ---- v4.0.0 deploy: a server without filespath degrades honestly ----
+steps.push(function (next) {
+    obj.handleAdminPostReq({ headers: XHDR, body: { action: 'sw_serverfiles' } }, mockRes(function (d) {
+        check('deploy serverfiles: without a files area the route answers an error, never a crash', !!d.error && /not available/i.test(d.error), d);
+        next();
+    }), user);
 });
 
 // The runner MUST stay the last statement: every steps.push() above has to be registered before
