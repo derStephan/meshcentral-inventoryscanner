@@ -203,8 +203,16 @@ for _i in $(seq 1 90); do
 done
 if [ -n "$AGENTID" ]; then ok "the agent shows online in sw_devices ($AGENTID)"; else bad 'no online agent within 3 minutes'; fi
 export AG_ENV="$AGENTID"
-post_auth --data 'action=sw_devices' >/dev/null
-chkjq '...and it is a LINUX device' 'any(.devices[]; .id==env.AG_ENV and .platform=="linux")'
+# "online" comes with the agent connection, osdesc only with the agent's later core info - until
+# then osPlatformOf() answers 'other'. Wait for the platform instead of checking it once.
+AGPLAT=''
+for _i in $(seq 1 60); do
+    post_auth --data 'action=sw_devices' >/dev/null
+    AGPLAT=$(jq -r '[.devices[]|select(.id==env.AG_ENV)][0].platform // empty' "$BODY")
+    [ "$AGPLAT" = 'linux' ] && break
+    sleep 2
+done
+if [ "$AGPLAT" = 'linux' ]; then ok '...and it is a LINUX device'; else bad "...and it is a LINUX device (after 2 min: $(jq -c '[.devices[]|select(.id==env.AG_ENV)][0]|{platform,os,online}' "$BODY" 2>/dev/null))"; fi
 # Arm the collector EXACTLY once: save_settings -> rescheduleAll -> collectAllOnline 20 s later
 # and every 60 s after that. Re-arming inside the wait loop would invalidate the previous pass
 # (timerGen++), so patience is what we wait with - plus the connect-hook's own stagger timer.
