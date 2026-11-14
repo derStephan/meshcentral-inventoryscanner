@@ -1830,8 +1830,9 @@ steps.push(function (next) {
     var msp = obj.swBuildWindowsScript({ stageFile: 'invsw-x.msp', sha256: taskW.sha256, ext: 'msp', fileName: 'p.msp', args: '' });
     check('deploy win script: .msp uses msiexec /update /quiet', msp.indexOf('/update "') >= 0 && msp.indexOf('/quiet /norestart') >= 0);
     var ex = obj.swBuildWindowsScript({ stageFile: 'invsw-x.exe', sha256: taskW.sha256, ext: 'exe', fileName: 'a.exe', args: '--silent' });
-    check('deploy win script: .exe runs through Start-Process -Wait with the raw arguments',
-        ex.indexOf('Start-Process -FilePath $invStage -ArgumentList $invArgs -Wait -PassThru') >= 0);
+    check('deploy win script: .exe runs through Start-Process -Wait with the raw arguments, from the protected run folder',
+        ex.indexOf('Start-Process -FilePath $invRun -ArgumentList $invArgs -WorkingDirectory $invRunDir -Wait -PassThru') >= 0 &&
+        ex.indexOf('Start-Process -FilePath $invStage') < 0);
     var openers = sW.split(String.fromCharCode(10)).filter(function (l) { return /[({]\s*$/.test(l); });
     check('deploy win script: one statement per line', openers.length === 0, openers.slice(0, 2));
     var sC = obj.swBuildWindowsScript({ stageFile: 'invsw-x.bin', sha256: taskW.sha256, ext: 'bin', fileName: 'f.bin', args: "a\nb\r'c" });
@@ -2275,9 +2276,45 @@ steps.push(function (next) {
 
     // A2: verified bytes == executed bytes
     var sW = obj.swBuildWindowsScript({ stageFile: 'invsw-x.msi', sha256: 'ab'.repeat(32), ext: 'msi', fileName: 'a.msi', args: '' });
-    check('audit3 A2 win: the staged file is hashed through a FileShare.Read handle that stays open until after the install',
+    check('audit3 A2 win: the staged file is hashed through a FileShare.Read handle, the run copy stays write-locked until after the install',
         sW.indexOf('[System.IO.FileShare]::Read') >= 0 && sW.indexOf('Get-FileHash -InputStream $invFs') >= 0 &&
-        sW.indexOf('$invFs.Dispose(); $invFs = $null } } catch { }') > sW.indexOf("Start-Process -FilePath 'msiexec.exe'"));
+        sW.indexOf('Get-FileHash -InputStream $invRunFs') >= 0 &&
+        sW.indexOf('$invRunFs.Dispose(); $invRunFs = $null } } catch { }') > sW.indexOf("Start-Process -FilePath 'msiexec.exe'"));
+    // v4.3.1: an installer is never started from C:\Windows\Temp (DLL search order, CWE-427)
+    check('v4.3.1 dll: installers start from a fresh folder created with a protected SYSTEM+Administrators ACL, which is also the working directory',
+        sW.indexOf("('invsw-run-' + [guid]::NewGuid().ToString('N'))") >= 0 && sW.indexOf('SetAccessRuleProtection($true, $false)') >= 0 &&
+        sW.indexOf('[System.IO.Directory]::CreateDirectory($invRunDir, $invDS)') >= 0 && sW.indexOf('AreAccessRulesProtected') >= 0 &&
+        sW.indexOf("'/i \"' + $invRun + '\" /qn /norestart'") >= 0 && sW.indexOf('-WorkingDirectory $invRunDir') >= 0 &&
+        !/Start-Process[^;]*\$invStage/.test(sW));
+    check('v4.3.1 dll: a run folder that cannot be prepared answers error and executes nothing; the folder is removed afterwards',
+        sW.indexOf("could not prepare the protected run folder, nothing was executed") >= 0 &&
+        sW.lastIndexOf('Remove-Item -LiteralPath $invRunDir -Recurse -Force') > sW.indexOf("Start-Process -FilePath 'msiexec.exe'"));
+    // Real run (Windows only): the generated script started from a stage folder must launch the program from the
+    // protected run folder (proof: the program prints its own folder), and that folder is gone afterwards. The test
+    // user's SID is added to the ACL ONLY in this copy, because a non-SYSTEM test cannot read a SYSTEM+Admins folder.
+    (function () {
+        if (process.platform !== 'win32') { console.log('SKIP v4.3.1 dll: real run (not Windows)'); return; }
+        var who = runPs(['-NoProfile', '-NonInteractive', '-Command', '[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value']);
+        if (who == null) { console.log('SKIP v4.3.1 dll: real run (PowerShell not available)'); return; }
+        var sid = String(who.text || '').trim();
+        var d = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-dll-'));
+        var exe = fs.readFileSync(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'cmd.exe'));
+        fs.writeFileSync(path.join(d, 'invsw-aa-bb.exe'), exe);
+        var sha = require('crypto').createHash('sha256').update(exe).digest('hex');
+        var scr = obj.swBuildWindowsScript({ stageFile: 'invsw-aa-bb.exe', sha256: sha, ext: 'exe', fileName: 'p.exe', args: '/c cd > "%TEMP%\\invscanner-dll-cwd.txt"' })
+            .split('C:\\Windows\\Temp\\').join(d + '\\').split("@('S-1-5-18', 'S-1-5-32-544')").join("@('S-1-5-18', 'S-1-5-32-544', '" + sid + "')");
+        fs.writeFileSync(path.join(d, 'run.ps1'), scr);
+        var cwdFile = path.join(os.tmpdir(), 'invscanner-dll-cwd.txt');
+        try { fs.unlinkSync(cwdFile); } catch (e) { }
+        var r = runPs(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(d, 'run.ps1')], { timeout: 120000 });
+        var cwd = ''; try { cwd = fs.readFileSync(cwdFile, 'utf8').trim(); } catch (e) { }
+        var left = fs.readdirSync(d).filter(function (n) { return /^invsw-run-/.test(n); });
+        check('v4.3.1 dll: real run - the program ran from the protected run folder (not the download folder), state ok, folder removed',
+            r != null && !r.failed && /"state":"ok"/.test(r.text) && cwd.indexOf(path.join(d, 'invsw-run-')) === 0 && left.length === 0,
+            [cwd, left, r && r.text.substring(0, 200)]);
+        try { fs.unlinkSync(cwdFile); } catch (e) { }
+        try { fs.rmSync(d, { recursive: true, force: true }); } catch (e) { }
+    })();
     var sL = obj.swBuildLinuxScript({ stageFile: 'invsw-x.sh', sha256: 'ab'.repeat(32), ext: 'sh', fileName: 'a.sh', args: '' });
     check('audit3 A2 linux: only a private mktemp copy (re-hashed) is executed, never the /var/tmp download',
         sL.indexOf('mktemp -d /var/tmp/invsw-run.XXXXXXXX') >= 0 && sL.indexOf('H2=$(sha256sum "$P"') >= 0 &&

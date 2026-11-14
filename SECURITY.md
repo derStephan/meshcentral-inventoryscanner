@@ -26,6 +26,8 @@ Please report security vulnerabilities by opening an issue.
   execution; a mismatch or missing download answers `no-file` and executes nothing. Since v4.3.0 the verified bytes
   are exactly the executed bytes: Windows keeps a read-only, write-locked handle on the file from the hash check
   until the installer ended, Linux executes only a re-hashed private copy in a fresh `mktemp -d` (mode 700) folder.
+  Since v4.3.1 a Windows installer is never started from `C:\Windows\Temp`: it runs from a new folder with a
+  SYSTEM + Administrators ACL, so no DLL planted by a standard user next to it can be loaded (CWE-427).
 - **Server Files as a deploy source** are a trust decision: MeshCentral lets every user with the *server files*
   right of a device group (`MESHRIGHT_SERVERFILES`) put files into that group's folder. Deploying such a file runs
   that user's file as SYSTEM/root - check the content before you deploy it. File names from there are always
@@ -65,7 +67,8 @@ Please report security vulnerabilities by opening an issue.
 - **HTML:** the views use only escaped Handlebars output (`{{...}}`, never `{{{...}}}`); the panel script
   escapes every dynamic value with `esc()` before inserting HTML. The panel's own inline `<script>` is a static
   file (no interpolation), and the verification tool that extracts it (`tools/check.js`) matches the tag
-  case-insensitively and with attributes and checks EVERY script block of every view (since v4.3.0), so no
+  case-insensitively and with attributes (also on the end tag, e.g. `</script >`, since v4.3.1) and checks EVERY
+  script block of every view, failing when an opening tag has no extracted block (since v4.3.0/4.3.1), so no
   variant of the tag can hide a block from the syntax check.
 - **Ids:** CVE ids `CVE-\d{4}-\d{4,}`, `WINDOWS-UPDATES` or `OS-EOL`; mesh ids `^mesh/[^:]+$` (prevents key poisoning in
   `assessments.json`) on every write and on the scan query; node ids `^node/[^:]{1,100}$` for the updater.
@@ -145,6 +148,7 @@ Please report security vulnerabilities by opening an issue.
 | 2026-11-11 | AI (opencode) | Claude Opus 5.5 | Independent full audit of v3.0.0: server, agent scripts, update/uninstall, OWASP Top 10, texts, docs, tests | 17 findings, all fixed in v3.0.1 |
 | 2026-11-13 | GitHub Code Scanning (CodeQL, javascript-typescript) | - | Whole JS tree of v4.2.1 | 1 alert (`js/bad-tag-filter`, tools/check.js) - fixed in v4.2.2 |
 | 2026-11-14 | AI (opencode) | Claude Opus 5.5 | Independent full audit of v4.2.2: server, agents, winget/OS/deploy scripts (Windows + Linux), OWASP Top 10, tests, GitHub Actions, texts, docs | 10 findings + 7 test/CI + 10 text, all fixed in v4.3.0 |
+| 2026-11-14 | Follow-up (Claude Opus 5.5) + GitHub Code Scanning | - | DLL planting next to the deploy installer; CodeQL `js/bad-tag-filter` #3 in tools/check.js | both fixed in v4.3.1 |
 
 See [AUDIT.md](AUDIT.md) for the detailed reports in chronological order.
 

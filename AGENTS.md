@@ -633,6 +633,11 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   Linux copies a matching, non-symlinked download into `mktemp -d /var/tmp/invsw-run.XXXXXXXX` (mode 700,
   `umask 077`), re-hashes the copy and executes ONLY that private copy `"$P"`. Reason: `C:\Windows\Temp` lets
   standard users create files and `/var/tmp` is world-writable, so path-based check-then-run was a TOCTOU.
+  v4.3.1: the Windows installer is NOT started from `C:\Windows\Temp` (DLL search order, CWE-427): the verified
+  bytes are copied into `invsw-run-<guid>` (created atomically via `[IO.Directory]::CreateDirectory(path, acl)`
+  with a protected SYSTEM + Administrators ACL, refused when it existed or the ACL differs), re-hashed through a
+  write-locked handle, started from there with `-WorkingDirectory` = that folder, and the folder is removed after
+  the run. If it cannot be prepared the device answers `error` and nothing runs.
   PowerShell literals go through `obj.swPsQuote`, which doubles `'` AND `U+2018 U+2019 U+201A U+201B` -
   PowerShell treats all five as single quotes (verified; doubling only `'` allowed injection by file name).
   Then `msiexec /i "..." /qn /norestart <args>` (`/update ... /quiet` for .msp),
@@ -856,7 +861,7 @@ MeshCentral install folder) and root `/*.txt` + `/*.csv` are gitignored as a gua
   contain none), JSON validity of config files, and view-name↔render-name consistency over
   the WHOLE JS tree (the `res.render()` calls live in `lib/routes.js`/`lib/reports.js` since v3.5.1).
   Must run anywhere (no dependencies).
-- `tools/test-plugin.js`: 431 behavioral assertions (72 steps; with PowerShell AND a POSIX shell present) against the real module (mocked MeshCentral DB/webserver):
+- `tools/test-plugin.js`: 434 behavioral assertions (72 steps; on Windows with PowerShell AND a POSIX shell present) against the real module (mocked MeshCentral DB/webserver):
   the module wiring itself (every lib file attaches, a fresh instance exposes the same function surface, no
   module-level locals in `lib/`), locations grouping & counting, manual-rating severity override, FP exclusion, host-name preference, coverage
   numbers, multi-mesh scan/`mixed` logic, all POST handlers incl. validation/rejections, routes, admin gating
@@ -888,7 +893,7 @@ MeshCentral install folder) and root `/*.txt` + `/*.csv` are gitignored as a gua
   PowerShell is not installed (ENOENT); a parse error or exception is a FAIL (before, every failure was printed
   as "SKIP ... PowerShell not available"). On the Linux CI runner the PowerShell checks are skipped, on a machine
   without a POSIX shell the two `sh -n` checks are: the assertion count therefore depends on the platform
-  (431 with both shells present).
+  (434 on Windows with both shells present; the v4.3.1 real-run deploy check runs on Windows only).
   The module-state guard checks COLUMN-0 declarations in `lib/` (only `const x = require(...)` allowed) and
   additionally that the `attach` bodies hold no 4-space-indented locals.
   Requests in tests carry `headers: XHDR` (the panel header); the test admin has `domain: ''`.
@@ -1005,10 +1010,15 @@ wuauserv cached the TargetReleaseVersion policy and only re-reads it on a servic
 now restarts wuauserv right before the search and again after the policy restore (update mode never touches it).
 Security: the CodeQL `js/bad-tag-filter` alert on tools/check.js is fixed - the inline-<script> extraction regex
 is now case-insensitive and tolerates tag attributes (`/<script\b[^>]*>([\s\S]*?)<\/script>/i`).
-v4.3.0 (this release, audit 3 - details in AUDIT.md): deploy scripts quote all five PowerShell quote characters
+v4.3.0 (audit 3 - details in AUDIT.md): deploy scripts quote all five PowerShell quote characters
 (`swPsQuote`) and execute exactly the verified bytes (Windows: hash through a held `FileShare.Read` handle; Linux:
 re-hashed private `mktemp -d` copy); `wgQueueNode` honours the group opt-in, reads `docs[0]` and skips non-Windows
 nodes; `sw_rescan_library` no longer re-imports indexed files; server notifications carry `domain:''`. Tests: per-step
 watchdog + exit guard, `runPs()` (failures no longer SKIP), column-0 module-state check, check.js over all script
 blocks, test-views FAILS in CI without handlebars, 431 assertions / 72 steps. CI: least-privilege permissions,
 SHA-pinned actions, env-passed step outputs, cache key with the commit sha. Panel texts corrected (see AUDIT.md T1-T8).
+v4.3.1 (this release): follow-up fixes. The Windows deploy script no longer starts the installer from
+`C:\Windows\Temp` (a standard user could plant a DLL next to it, CWE-427): it runs from a fresh
+`invsw-run-<guid>` folder with a protected SYSTEM + Administrators ACL. CodeQL `js/bad-tag-filter` #3 in
+tools/check.js fixed (end tags like `</script >`, plus an opener/block count check). Shorter plugin description.
+Test suite: 434 assertions / 72 steps on Windows.

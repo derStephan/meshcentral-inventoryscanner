@@ -7,7 +7,7 @@ written; later audits refer back to earlier ones instead of rewriting them.
 |---|------|-----------------|------------------------|--------|
 | 1 | 2026-11-06 | AI (opencode), NVIDIA Nemotron 3 550B A55B | 2.x (pre-3.0) | 1 bug fixed, dead code removed |
 | 2 | 2026-11-11 | AI (opencode), Claude Opus 5.5 | 3.0.0 | 17 findings, all fixed -> **3.0.1** |
-| 3 | 2026-11-14 | AI (opencode), Claude Opus 5.5 | 4.2.2 | 2 high, 4 medium, 4 low + tests/CI/texts, all fixed -> **4.3.0** |
+| 3 | 2026-11-14 | AI (opencode), Claude Opus 5.5 | 4.2.2 | 2 high, 4 medium, 4 low + tests/CI/texts, all fixed -> **4.3.0**; 2 follow-up fixes -> **4.3.1** |
 
 Between audit 1 and audit 2 the plugin grew from ~3,000 to ~4,900 lines (v2.1 - v3.0.0: winget updater with
 per-package update/uninstall, remote CPE table, automatic product matching, driver/firmware category, hot reload).
@@ -769,3 +769,26 @@ such as "honoured" are consistent and were left).
 **Sign-off**: all findings above fixed in 4.3.0; full suite green locally (431 assertions, 72 steps, 0 SKIP with a
 POSIX shell; check.js; view tests). The deploy scripts were executed end to end on Windows 11 (real cmd.exe
 transport) and with busybox `sh`.
+
+### Follow-up fixes after audit 3 (v4.3.1)
+
+Two issues found after the 4.3.0 sign-off; fixed in 4.3.1. This is not a separate audit.
+
+**F1 - DLL planting next to the SYSTEM installer** (agent, Windows, CWE-427). Found by the auditor of audit 3 while
+re-checking A2. The 4.3.0 fix locked the verified file, but the installer was still *started* from
+`C:\Windows\Temp`. Standard users can create files there (verified, see A2). Windows looks for DLLs in the
+started program's own folder first, so a DLL with a matching name planted next to `setup.exe` would be loaded by
+the installer and run as SYSTEM. The SHA-256 check covers the installer, not its neighbours.  
+*Fix*: the verified bytes are copied into a new folder `invsw-run-<guid>`, created in one step with a protected
+ACL (SYSTEM + Administrators only, no inheritance). The copy is hashed again through a write-locked handle and
+started from that folder, which is also the working directory (`msiexec` gets the same path). A folder that
+already existed or does not carry exactly that ACL is refused, the device answers `error` and nothing runs.
+Verified on Windows 11: the program really runs from the run folder, and the folder is removed afterwards; when
+the copy into the folder fails (reproduced: a test user outside the folder ACL), the device answers `error` with
+"nothing was executed". Tests: two text checks plus a real run on Windows (the program writes its own working
+directory).
+
+**F2 - CodeQL `js/bad-tag-filter` #3** (`tools/check.js`, test tool only, not shipped behaviour). The extraction
+regex did not match end tags such as `</script >`. *Fix*: the end tag accepts `\b[^>]*`, and a new check fails
+when the number of opening `<script` tags differs from the number of extracted blocks, so no form of end tag can
+hide a block from the syntax checks.

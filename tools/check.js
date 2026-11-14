@@ -75,9 +75,13 @@ for (const f of libFiles) {
 for (const vf of fs.readdirSync(viewsDir).filter(function (f) { return f.endsWith('.handlebars'); })) {
     const vsrc = fs.readFileSync(path.join(viewsDir, vf), 'utf8');
     const blocks = [];
-    const re = /<script\b[^>]*>([\s\S]*?)<\/script>/gi;
+    const re = /<script\b[^>]*>([\s\S]*?)<\/script\b[^>]*>/gi;
     let mm;
     while ((mm = re.exec(vsrc)) !== null) { blocks.push(mm[1]); }
+    // Every opening tag must belong to a block that was extracted and checked - an unusual end tag
+    // (e.g. `</script >`, CodeQL js/bad-tag-filter) or an unclosed block must never hide code.
+    const openers = (vsrc.match(/<script\b/gi) || []).length;
+    report(vf + ': every <script> block is extracted for the checks', openers === blocks.length, openers + ' opening tag(s), ' + blocks.length + ' block(s)');
     if (vf === 'assessment.handlebars') {
         report('assessment.handlebars has an inline <script>', blocks.length > 0);
     } else {
