@@ -1,12 +1,12 @@
 # MeshCentral Inventory & Vulnerability Scanner Plugin
 
-> **Transparency**: Created with **Qwen 3.6 27B** & **Qwen 3.8 Flash Next** • Audited by **NVIDIA Nemotron 3 550B A55B** (2026-11-06) and **Claude Opus 5.5** (2026-11-11, v3.0.1) - see [AUDIT.md](AUDIT.md)
+> **Transparency**: Created with **Qwen 3.6 27B** & **Qwen 3.8 Flash Next** • Audited by **NVIDIA Nemotron 3 550B A55B** (2026-11-06) and **Claude Opus 5.5** (2026-11-11, v3.0.1 and 2026-11-14, v4.3.0) - see [AUDIT.md](AUDIT.md)
 
 Turns your MeshCentral server into a software inventory and vulnerability scanner that works **offline**: CSV
 exports for audits, an NVD-based CVE scan of everything your devices have installed, a shared assessment panel
 where the team rates findings per location, printable audit reports, scheduled scans with notifications - an
 opt-in software updater based on the official **winget** package manager, and a **deploy** tab that installs
-your own MSI/EXE/DEB packages on the devices you choose, queuing offline machines until they reconnect.
+your own MSI/MSP/EXE/DEB/RPM/shell packages on the devices you choose, queuing offline machines until they reconnect.
 
 **Who it is for:** MeshCentral site administrators who need to answer *which software is installed where, what has
 known CVEs, what has the team already reviewed, and what is left to do* - without buying a commercial scanner and
@@ -130,8 +130,10 @@ site admins get a toast plus a server event listing findings at or above the thr
 a to-do list that shrinks as you rate. Rated and false-positive findings are never reported again.
 
 **Software updates (Updates tab)** - completely opt-in: nothing runs **automatically** until you turn it on *and*
-tick at least one device group. The manual buttons (Run now, Dry run, per device, per package) act on demand on
-every non-excluded Windows device. Two views on the same fleet:
+tick at least one device group (only Windows devices of those groups are updated automatically). The manual buttons
+(Run now, Dry run, per device, per package) act on demand on every non-excluded Windows device. Keep the ignore
+list short (well below ~150 entries): the whole update script travels as one command line, and cmd.exe refuses
+lines above 8191 characters. Two views on the same fleet:
 
 * **By device** - every Windows machine with its last result; per row *Dry run*, *Update now*, *Exclude*/*Include*,
   and a *list* button that opens **every package with its outcome** (failed rows show the exit code and winget's own
@@ -204,7 +206,9 @@ from your PC (the panel uploads it in chunks into the plugin's library on the se
 `<datapath>/plugins/inventoryscanner/software/files/` on the server and press **Rescan**. Then tick devices or
 **whole locations**, add command-line parameters if the installer needs them, and confirm: every online device
 fetches the package through its existing agent connection (no new ports, no share passwords, the agent verifies
-the **SHA-256** the server computed before executing anything) and runs it silently as SYSTEM/root. **Offline
+the **SHA-256** the server computed before executing anything, and executes exactly the bytes it verified) and runs
+it silently as SYSTEM/root. A file from Server Files can have been put there by any user with the *server files*
+right of that group - check it before you deploy it to other machines. **Offline
 devices are queued and install by themselves the moment they reconnect** - that is the whole point of the task
 list. Each device row shows `ok / failed / queued / running ...` with the installer's exit code (decimal and
 hex, e.g. 3010 = "ok, but a reboot is pending - the plugin never reboots for you"); finished tasks also raise a
@@ -258,7 +262,9 @@ win, and that section states which table file is in force - the code holds no se
   changing request must come from the plugin's own page (request-header check against cross-site requests).
 * The updater writes its client transcript only to folders that standard users cannot write to.
 * Deployed packages stay on the server; delivery rides the existing agent connection (a one-shot, 5-minute
-  download ticket per device and dispatch) and is SHA-256 verified on the device before it executes. Installers
+  download ticket per device and dispatch) and is SHA-256 verified on the device before it executes - the file is
+  locked (Windows) or copied into a private root-only folder (Linux) between the check and the execution, so the
+  verified bytes are the executed bytes. Installers
   run as SYSTEM/root because machine-wide installation is the use case - so the Deploy tab is gated like every
   other endpoint and tasks never run automatically.
 * Output is hardened: HTML escaping on render, CSV formula-injection neutralization, strict id validation on
@@ -322,7 +328,7 @@ Agents and contributors: [AGENTS.md](AGENTS.md) documents the verified contracts
 ## Security & Audit
 
 * **Security Policy**: [SECURITY.md](SECURITY.md)
-* **Audit Report**: [AUDIT.md](AUDIT.md) (first audit 2026-11-06, second audit 2026-11-11)
+* **Audit Report**: [AUDIT.md](AUDIT.md) (audits 2026-11-06, 2026-11-11 and 2026-11-14)
 * **Changelog**: the [commit history](https://github.com/derStephan/meshcentral-inventoryscanner/commits/main) -
   every version is described there in full.
 

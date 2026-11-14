@@ -7,10 +7,16 @@ written; later audits refer back to earlier ones instead of rewriting them.
 |---|------|-----------------|------------------------|--------|
 | 1 | 2026-11-06 | AI (opencode), NVIDIA Nemotron 3 550B A55B | 2.x (pre-3.0) | 1 bug fixed, dead code removed |
 | 2 | 2026-11-11 | AI (opencode), Claude Opus 5.5 | 3.0.0 | 17 findings, all fixed -> **3.0.1** |
+| 3 | 2026-11-14 | AI (opencode), Claude Opus 5.5 | 4.2.2 | 2 high, 4 medium, 4 low + tests/CI/texts, all fixed -> **4.3.0** |
 
 Between audit 1 and audit 2 the plugin grew from ~3,000 to ~4,900 lines (v2.1 - v3.0.0: winget updater with
 per-package update/uninstall, remote CPE table, automatic product matching, driver/firmware category, hot reload).
 Audit 1 therefore did not cover most of the code that runs on the agents.
+
+Between audit 2 and audit 3 (v3.0.1 -> v4.2.2) the code was split into 23 `lib/` modules (v3.5.1) and three new
+agent-facing features were added: OS updates / OS release upgrades (v3.5.0, v3.6.0), **software deployment** with
+upload, staging and agent `wget` (v4.0.0), plus a GitHub Actions workflow with a live MeshCentral server and agent.
+Audit 3 is the first audit of that code.
 
 ---
 
@@ -531,3 +537,235 @@ The agent-side parts were verified by executing the generated scripts on Windows
 
 **Sign-off**: all findings fixed in 3.0.1; `npm test` green; generated scripts parse and run on PowerShell 5.1 with
 winget 1.29.380.
+
+---
+
+# Audit 3 - 2026-11-14 - Independent full audit of v4.2.2 (result: v4.3.0)
+
+**Version audited**: 4.2.2 -> fixes released as **4.3.0**  
+**Date**: 2026-11-14  
+**Auditor**: AI (opencode), model: Claude Opus 5.5 (also the auditor of audit 2)  
+**Scope**: the complete current tree - entry + 23 `lib/` modules, the three views incl. the panel script, every
+script sent to agents (winget, OS update/upgrade Windows + Linux, software deploy Windows + Linux), the test
+suite (`tools/`), the GitHub Actions workflow + integration script, README, AGENTS.md, SECURITY.md.
+
+Audit 2 findings were re-checked (section "Re-check of audit 2"), but this audit is **not** limited to them:
+everything added since v3.0.1 was reviewed for the first time.
+
+## Method
+
+Nothing was taken on trust - not the plugin's own tests, not the "verified" notes in AGENTS.md, not audit 2.
+
+1. **Line-by-line review** of the server modules, all generated agent scripts and the panel script (the panel
+   XSS sweep and the test/CI review were done by two parallel sub-agents and every reported finding was
+   re-verified by hand before it was accepted).
+2. **Upstream verification** against current MeshCentral `master` (fetched 2026-11-14): `agents/meshcore.js`
+   (`runcommands`, `wget`/`serverFetchFile`, `software` rights check), `webserver.js` (`handleAgentDownloadFile`,
+   `handleUploadFileBatch`, `getServerFilePath`, the `pluginadmin.ashx` body parser, `obj.subscribe`),
+   `meshuser.js` (`HandleEvent` domain filter), `meshcentral.js` (`DispatchEvent`, domain url), `common.js`
+   (`IsFilenameValid`), MeshAgent `service-manager.js`.
+3. **Real execution on Windows 11 / PowerShell 5.1** (audit machine, standard admin, medium integrity): the deploy
+   script end to end through the real `cmd.exe` + gzip/base64 transport (good hash -> runs, wrong hash ->
+   `no-file`, nothing executed), PowerShell quote handling, file-lock semantics, ACLs of `C:\Windows\Temp`,
+   `msiexec /a` with an open read handle.
+4. **Real execution of the Linux deploy script** with busybox-w32 `sh` (good hash / wrong hash), and `sh -n` on
+   every generated Linux script (deploy for all 5 types, OS update, OS upgrade). busybox-w32 is not a Linux system:
+   `dpkg`/`rpm`/`apt` themselves were NOT executed (see "Not verified").
+5. **Targeted reproductions** with throw-away Node scripts against the real modules (library rescan, winget
+   auto-queue, command-line length of the transports).
+6. **Test-suite / CI review**: fault injection (a step that never calls `next()`, a PowerShell parse error) to
+   see whether the suite really fails.
+
+## Summary
+
+| Severity | Count | Fixed in 4.3.0 |
+|---|---|---|
+| High | 2 | 2 |
+| Medium | 4 | 4 |
+| Low | 4 | 4 |
+| Tests / CI | 7 | 7 |
+| Documentation / texts | 10 | 10 |
+
+`npm test` equivalent (run here without npm, see Method): before 419 assertions / 71 steps (2 SKIP), after
+**431 assertions / 72 steps, 0 FAIL, 0 SKIP** (with a POSIX shell present) + `check.js` OK + 11 view checks OK.
+Handlebars 4.7.10 and its 5 dependencies were installed from the `package-lock.json` URLs and verified against
+the lockfile integrity hashes.
+
+## Findings
+
+### High
+
+**A1 - Script injection into the SYSTEM deploy script via typographic quotes** (agent, OWASP A03, CWE-94)  
+`swBuildWindowsScript` embedded the file name and the command-line arguments in PowerShell single-quoted
+literals and doubled only the ASCII `'`. PowerShell treats `U+2018 U+2019 U+201A U+201B` as single quotes as
+well. Verified on PS 5.1: `$invName = 'abc’; Write-Output INJECTED; ‘'` runs `Write-Output INJECTED`. File names
+come from an upload (`swSanitizeName` keeps those characters) or from a MeshCentral **Server Files** folder of a
+device group - and those folders are writable by every user with the group's server-files right, not only by site
+admins. A crafted file name therefore turned into code that runs as SYSTEM on every target of the task, beyond
+what the admin selected.  
+*Fix*: `obj.swPsQuote` doubles all five quote characters. Verified: the same hostile name now stays data through
+the real `cmd.exe` transport (`"name":"who's; Write-Output INJ; 'x.exe"`, no injected output). The winget script
+is not affected (its ids pass `WINGET_ID_RE`, ASCII only). Test: `audit3 A1` (text + real PowerShell run).
+
+**A2 - Time-of-check/time-of-use between SHA-256 check and execution** (agent, CWE-367)  
+Both deploy scripts hashed the downloaded file in a shared temp folder (`C:\Windows\Temp`, `/var/tmp`) and then
+executed it **by path**. Verified: a standard user can create files in `C:\Windows\Temp` (ACL: create allowed,
+listing denied); `/var/tmp` is world-writable (sticky bit). The staged name is not secret on the device (it is in
+the agent's command line / `wget` message). Between the hash check and `Start-Process` / `sh "$F"` the file could
+be replaced, so the "SHA-256 verified before execution" guarantee did not hold.  
+*Fix (Windows)*: the file is opened with `FileShare.Read`, hashed **through that handle**
+(`Get-FileHash -InputStream`) and the handle stays open until the installer has finished - write/rename/delete are
+then impossible (verified: all three refused while the handle is open, while `Start-Process` and `msiexec` still
+run the file). *Fix (Linux)*: a matching download is copied into a fresh `mktemp -d` directory (mode 700,
+`umask 077`), hashed **again** there, and only that private copy is executed; symlinked downloads are refused.
+Verified with busybox `sh`: good hash -> `ok`, package ran with its arguments; wrong hash -> `no-file`, the package
+did not run; download and private folder are removed in both cases. Test: `audit3 A2 win/linux`.
+
+### Medium
+
+**A3 - Automatic winget updates ran without the documented group opt-in, also on Linux** (agent)  
+`wgQueueNode` (agent-connect hook) started a batch for EVERY connecting device whenever the switch was on but no
+group was ticked - contrary to the README/AGENTS.md rule "empty updateMeshes means nothing runs" - and without the
+Windows check, so Linux agents received a cmd/PowerShell script. With groups ticked the hook never worked: it read
+`node.meshid` from the `db.Get` result, which is an **array** (verified in db.js), so no device ever matched.
+Reproduced with the real module (Linux node received `runcommands`; Windows node in a ticked group received
+nothing).  
+*Fix*: no `updateMeshes` -> `false`; the document is `docs[0]`; non-Windows nodes and a running OS batch are
+skipped. Test: `audit3 A3` (three cases).
+
+**A4 - Every "Rescan" re-imported the whole library and renamed the display names** (server)  
+`swRescanLibraryHandler` built its "already indexed" set from `obj.swFiles[id].id`, a field that does not exist,
+so every stored `<id>.<ext>` file looked new: on each rescan it was hashed again, renamed to a new id, its display
+name became `<oldid>.exe`, and the old entry was dropped. Tasks referencing the old id then failed. Reproduced:
+second rescan `added 1, removed 1`, name `53f1a08c5b9e.exe`. The existing test only ran one rescan.  
+*Fix*: the set is built from the map key. Test: `audit3 A4` (two rescans, same id and name).
+
+**A5 - Notifications reached sub-domain administrators** (server, OWASP A01)  
+Scan, NVD-stale and deploy toasts were dispatched to `['*']` without a `domain`. `webserver.js obj.subscribe`
+subscribes every user with `siteadmin == 0xFFFFFFFF` (also sub-domain admins) to `'*'`, and `meshuser.js
+HandleEvent` only filters by `event.domain` when it is set. On multi-tenant servers, tenant admins therefore saw
+group names and CVE ids of other tenants - the plugin itself refuses them since v3.0.1.  
+*Fix*: `domain: ''` on all three server notifications, the node domain on device events. Test: `audit3 A5`.
+
+**A6 - Tests could pass with steps that never ran** (test infrastructure)  
+A step whose callback never fires ended `test-plugin.js` with **exit 0** and no summary (verified by injection) -
+every later step silently skipped, CI green. *Fix*: per-step 120 s watchdog (exit 1, verified: `FAIL runner: step
+72 did not call next()`), plus an exit guard comparing completed and registered steps.
+
+### Low
+
+| # | Finding | Fix |
+|---|---|---|
+| A7 | PowerShell parse/runtime errors in the three PowerShell-based tests were reported as `SKIP ... PowerShell not available` (`execFileSync` throws on any non-zero exit) | `runPs()` returns null ONLY for ENOENT; everything else is a FAIL |
+| A8 | The "no module-level state" guard checked 4-space-indented locals inside `attach` and missed real column-0 state | new column-0 check (only `const x = require(...)` allowed), the old check kept as documented |
+| A9 | `tools/check.js` syntax-checked only the FIRST `<script>` of the panel | all script blocks of all views; report views must contain none |
+| A10 | Upload retry counter in the panel was incremented twice per error (`retries++` on two lines) -> 3 instead of 6 retries; `r.variedVersions.length` without a null guard | fixed |
+
+### Tests / CI (workflow `.github/workflows/meshcentral-integration.yml`)
+
+| # | Finding | Fix |
+|---|---|---|
+| C1 | `permissions: actions: write` for every job incl. pull requests - not needed (actions/cache uses the runner token) | removed, `contents: read` only |
+| C2 | actions pinned by mutable tag (`@v4`) | pinned to commit SHAs (resolved via the GitHub API 2026-11-14), tag kept as comment |
+| C3 | `${{ steps.rel.outputs.tag }}` (data from api.github.com) pasted into a `run:` script | passed as `env:` |
+| C4 | scheduled run skipped when the MeshCentral tag was verified once, even after plugin changes | cache key = release tag **+ commit sha** |
+| C5 | `test-views.js` exited 0 ("SKIP") when handlebars was missing, also in CI | FAIL when `CI` is set |
+| C6 | `sh -n` and PowerShell checks only run where the shell exists; on the Linux runner the PowerShell parser checks are skipped | documented (not fixable without a Windows runner) |
+| C7 | the live CI run uses the `plugins.list` dev loader: the web-installer path (ZIP, DB record, hot swap) is never exercised live | documented as known gap |
+
+### Documentation, texts
+
+| # | Where | Problem | Fix |
+|---|---|---|---|
+| T1 | panel, Settings hint | "Updates tab, OS section" - the OS engine has its own tab since v4.1.0 | "OS Updates tab" |
+| T2 | panel, Deploy info + upload fallback list | listed MSI/EXE/DEB/RPM/shell only; MSP and BIN are accepted | all seven types |
+| T3 | panel, Deploy info | promised "ok - reboot pending" text that was never rendered (only a colour) | the device row now shows it |
+| T4 | panel, args placeholder | "passed to the program for other types" - .deb/.rpm args go to dpkg/rpm | corrected |
+| T5 | panel, library delete confirm | "Running tasks keep their staged copy" - the server refuses the delete instead | corrected |
+| T6 | panel, retry confirm | did not say that cancelled/unsupported devices are retried as well | corrected |
+| T7 | panel, Updates info | contradicted the device-list hint about excluded devices | aligned |
+| T8 | panel | wgMsg/osMsg/swMsg/settingsMsg had no success/error styling | CSS added |
+| T9 | AGENTS.md / SECURITY.md / README | deploy TOCTOU guarantee, auto-update opt-in, notification scope, test counts | updated |
+| T10 | inventoryscanner.js header | audit list ended at audit 2 | updated |
+
+No German or other non-English text and no spelling mistakes were found in code, views or docs (British spellings
+such as "honoured" are consistent and were left).
+
+## Verified and found correct (selection)
+
+- Access control: every GET/POST route and the toolbar hook use `isAuthorizedAdmin` (full site admin, default
+  domain); every POST needs `X-InvScanner-Request: 1` (the panel's single `post()` helper sends it). MeshCentral
+  never answers CORS preflights (no `Access-Control-Allow-*` anywhere in webserver.js, re-verified).
+- Panel XSS: every `innerHTML` sink passes `esc()` (escapes `& < > " '`); the only data-built `href` is regex-gated
+  to `CVE-\d{4}-\d{4,}`; report views use only `{{ }}`.
+- Server-side paths: upload ids, file ids, task ids validated before any lookup or `path.join`; Server Files paths
+  resolved under `<filespath>/domain[-x]/mesh-<group>` with a `path.resolve` prefix check; staged names
+  server-generated from a CSPRNG; `agentdownload.ashx` serves only `<filespath>/tmp` with a 5-minute node-bound
+  cookie (re-verified upstream).
+- Agent transport: wget shape and `servertlshash` match upstream `handleUploadFileBatch`; runcommands types 1/3
+  match meshcore.js; one session per agent is honoured by all three pumps; the deploy (2.5 KB) and OS (3.0 KB)
+  command lines stay far below cmd.exe's 8191-character line limit (limit re-verified here: an 8,300-character
+  line is refused with "command line too long"); the winget line can exceed it with a very long ignore list
+  (see remaining risks).
+- OS scripts: TargetReleaseVersion policy restored, wuauserv restarted around the search (issue #1), never a
+  reboot; Linux scripts read `/dev/null`, refuse a symlinked log.
+- CSV formula neutralization, regex-DoS guard (all 103 table regexes pass), https-only downloads with size caps,
+  settings validation incl. URL patterns.
+
+## OWASP Top 10 (2021) - status after 4.3.0
+
+| Category | Status |
+|---|---|
+| A01 Broken Access Control | OK; A5 fixed (cross-tenant notifications) |
+| A02 Cryptographic Failures | OK: SHA-256 end to end, CSPRNG names, TLS pinned to the control-channel certificate for wget |
+| A03 Injection | A1 fixed (typographic quotes); all other script values regex-cleaned or fully quoted (re-verified) |
+| A04 Insecure Design | A2 fixed (check-then-use); A3 fixed (automatic runs without opt-in) |
+| A05 Security Misconfiguration | OK (MeshCentral headers); CI least privilege (C1) |
+| A06 Vulnerable Components | OK: no runtime dependencies; dev deps integrity-verified; actions SHA-pinned (C2) |
+| A07 Identification & Authentication | delegated to MeshCentral |
+| A08 Software & Data Integrity | improved by A2 and C2/C4; NVD `.meta` mismatch stays a warning by design |
+| A09 Logging & Monitoring | OK: deploy/winget/OS logs, device events, creator recorded per task |
+| A10 SSRF | OK: only admin-configured https URLs (table, lifecycle) and the fixed NVD host |
+
+## Not verified (honest limits of this audit)
+
+- No real Linux machine: `dpkg -i`, `rpm -Uvh`, `apt-get`, `do-release-upgrade` were not executed; the Linux scripts
+  were syntax-checked and the deploy flow executed with busybox-w32 `sh` only.
+- No real MeshCentral agent was attached during this audit; agent behaviour was verified against upstream source.
+  The CI workflow (live server + Linux agent + `.sh` deploy) could not be run here.
+- Windows Update COM and the TargetReleaseVersion upgrade were not executed (they would change the audit machine).
+
+## Remaining risks (accepted, documented in SECURITY.md)
+
+- Deploy and the updaters run as SYSTEM/root by design; a site admin can run any installer.
+- **Server Files as a deploy source**: those folders can be filled by any user with the server-files right of the
+  group. A site admin who deploys such a file runs *that user's* file as SYSTEM - the content check is the admin's
+  job (A1 removed the name-based escalation, not this trust decision). Documented in SECURITY.md.
+- winget: an ignore list of more than roughly 150-200 entries makes the one-line cmd transport exceed cmd.exe's
+  8191-character limit (measured 8.6 KB at 200, 15.8 KB at 500 random ids; cmd refuses such a line with "command
+  line too long", verified). The device run then ends as "no marker in output" - visible, never silent. Keep the
+  ignore list short (the UI accepts up to 500).
+- The PowerShell parser checks do not run on the Linux CI runner; no automated test executes a script on Windows.
+- busybox-w32 used for this audit is not code-signed; it was used only as a local test tool and is not part of the
+  repository.
+
+## Re-check of audit 2
+
+| Audit 2 finding | Status in 4.2.2 |
+|---|---|
+| H1 winget uninstall option | still fixed (no `--accept-package-agreements` on uninstall) |
+| H2 winget via PATH `.Path` | still fixed |
+| H3 winget table parser | still fixed; its PowerShell test could however report a failure as SKIP (A7, fixed) |
+| H4 protected transcript folder | still fixed, now shared by the OS and deploy scripts (`psTranscriptLines`) |
+| H5 hot reload | still fixed, also for `lib/` modules |
+| M1 request header | still fixed, all new deploy/OS POSTs covered |
+| M2 default-domain gate | still fixed for routes - but notifications leaked across domains (A5, fixed) |
+| M3 toolbar export rights | still fixed |
+| M4/M5 collector rights + error answers | still fixed |
+| M6 session ownership | still fixed, extended correctly to `invscanner-os-` / `invscanner-sw-` |
+| M7 mapping names | table now the only copy (103 rows), all regexes pass the safety check |
+| L1-L5 | still fixed |
+
+**Sign-off**: all findings above fixed in 4.3.0; full suite green locally (431 assertions, 72 steps, 0 SKIP with a
+POSIX shell; check.js; view tests). The deploy scripts were executed end to end on Windows 11 (real cmd.exe
+transport) and with busybox `sh`.

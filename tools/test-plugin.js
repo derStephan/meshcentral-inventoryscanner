@@ -15,6 +15,20 @@ const factory = require(path.join(__dirname, '..', 'inventoryscanner.js')).inven
 
 // All plugin source (entry + lib/ modules) - for the tests that assert on emitted code text.
 const PLUGIN_DIR = path.join(__dirname, '..');
+/**
+ * Run Windows PowerShell for a test. Returns null ONLY when PowerShell is not installed (ENOENT);
+ * a PowerShell that ran and failed (parse error, exception, non-zero exit) returns
+ * { failed: true, text } so the caller reports a FAIL - before audit 3 every failure was
+ * silently reported as "SKIP ... PowerShell not available".
+ */
+function runPs(args, opts) {
+    try { return { failed: false, text: require('child_process').execFileSync('powershell', args, Object.assign({ encoding: 'utf8', timeout: 60000 }, opts || {})) }; }
+    catch (e) {
+        if (e && e.code === 'ENOENT') { return null; }
+        return { failed: true, text: String((e && (e.stderr || e.stdout || e.message)) || e).substring(0, 400) };
+    }
+}
+
 function pluginSrc() {
     var s = fs.readFileSync(path.join(PLUGIN_DIR, 'inventoryscanner.js'), 'utf8');
     var libDir = path.join(PLUGIN_DIR, 'lib');
@@ -480,7 +494,14 @@ steps.push(function (next) {
     var entrySrc = fs.readFileSync(path.join(PLUGIN_DIR, 'inventoryscanner.js'), 'utf8');
     check('modules: the entry file stays thin (wiring only)', entrySrc.split('\n').length < 300, entrySrc.split('\n').length);
     check('modules: the entry attaches every lib file by name', files.every(function (f) { return entrySrc.indexOf("'" + f.slice(0, -3) + "'") >= 0; }), files);
-    check('modules: no lib file declares module-level locals (state lives on obj)',
+    // Module-level state = a declaration at COLUMN 0 outside attach (shared by every instance and
+    // surviving a hot reload). Only `const x = require(...)` is allowed there (audit 3: the old
+    // check looked at 4-space-indented locals inside attach, which are per call and harmless).
+    var modState = files.filter(function (f) {
+        return fs.readFileSync(path.join(libDir, f), 'utf8').split(/\r?\n/).some(function (l) { return /^(var|let|const) /.test(l) && !/^const [A-Za-z_$][\w$]* = require\('[^']+'\);\s*$/.test(l); });
+    });
+    check('modules: no lib file declares module-level state outside attach (only top-level requires)', modState.length === 0, modState);
+    check('modules: the attach bodies hold no local declarations (state lives on obj)',
         files.every(function (f) { return !/^    (var|let|const) /m.test(fs.readFileSync(path.join(libDir, f), 'utf8')); }), files);
     var savedGen = global.__inventoryscannerInstanceGen;
     var fresh = factory({ parent: { db: db, datapath: fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-mod-')), debug: function () { }, config: { settings: {} }, webserver: {} } });
@@ -1222,9 +1243,10 @@ steps.push(function (next) {
     var ps = "$raw = [IO.File]::ReadAllText($env:INV_T)\n$rows = @()\n" + lines.slice(a, b + 1).join('\n') + "\n$rows | ForEach-Object { $_.id + '|' + $_.from + '|' + $_.to }";
     var dir = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-ps-'));
     fs.writeFileSync(path.join(dir, 't.txt'), table); fs.writeFileSync(path.join(dir, 't.ps1'), ps);
-    var out = null;
-    try { out = cp.execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(dir, 't.ps1')], { env: Object.assign({}, process.env, { INV_T: path.join(dir, 't.txt') }), encoding: 'utf8', timeout: 60000 }); } catch (e) { out = null; }
-    if (out == null) { console.log('SKIP script: winget table parser (PowerShell not available)'); next(); return; }
+    var psr = runPs(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(dir, 't.ps1')], { env: Object.assign({}, process.env, { INV_T: path.join(dir, 't.txt') }) });
+    if (psr == null) { console.log('SKIP script: winget table parser (PowerShell not available)'); next(); return; }
+    if (psr.failed) { check('script: the winget table parser block runs in PowerShell without an error', false, psr.text); next(); return; }
+    var out = psr.text;
     var got = out.split(/\r?\n/).filter(function (x) { return x !== ''; });
     check('script: real winget table - every upgradable row parsed, versions intact, footer ignored',
         got.length === 5 && got[1] === 'Microsoft.OneDrive|26.017.0126.0002|26.183.0920.0005' && got[2] === 'Microsoft.VCRedist.2015+.x64|14.51.36247.0|14.52.37029.0' &&
@@ -1778,10 +1800,9 @@ steps.push(function (next) {
     var dir = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-ospp-'));
     var pW = path.join(dir, 'os.ps1');
     fs.writeFileSync(pW, obj.osBuildWindowsScript('upgrade', '25H2'));
-    var out = null;
-    try { out = cp.execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', "$t=$null;$e=$null;[void][System.Management.Automation.Language.Parser]::ParseFile('" + pW + "',[ref]$t,[ref]$e);$e.Count"], { encoding: 'utf8', timeout: 60000 }); } catch (e) { out = null; }
-    if (out == null) { console.log('SKIP os script: PowerShell parser (PowerShell not available)'); }
-    else { check('os win script: PowerShell parser reports no errors', out.trim() === '0', out.trim()); }
+    var psr = runPs(['-NoProfile', '-NonInteractive', '-Command', "$t=$null;$e=$null;[void][System.Management.Automation.Language.Parser]::ParseFile('" + pW + "',[ref]$t,[ref]$e);$e.Count"]);
+    if (psr == null) { console.log('SKIP os script: PowerShell parser (PowerShell not available)'); }
+    else { check('os win script: PowerShell parser reports no errors', !psr.failed && psr.text.trim() === '0', psr.text.trim()); }
     var pL = path.join(dir, 'os.sh');
     fs.writeFileSync(pL, obj.osBuildLinuxScript('upgrade'));
     var shOk = null;
@@ -1820,12 +1841,12 @@ steps.push(function (next) {
     var taskL = { stageFile: 'invsw-0123456789abcdef-fedcba9876543210.deb', sha256: 'cd'.repeat(32), ext: 'deb', fileName: 'Pkg 1.0.deb', args: '--force-confnew' };
     var sL = obj.swBuildLinuxScript(taskL);
     check('deploy linux script: sha256sum check, dpkg noninteractive, stdin from /dev/null, never reboots',
-        sL.indexOf('sha256sum') >= 0 && sL.indexOf('dpkg -i "$F"') >= 0 && sL.indexOf('DEBIAN_FRONTEND=noninteractive') >= 0 &&
+        sL.indexOf('sha256sum') >= 0 && sL.indexOf('dpkg -i "$P"') >= 0 && sL.indexOf('DEBIAN_FRONTEND=noninteractive') >= 0 &&
         sL.indexOf('< /dev/null') >= 0 && !/shutdown -r|systemctl reboot/.test(sL));
     var sR = obj.swBuildLinuxScript({ stageFile: 'invsw-x.rpm', sha256: 'ab'.repeat(32), ext: 'rpm', fileName: 'r.rpm', args: '' });
     var sB = obj.swBuildLinuxScript({ stageFile: 'invsw-x.bin', sha256: 'ab'.repeat(32), ext: 'bin', fileName: 'run.bin', args: '-q' });
     check('deploy linux script: rpm and direct bin cases, chmod 700 before direct execution',
-        sR.indexOf('rpm -Uvh "$F"') >= 0 && sB.indexOf('set -- "$F" $ARGS') >= 0 && sB.indexOf('chmod 700') >= 0);
+        sR.indexOf('rpm -Uvh "$P"') >= 0 && sB.indexOf('set -- "$P" $ARGS') >= 0 && sB.indexOf('chmod 700') >= 0);
     var sQ = obj.swBuildLinuxScript({ stageFile: 'invsw-x.sh', sha256: 'ab'.repeat(32), ext: 'sh', fileName: 'a b.sh', args: "x'y" });
     check('deploy linux script: single quotes in args use the \'"\'" escape idiom', sQ.indexOf("ARGS='x'\\''y'") >= 0, sQ.split(String.fromCharCode(10)).slice(3, 4));
     var sM = obj.swBuildLinuxScript({ stageFile: 'invsw-x.msi', sha256: 'ab'.repeat(32), ext: 'msi', fileName: 'w.msi', args: '' });
@@ -2219,10 +2240,9 @@ steps.push(function (next) {
         var dir = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-swpp-'));
         var p1 = path.join(dir, 'deploy.ps1');
         fs.writeFileSync(p1, obj.swBuildWindowsScript({ stageFile: 'invsw-aa11.msi', sha256: 'ab'.repeat(32), ext: 'msi', fileName: 'a b.msi', args: "/qn X=1 'Y'" }));
-        var out = null;
-        try { out = cp.execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', "$t=$null;$e=$null;[void][System.Management.Automation.Language.Parser]::ParseFile('" + p1 + "',[ref]$t,[ref]$e);$e.Count"], { encoding: 'utf8', timeout: 60000 }); } catch (e) { out = null; }
-        if (out == null) { console.log('SKIP deploy script: PowerShell parser (PowerShell not available)'); }
-        else { check('deploy win script: PowerShell parser reports no errors', out.trim() === '0', out.trim()); }
+        var psr = runPs(['-NoProfile', '-NonInteractive', '-Command', "$t=$null;$e=$null;[void][System.Management.Automation.Language.Parser]::ParseFile('" + p1 + "',[ref]$t,[ref]$e);$e.Count"]);
+        if (psr == null) { console.log('SKIP deploy script: PowerShell parser (PowerShell not available)'); }
+        else { check('deploy win script: PowerShell parser reports no errors', !psr.failed && psr.text.trim() === '0', psr.text.trim()); }
         var p2 = path.join(dir, 'deploy.sh');
         fs.writeFileSync(p2, obj.swBuildLinuxScript({ stageFile: '/var/tmp/invsw-aa11.deb', sha256: 'ab'.repeat(32), ext: 'deb', fileName: 'a.deb', args: '' }));
         var shOk = null;
@@ -2241,18 +2261,97 @@ steps.push(function (next) {
     }), user);
 });
 
+// ---- v4.3.0 (audit 3): regressions for the fixed findings ----
+steps.push(function (next) {
+    // A1: typographic quotes are PowerShell quote characters - they must be doubled like '
+    var q = String.fromCharCode(0x2019), lq = String.fromCharCode(0x2018);
+    var hostile = 'a' + q + '; Write-Output INVPWNED; ' + lq + 'b.exe';
+    var sQ = obj.swBuildWindowsScript({ stageFile: 'invsw-x.exe', sha256: 'ab'.repeat(32), ext: 'exe', fileName: hostile, args: 'x' + q + ' ; Write-Output INVPWNED2 ' + lq });
+    check('audit3 A1: typographic single quotes in name/args are doubled inside the PowerShell literal',
+        sQ.indexOf("$invName = 'a" + q + q + '; Write-Output INVPWNED; ' + lq + lq + "b.exe'") >= 0 && sQ.indexOf('x' + q + q + ' ; Write-Output INVPWNED2 ' + lq + lq) >= 0);
+    var psr = runPs(['-NoProfile', '-NonInteractive', '-Command', sQ.split(String.fromCharCode(10)).filter(function (l) { return /^\$inv(Name|Args) = /.test(l); }).join('; ') + "; Write-Output ('N=' + $invName); Write-Output ('A=' + $invArgs)"]);
+    if (psr == null) { console.log('SKIP audit3 A1: PowerShell execution (PowerShell not available)'); }
+    else { check('audit3 A1: PowerShell keeps the hostile text as DATA (no injected command ran)', !psr.failed && psr.text.indexOf('INVPWNED\r') < 0 && /N=a.; Write-Output INVPWNED; .b\.exe/.test(psr.text) && psr.text.split(/\r?\n/).filter(function (l) { return /^INVPWNED/.test(l); }).length === 0, psr.text); }
+
+    // A2: verified bytes == executed bytes
+    var sW = obj.swBuildWindowsScript({ stageFile: 'invsw-x.msi', sha256: 'ab'.repeat(32), ext: 'msi', fileName: 'a.msi', args: '' });
+    check('audit3 A2 win: the staged file is hashed through a FileShare.Read handle that stays open until after the install',
+        sW.indexOf('[System.IO.FileShare]::Read') >= 0 && sW.indexOf('Get-FileHash -InputStream $invFs') >= 0 &&
+        sW.indexOf('$invFs.Dispose(); $invFs = $null } } catch { }') > sW.indexOf("Start-Process -FilePath 'msiexec.exe'"));
+    var sL = obj.swBuildLinuxScript({ stageFile: 'invsw-x.sh', sha256: 'ab'.repeat(32), ext: 'sh', fileName: 'a.sh', args: '' });
+    check('audit3 A2 linux: only a private mktemp copy (re-hashed) is executed, never the /var/tmp download',
+        sL.indexOf('mktemp -d /var/tmp/invsw-run.XXXXXXXX') >= 0 && sL.indexOf('H2=$(sha256sum "$P"') >= 0 &&
+        sL.indexOf('sh) set -- sh "$P" $ARGS') >= 0 && sL.indexOf('set -- sh "$F"') < 0 && sL.indexOf('[ ! -L "$F" ]') >= 0);
+
+    // A3: auto-update needs an explicit group opt-in, only Windows, db.Get answers an array
+    var sentA = [];
+    var nodesA = [{ _id: 'node//lx', meshid: 'mesh//g1', osdesc: 'Ubuntu 24.04 LTS' }, { _id: 'node//wx', meshid: 'mesh//g1', osdesc: 'Microsoft Windows 11 Pro' }];
+    var msA = { db: { GetAllType: function (t, cb) { cb(null, t === 'node' ? nodesA : []); }, Get: function (id, cb) { cb(null, nodesA.filter(function (n) { return n._id === id; })); } },
+        datapath: fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-a3-')), args: {}, debug: function () { }, config: { settings: {} },
+        webserver: { routeAgentCommand: function () { }, wsagents: { 'node//lx': { send: function (m) { sentA.push(['lx', JSON.parse(m).action]); } }, 'node//wx': { send: function (m) { sentA.push(['wx', JSON.parse(m).action]); } } } } };
+    var savedGen = global.__inventoryscannerInstanceGen;
+    var oA = factory({ parent: msA });
+    global.__inventoryscannerInstanceGen = savedGen;
+    oA.pluginSettings = { wingetUpdater: { enabled: true, updateMeshes: [], excludeNodes: [], ignorePackages: [], pinSync: true } };
+    var noGroup = oA.wgQueueNode('node//lx', 'connect');
+    check('audit3 A3: enabled updater WITHOUT a ticked group runs nothing automatically', noGroup === false && sentA.length === 0, sentA);
+    oA.pluginSettings = { wingetUpdater: { enabled: true, updateMeshes: ['mesh//g1'], excludeNodes: [], ignorePackages: [], pinSync: true } };
+    oA.wgQueueNode('node//lx', 'connect');
+    check('audit3 A3: a Linux device in a ticked group never receives a winget script', sentA.length === 0, sentA);
+    oA.wgQueueNode('node//wx', 'connect');
+    check('audit3 A3: a Windows device in a ticked group is updated on connect (db.Get array handled)',
+        sentA.length === 1 && sentA[0][0] === 'wx' && sentA[0][1] === 'runcommands', sentA);
+    Object.keys(oA.wgPending).forEach(function (k) { clearTimeout(oA.wgPending[k].timer); });
+
+    // A4: rescan must not re-import files that already are library entries
+    var fx = makeDeployFixture();
+    fs.mkdirSync(fx.o.swFilesDir, { recursive: true });
+    fs.writeFileSync(path.join(fx.o.swFilesDir, 'setup.exe'), 'MZ-a4');
+    fx.post({ action: 'sw_rescan_library' }, function (r1) {
+        var id1 = (r1.files || [])[0] && r1.files[0].id;
+        fx.post({ action: 'sw_rescan_library' }, function (r2) {
+            check('audit3 A4: a second rescan keeps the entry (same id, display name kept, nothing re-imported)',
+                r1.added === 1 && r2.added === 0 && r2.removed === 0 && r2.files.length === 1 && r2.files[0].id === id1 && r2.files[0].name === 'setup.exe', [r1.added, r2.added, r2.removed, r2.files]);
+            // A5: notifications are scoped to the default domain
+            var evs = [];
+            var oN = fx.o; var keep = oN.meshServer.DispatchEvent;
+            oN.meshServer.DispatchEvent = function (t, s, e) { evs.push(e); };
+            oN.notifyAdmins([{ meshName: 'HQ', newCves: ['CVE-2024-0001'] }]);
+            oN.meshServer.DispatchEvent = keep;
+            check('audit3 A5: admin notifications carry domain "" (sub-domain admins subscribed to * do not receive them)', evs.length === 1 && evs[0].domain === '', evs);
+            next();
+        });
+    });
+});
+
 // The runner MUST stay the last statement: every steps.push() above has to be registered before
 // step 0 starts (pre-3.0.1 it sat mid-file and the trailing steps only ran because an earlier
 // step happened to be asynchronous). New steps go ABOVE this block.
 console.log('registered steps: ' + steps.length);
+var stepsDone = 0;
+// A step whose callback never fires used to end the process silently with exit 0 (every later
+// step skipped, CI green). The exit guard turns that into a failure (audit 3, v4.3.0).
+process.on('exit', function (code) {
+    if (code === 0 && stepsDone !== steps.length) {
+        console.log('FAIL runner: only ' + stepsDone + ' of ' + steps.length + ' steps completed (a step never called next())');
+        process.exitCode = 1;
+    }
+});
 (function run(i) {
     if (i >= steps.length) {
+        stepsDone = steps.length;
         console.log(failures === 0 ? '\ntest-plugin: ALL PASSED' : '\ntest-plugin: ' + failures + ' FAILURE(S)');
         process.exit(failures === 0 ? 0 : 1);
     }
     var once = false;
+    // Per-step watchdog: a step that never calls next() either ends the process silently
+    // (empty event loop) or hangs on open timers until the CI job timeout - both are failures.
+    var guard = setTimeout(function () {
+        console.log('FAIL runner: step ' + i + ' did not call next() within 120 s');
+        process.exit(1);
+    }, 120000);
     steps[i](function () {
         if (once) { failures++; console.log('FAIL step ' + i + ' called next() twice'); return; }
-        once = true; run(i + 1);
+        once = true; clearTimeout(guard); stepsDone = i + 1; run(i + 1);
     });
 })(0);

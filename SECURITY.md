@@ -23,7 +23,13 @@ Please report security vulnerabilities by opening an issue.
   (machine-wide installation). There is **no automation at all**: code only ever runs because a site admin created
   a task for explicitly selected devices, and what runs is always a library/server-files file the admin picked,
   never a path or command typed into the form. The package bytes are SHA-256 verified **on the device** before
-  execution; a mismatch or missing download answers `no-file` and executes nothing.
+  execution; a mismatch or missing download answers `no-file` and executes nothing. Since v4.3.0 the verified bytes
+  are exactly the executed bytes: Windows keeps a read-only, write-locked handle on the file from the hash check
+  until the installer ended, Linux executes only a re-hashed private copy in a fresh `mktemp -d` (mode 700) folder.
+- **Server Files as a deploy source** are a trust decision: MeshCentral lets every user with the *server files*
+  right of a device group (`MESHRIGHT_SERVERFILES`) put files into that group's folder. Deploying such a file runs
+  that user's file as SYSTEM/root - check the content before you deploy it. File names from there are always
+  treated as data (all PowerShell quote characters, incl. the typographic ones, are escaped since v4.3.0).
 
 ### Access control (OWASP A01)
 - Every GET/POST route and the device-list toolbar hook require `user.siteadmin === 0xFFFFFFFF` **and**
@@ -35,6 +41,10 @@ Please report security vulnerabilities by opening an issue.
   otherwise the answer is 403 (since v3.0.1). GET routes do not change state.
 - Toolbar exports accept only well-formed node ids (`node/<domain>/<id>`), because MeshCentral does not
   rights-check the top-level `selectedDevices` list it passes to plugins.
+- Server notifications (scan results, NVD stale, deploy summary) carry `domain: ''`: MeshCentral subscribes every
+  site admin - also those of sub-domains - to `'*'` and filters only by the event's domain (since v4.3.0).
+- Automatic winget runs need the switch **and** at least one ticked device group, and only reach Windows devices
+  (the agent-connect path ignored both rules before v4.3.0).
 
 ### Injection (OWASP A03)
 - **Agent scripts:** every package id that reaches PowerShell matches `^[A-Za-z0-9._+-]{1,128}$` and is embedded
@@ -43,17 +53,21 @@ Please report security vulnerabilities by opening an issue.
 - **Deploy scripts (v4.0.0):** file names go through `swSanitizeName` (basename, hostile chars removed), only
   `SW_EXTS` types run, extensions/hashes/ids in the scripts are server-generated regex-cleaned values, and command
   arguments lose all control characters (`swSafeArgs`, ≤500 chars) before being embedded **single-quoted with
-  complete shell quoting** (PowerShell `''`, POSIX `'\''`). Tests assert the quoting and that a hostile args/name
-  string can never produce a second command on a script line (plus the real PowerShell/sh parsers run over the
-  generated scripts). The staged file names are `invsw-<16hex>-<12hex>.<ext>` from a CSPRNG - an attacker who can
-  write the target temp folder cannot guess a name to pre-create. The download ticket (`tmpdl` cookie) is bound
-  to one node, one file and 5 minutes, and it is minted per dispatch.
+  complete shell quoting** (PowerShell: `'` and the typographic quotes `‘ ’ ‚ ‛` doubled - PowerShell treats all
+  five as quote characters; POSIX `'\''`). Tests assert the quoting, run the hostile case through PowerShell and
+  check that a hostile args/name string can never produce a second command on a script line (plus the real
+  PowerShell/sh parsers run over the
+  generated scripts). The staged file names are `invsw-<16hex>-<12hex>.<ext>` from a CSPRNG, so no name can be
+  pre-created in advance; the name is not secret on the device once the task runs (it is part of the agent's
+  command), which is why the integrity rests on the hash-and-lock step described above, not on the name. The
+  download ticket (`tmpdl` cookie) is bound to one node, one file and 5 minutes, and it is minted per dispatch.
 - **CSV formula injection** (CWE-1236): values starting with `= + - @ tab CR` are prefixed with `'`.
 - **HTML:** the views use only escaped Handlebars output (`{{...}}`, never `{{{...}}}`); the panel script
   escapes every dynamic value with `esc()` before inserting HTML. The panel's own inline `<script>` is a static
   file (no interpolation), and the verification tool that extracts it (`tools/check.js`) matches the tag
-  case-insensitively and with attributes, so no variant of the tag can hide a block from the syntax check.
-- **Ids:** CVE ids `CVE-\d{4}-\d{4,}` or `WINDOWS-UPDATES`; mesh ids `^mesh/[^:]+$` (prevents key poisoning in
+  case-insensitively and with attributes and checks EVERY script block of every view (since v4.3.0), so no
+  variant of the tag can hide a block from the syntax check.
+- **Ids:** CVE ids `CVE-\d{4}-\d{4,}`, `WINDOWS-UPDATES` or `OS-EOL`; mesh ids `^mesh/[^:]+$` (prevents key poisoning in
   `assessments.json`) on every write and on the scan query; node ids `^node/[^:]{1,100}$` for the updater.
 
 ### Integrity of downloaded data (OWASP A08)
@@ -115,6 +129,11 @@ Please report security vulnerabilities by opening an issue.
 - Response headers (CSP, `X-Frame-Options: sameorigin`, `nosniff`, `Referrer-Policy`) come from MeshCentral's
   global middleware, which also covers `pluginadmin.ashx` (verified in webserver.js). Its CSP allows
   `'unsafe-inline'` scripts, which the panel needs; XSS protection therefore relies on output escaping.
+- The winget script travels as ONE cmd.exe line; an ignore list of more than roughly 150-200 entries exceeds
+  cmd's 8191-character limit and the run then ends visibly as "no marker in output". Keep the list short.
+- Generated scripts are executed by tests only partially: the deploy flow was run end to end on Windows 11 and
+  with a POSIX shell during audit 3, the CI runs one live Linux `.sh` deploy; Windows Update, winget runs and
+  `dpkg`/`rpm`/`apt` are verified against their documentation and by syntax parsers, not executed by CI.
 
 ---
 
@@ -125,6 +144,7 @@ Please report security vulnerabilities by opening an issue.
 | 2026-11-06 | AI (opencode) | NVIDIA Nemotron 3 550B A55B | Formal & functional verification (v2.x) | 1 bug fixed, dead code removed |
 | 2026-11-11 | AI (opencode) | Claude Opus 5.5 | Independent full audit of v3.0.0: server, agent scripts, update/uninstall, OWASP Top 10, texts, docs, tests | 17 findings, all fixed in v3.0.1 |
 | 2026-11-13 | GitHub Code Scanning (CodeQL, javascript-typescript) | - | Whole JS tree of v4.2.1 | 1 alert (`js/bad-tag-filter`, tools/check.js) - fixed in v4.2.2 |
+| 2026-11-14 | AI (opencode) | Claude Opus 5.5 | Independent full audit of v4.2.2: server, agents, winget/OS/deploy scripts (Windows + Linux), OWASP Top 10, tests, GitHub Actions, texts, docs | 10 findings + 7 test/CI + 10 text, all fixed in v4.3.0 |
 
 See [AUDIT.md](AUDIT.md) for the detailed reports in chronological order.
 
@@ -133,5 +153,5 @@ See [AUDIT.md](AUDIT.md) for the detailed reports in chronological order.
 ## Transparency Note
 
 This plugin was originally created with the assistance of **Qwen 3.6 27B** and **Qwen 3.8 Flash Next** (AI coding
-assistants). The 2026-11-06 audit was performed by **NVIDIA Nemotron 3 550B A55B**, the 2026-11-11 audit by
-**Claude**, both via the opencode agent.
+assistants). The 2026-11-06 audit was performed by **NVIDIA Nemotron 3 550B A55B**, the 2026-11-11 and 2026-11-14
+audits by **Claude Opus 5.5**, all via the opencode agent.

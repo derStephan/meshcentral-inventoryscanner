@@ -21,10 +21,10 @@
  * NVD feed is downloaded.
  *
  * @author derStephan
- * @version 4.2.2
+ * @version 4.3.0
  *
  * Transparency: This plugin was created with the assistance of Qwen 3.6 27B and Qwen 3.8 Flash Next.
- * Audits: 2026-11-06 (NVIDIA Nemotron 3 550B A55B) and 2026-11-11 (Claude, v3.0.1) via opencode - see AUDIT.md.
+ * Audits: 2026-11-06 (NVIDIA Nemotron 3 550B A55B), 2026-11-11 (Claude Opus 5.5, v3.0.1) and 2026-11-14 (Claude Opus 5.5, v4.3.0) via opencode - see AUDIT.md.
  */
 
 "use strict";

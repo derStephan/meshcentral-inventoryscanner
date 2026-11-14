@@ -52,9 +52,9 @@
         .override input { width: 220px; }
         .override-set { background: #e7f3ff; border-left: 3px solid #4a90d9; padding: 4px 8px; margin-top: 6px; font-size: 12px; }
         .manual { color: #8a6d3b; }
-        #msg, #cpeMsg { margin-top: 12px; padding: 10px; border-radius: 4px; font-size: 13px; display: none; }
-        #msg.error, #cpeMsg.error { background: #f8d7da; color: #721c24; display: block; }
-        #msg.success, #cpeMsg.success { background: #d4edda; color: #155724; display: block; }
+        #msg, #cpeMsg, #wgMsg, #osMsg, #swMsg, #settingsMsg { margin-top: 12px; padding: 10px; border-radius: 4px; font-size: 13px; display: none; }
+        #msg.error, #cpeMsg.error, #wgMsg.error, #osMsg.error, #swMsg.error, #settingsMsg.error { background: #f8d7da; color: #721c24; display: block; }
+        #msg.success, #cpeMsg.success, #wgMsg.success, #osMsg.success, #swMsg.success, #settingsMsg.success { background: #d4edda; color: #155724; display: block; }
         .topnav { display: flex; gap: 10px; margin-bottom: 20px; background: #0b3d6b; border-radius: 8px; padding: 10px 14px; flex-wrap: wrap; align-items: center; }
         .topnav a { color: #d7e6f5; text-decoration: none; padding: 6px 12px; border-radius: 5px; font-size: 13px; font-weight: 600; }
         .topnav a:hover { background: #154d80; color: #fff; }
@@ -226,7 +226,7 @@
                 <label for="setOsUrgentDays">OS upgrade is urgent this many days before support ends</label>
                 <div><input type="text" id="setOsUrgentDays" class="num">
                     <select id="setOsUrgentDaysSrc" class="srcsel"></select>
-                    <div class="hint">Updates tab, OS section: an outdated release counts as "Upgrade urgent" once its support (endoflife.date)
+                    <div class="hint">OS Updates tab: an outdated release counts as "Upgrade urgent" once its support (endoflife.date)
                     has ended or fewer days than this are left, otherwise as "Upgrade available". 365 = default, 0 = only after support ended.
                     Windows Home/Pro releases get 24 months of support, so with 365 a Pro release becomes urgent about a year after it came out.</div></div>
 
@@ -319,7 +319,7 @@
             <div class="info">
                 Automatic software updates via <code>winget</code> on Windows devices. Nothing runs automatically until you enable
                 it here <strong>and</strong> tick at least one device group; the manual buttons (Run Now, Dry run, per-device and
-                per-package actions) work on demand and cover every non-excluded Windows device. Updates are silent, one package at a
+                per-package actions) work on demand and cover every non-excluded Windows device (a single-device "Update now" also works on an excluded one). Updates are silent, one package at a
                 time, and a device is never rebooted. Packages on the ignore list are skipped and (optionally) pinned
                 on the client, so even a manual <code>winget upgrade --all</code> leaves license-bound versions
                 alone. Devices without winget are reported per run; offline devices are skipped. Automatic runs follow
@@ -424,7 +424,7 @@
 
         <div class="tab-content" id="tab-deploy">
             <div class="info">
-                Install an <strong>MSI / EXE / DEB / RPM / shell installer</strong> on selected devices. Upload a package from this PC
+                Install an <strong>MSI / MSP / EXE / DEB / RPM / shell / BIN installer</strong> on selected devices. Upload a package from this PC
                 (it lands in the plugin's own library on the server), pick a file from <strong>MeshCentral's Server Files</strong>
                 (the per-group folders of the Files tab), or place a file in <code>&lt;datapath&gt;/plugins/inventoryscanner/software/files/</code>
                 and press <em>Rescan</em>. Choose devices one by one <strong>or whole locations</strong>, optionally add command-line
@@ -460,7 +460,7 @@
                 <select id="swSfFile" style="min-width:260px;display:none;"></select>
             </div>
             <div class="controls">
-                <label>Command-line parameters: <input id="swArgs" type="text" style="min-width:420px" placeholder="optional, e.g. /qn REBOOT=ReallySuppress  (appended to msiexec; passed to the program for other types)"></label>
+                <label>Command-line parameters: <input id="swArgs" type="text" style="min-width:420px" placeholder="optional, e.g. /qn REBOOT=ReallySuppress  (appended to msiexec / dpkg -i / rpm -Uvh; passed to the program for exe/sh/bin)"></label>
             </div>
             <div class="hint" style="margin-bottom:6px;">Tick <b>whole locations</b> or single devices (both combine - a device inside a ticked location is not counted twice). Windows and Linux devices are supported; phones and devices without a reported OS are listed as not supported and never touched.</div>
             <div class="table-container" style="max-height:300px;overflow:auto;"><table>
@@ -1211,7 +1211,7 @@
                         else if (['failed', 'error', 'no-file', 'timeout'].indexOf(d.state) >= 0) { col = '#a33'; }
                         else if (d.state === 'running') { col = '#06c'; }
                         else if (d.state === 'queued') { col = '#8a6d3b'; }
-                        html += '<tr><td>' + esc(swDevLabel(d.node)) + '</td><td style="color:' + col + ';font-weight:600">' + esc(d.state) + '</td>';
+                        html += '<tr><td>' + esc(swDevLabel(d.node)) + '</td><td style="color:' + col + ';font-weight:600">' + esc(d.state) + (d.state === 'ok' && d.reboot ? ' - reboot pending' : '') + '</td>';
                         html += '<td>' + (d.exit == null ? '' : (esc(d.exit) + ' / 0x' + esc(wgHexExit(d.exit)))) + '</td>';
                         html += '<td style="font-size:11px">' + esc(d.note || '') + (d.platform ? ' <span class="hint">(' + esc(d.platform) + ')</span>' : '') + '</td>';
                         html += '<td style="font-size:11px">' + esc(fmtLocal(d.time)) + '</td></tr>';
@@ -1313,7 +1313,7 @@
             var extM = /\.([A-Za-z0-9]{1,4})$/.exec(file.name);
             var ext = extM ? extM[1].toLowerCase() : '';
             if (!extM || (swApp.limits && (swApp.limits.exts || []).indexOf(ext) < 0)) {
-                showMsg('swMsg', 'Unsupported file type - allowed: ' + (((swApp.limits && swApp.limits.exts) || ['msi', 'exe', 'deb', 'rpm', 'sh']).join(', ')) + '.', false);
+                showMsg('swMsg', 'Unsupported file type - allowed: ' + (((swApp.limits && swApp.limits.exts) || ['msi', 'msp', 'exe', 'deb', 'rpm', 'sh', 'bin']).join(', ')) + '.', false);
                 return;
             }
             if (file.size <= 0) { showMsg('swMsg', 'The file is empty.', false); return; }
@@ -1331,8 +1331,8 @@
                     post('sw_upload', { uploadId: uploadId, name: file.name, index: i, data: swB64u8(u8), last: (end >= size) ? 'true' : 'false' }).then(function (d) {
                         if (d.done) { $('swUploadInfo').textContent = ''; showMsg('swMsg', '"' + d.file.name + '" is in the library (sha256 ' + String(d.file.sha256).substring(0, 16) + '...).', true); loadSwFiles(); return; }
                         if (d.error) {
-                            if (retries++ < 6 && typeof d.next === 'number' && d.next >= 0 && d.next <= i + 1) { i = d.next; step(); return; }
-                            if (retries++ < 6 && d.restart === true) { i = 0; step(); return; }
+                            if (retries < 6 && typeof d.next === 'number' && d.next >= 0 && d.next <= i + 1) { retries++; i = d.next; step(); return; }
+                            if (retries < 6 && d.restart === true) { retries++; i = 0; step(); return; }
                             fail(d.error); return;
                         }
                         retries = 0;
@@ -1367,7 +1367,7 @@
             if (!b || b === this) { return; }
             if (b.getAttribute('data-swact') === 'delfile') {
                 var fid = b.getAttribute('data-swfid');
-                if (!window.confirm('Remove this installer from the library? Running tasks keep their staged copy.')) { return; }
+                if (!window.confirm('Remove this installer from the library? (The server refuses while an open task still uses it.)')) { return; }
                 post('sw_delete_file', { fileId: fid }).then(function (d) {
                     if (d.error) { showMsg('swMsg', d.error, false); return; }
                     showMsg('swMsg', 'Removed from the library.', true);
@@ -1425,7 +1425,7 @@
             var act = b.getAttribute('data-swact'), tid = b.getAttribute('data-swtid');
             if (act === 'tgl') { swApp.open[tid] = !(swApp.open[tid] === true); renderSwTasks(); return; }
             if (act === 'retry') {
-                if (!window.confirm('Retry every device of this task that is not ok (queued, failed, timed out or never reached)?')) { return; }
+                if (!window.confirm('Retry every device of this task that is neither ok nor running (failed, timed out, no file - and also cancelled or unsupported ones)?')) { return; }
                 post('sw_retry_task', { taskId: tid }).then(function (d) {
                     if (d.error) { showMsg('swMsg', d.error, false); return; }
                     showMsg('swMsg', 'Retrying ' + d.devices + ' device(s).', true);
@@ -1653,7 +1653,7 @@
                 html += '<td>' + esc(r.cvss) + '</td>';
                 html += '<td>' + esc(r.software);
                 if (r.softwareVaried && r.variedSoftware) { html += ' <span class="badge badge-varies" title="' + esc(r.variedSoftware.join(' | ')) + '">+' + (r.variedSoftware.length - 1) + ' name(s)</span>'; }
-                if (r.versionVaried) { html += ' <span class="badge badge-varies" title="' + esc((r.variedVersions || []).map(function (x) { return x === '' ? 'unknown' : x; }).join(' | ')) + '">varies (' + r.variedVersions.length + ')</span>'; }
+                if (r.versionVaried) { html += ' <span class="badge badge-varies" title="' + esc((r.variedVersions || []).map(function (x) { return x === '' ? 'unknown' : x; }).join(' | ')) + '">varies (' + (r.variedVersions || []).length + ')</span>'; }
                 else if (r.version) { html += ' <span style="color:#556">' + esc(r.version) + '</span>'; }
                 html += '</td>';
                 html += '<td>' + esc(status) + (r.mixed ? ' <span class="badge badge-mixed">mixed</span>' : '') + '</td>';

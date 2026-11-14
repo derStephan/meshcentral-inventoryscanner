@@ -12,7 +12,10 @@ let Handlebars;
 try {
     Handlebars = require('handlebars');
 } catch (e) {
-    console.log('SKIP test-views: handlebars not installed. Run `npm install` first (or `npm test`).');
+    // In CI (GITHUB_ACTIONS / CI set, `npm ci` ran) a missing handlebars is a broken setup and
+    // must FAIL - a silent exit 0 would report the view tests as passed (audit 3).
+    if (process.env.CI) { console.log('FAIL test-views: handlebars is not installed in CI'); process.exit(1); }
+    console.log('SKIP test-views: handlebars not installed. Run `npm ci` first (or `npm test`).');
     process.exit(0);
 }
 

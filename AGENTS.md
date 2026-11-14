@@ -209,8 +209,11 @@ Based on official MeshCentral source (`pluginHandler.js`, `webserver.js`, `db.js
   tab); it is then consumed (not broadcast). Error answers (`{error:...}`) never overwrite the last good list.
   Stored per node under `<datapath>/plugins/inventoryscanner/data/<nodeid>/{software,windowsupdates}.json`.
   Only Critical/Important pending updates count towards the `WINDOWS-UPDATES` finding.
-- **Notifications:** `obj.meshServer.DispatchEvent(['*'], obj, {type:'notify', ...})` — ephemeral browser toast for
-   logged-in admins + entry in the server event log. No built-in email.
+- **Notifications:** `obj.meshServer.DispatchEvent(['*'], obj, {type:'notify', domain:'', ...})` — ephemeral browser toast for
+   logged-in admins + entry in the server event log. No built-in email. `domain:''` is REQUIRED (v4.3.0):
+   webserver.js `obj.subscribe` puts every `siteadmin == 0xFFFFFFFF` user - sub-domain admins too - on `'*'`, and
+   meshuser.js `HandleEvent` filters only by `event.domain`; without it tenant admins received our scan toasts.
+   Device events (`wgRaiseNodeEvent`) carry the node's own domain.
 - **Server → device file delivery (v4.0.0, verified in webserver.js `handleUploadFileBatch` +
   `handleAgentDownloadFile` and agents/meshcore.js `case 'wget'`/`serverFetchFile`):** a message
   `{action:'wget', overwrite:true, createFolder, urlpath:'/<domainurl>agentdownload.ashx?c='+cookie, path, folder,
@@ -268,7 +271,7 @@ POST body `action=`:
 | `sw_files` | — | installer library `{files:[{id,name,ext,size,sha256,time,by}], parts:[{uploadId,bytes}], limits:{chunkBytes,maxBytes,exts}, note}` |
 | `sw_upload` | `uploadId` (hex 8..40), `name`, `index`, `data` (base64url ≤ `chunkBytes` raw), `last` | chunked upload into `software/parts/<id>.part`; `{ok,next}`, order-error `{error,next,have}` or `{done,file}` (hash computed, committed as immutable `<newid>.<ext>`) |
 | `sw_delete_file` | `fileId` | removes an unused library entry + its file; refused (error) while a NOT-done task references it |
-| `sw_rescan_library` | — | indexes files placed in `software/files/` on the server (renamed to `<id>.<ext>`, display name kept), drops vanished entries; `{added,removed,failed,files}` |
+| `sw_rescan_library` | — | indexes NEW files placed in `software/files/` on the server (renamed to `<id>.<ext>`, display name kept; files that already are `<id>.<ext>` of an index entry are left alone - before v4.3.0 every rescan re-imported and renamed them), drops vanished entries; `{added,removed,failed,files}` |
 | `sw_serverfiles` | — | MeshCentral Server Files listing `{folders:[{meshId,name,files:[{name,size,time}]}], note}` from `<filespath>/domain[-x]/mesh-<grp>`, dot-files/invalid names hidden |
 | `sw_devices` | — | every non-deleted node `{devices:[{id,host,given,group,meshid,online,platform:'windows'\|'linux'\|'other',os}]}` (platform via `osPlatformOf`) |
 | `sw_create_task` | `source` ('library'\|'serverfile'), `fileId` or (`meshId`+`fileName`), `args?`, `nodeIds`(csv) and/or `meshIds`(csv) | validates everything (ids, name, ext ∈ SW_EXTS, args via `swSafeArgs`), expands locations, caps at `SW_MAX_DEVICES` (500), creates the task and queues all devices → `{taskId, devices, note}`; offline devices stay 'queued' until connect/sweep |
@@ -559,7 +562,13 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   grandparent; matched by leaf name `meshagent|meshcentral...exe`), else the protected
   `%ProgramData%\InventoryScanner` folder (see above); the log rotates once at 5MB.
   `hook_agentCoreIsStable` additionally queues the device through `wgQueueNode` (stagger-delayed, so the
-  collector settles first; disabled/excluded/not-due devices short-circuit without any agent traffic).
+  collector settles first; disabled/excluded/not-due devices short-circuit without any agent traffic). Since v4.3.0
+  `wgQueueNode` follows the same opt-in as the scheduled batches: no `updateMeshes` -> nothing; the node document is
+  `docs[0]` of the `db.Get` ARRAY (pre-4.3.0 it read `meshid` off the array and never matched, and an empty group
+  list queued EVERY connecting device incl. Linux); non-Windows nodes (`wgIsWindowsNode`) are skipped.
+- **cmd.exe line limit**: `wgTransport` produces ONE line; cmd refuses lines > 8191 characters ("command line too
+  long", verified). Deploy (~2.5 KB) and OS (~3 KB) scripts are far below it; the winget script grows with the
+  ignore list (measured 8.6 KB at 200 ids, 15.8 KB at 500) - such a run ends as "no marker in output".
 - Batching: queue with 2 devices in parallel (`WINGET_MAX_PARALLEL`), 2 h watchdog per device, results in
   `winget-results.json`, log `winget-update.log` (rotates ~5 MB). Scheduled batches require explicit
   `updateMeshes`; manual "Run Now" covers every non-excluded Windows node (unknown-OS nodes included). No reboots are ever triggered
@@ -617,8 +626,16 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   path, folder, servertlshash}` followed by a runcommands script on the SAME agent socket (wget starts instantly,
   the script polls). Cookies are minted PER DISPATCH (5-minute decode timeout) - also for retries.
 - **Scripts** (`swBuildWindowsScript`/`swBuildLinuxScript`, one statement per line, PS parser + `sh -n` asserted):
-  wait up to `SW_FILE_WAIT_MIN` (15 min) for the file, verify SHA-256 (`Get-FileHash ... -ieq` / `sha256sum`),
-  NOTHING runs before the check passes; then `msiexec /i "..." /qn /norestart <args>` (`/update ... /quiet` for .msp),
+  wait up to `SW_FILE_WAIT_MIN` (15 min) for the file, verify SHA-256, NOTHING runs before the check passes, and
+  (v4.3.0) **the verified bytes are the executed bytes**: Windows opens the staged file with `FileShare.Read`,
+  hashes THROUGH that handle (`Get-FileHash -InputStream`) and keeps it open until the installer returned (write,
+  rename and delete are refused meanwhile - verified on Windows 11, `Start-Process` and `msiexec` still read it);
+  Linux copies a matching, non-symlinked download into `mktemp -d /var/tmp/invsw-run.XXXXXXXX` (mode 700,
+  `umask 077`), re-hashes the copy and executes ONLY that private copy `"$P"`. Reason: `C:\Windows\Temp` lets
+  standard users create files and `/var/tmp` is world-writable, so path-based check-then-run was a TOCTOU.
+  PowerShell literals go through `obj.swPsQuote`, which doubles `'` AND `U+2018 U+2019 U+201A U+201B` -
+  PowerShell treats all five as single quotes (verified; doubling only `'` allowed injection by file name).
+  Then `msiexec /i "..." /qn /norestart <args>` (`/update ... /quiet` for .msp),
   `Start-Process -FilePath <file> -ArgumentList <args> -Wait` (exe/bin), or `dpkg -i` / `rpm -Uvh` / `sh` (Linux,
   `DEBIAN_FRONTEND=noninteractive`, stdin `< /dev/null`, output to `/var/log/invscanner-deploy.log`), delete the
   staged file, answer `@@INVSWD@@{json}` with `state ok|failed|error|no-file`, `exit`, `reboot`, `name`. Windows
@@ -822,17 +839,24 @@ verified inside the agent container) are proven, not mocked. Auth model of the C
 MeshCentral's own `--createaccount`/`--adminaccount` one-shot CLIs, session auto-established via `--user ciadmin`
 (a dotted cert name + `agentaliasdns` are required, otherwise MeshCentral silently drops to LAN mode and agents
 get MeshServer=local). The daily schedule re-runs the container test only when Ylianst/MeshCentral published a
-release that is not yet marked verified (cache key = release tag); `workflow_dispatch` runs it on demand,
-optionally against the `master` image.
+release that is not yet marked verified for THIS commit (cache key = release tag + `github.sha`, v4.3.0 - before,
+a tag verified once skipped every later plugin change on the schedule); `workflow_dispatch` runs it on demand,
+optionally against the `master` image. Workflow hardening (v4.3.0): `permissions: contents: read` only (the cache
+actions use the runner token, `actions: write` was unnecessary), every action pinned by commit SHA (tag in a
+comment), step outputs reach shell scripts as `env:` never as `${{ }}` inside `run:`. Known gaps: the live run
+uses the `plugins.list` dev loader (the web-installer ZIP/DB/hot-swap path is not exercised live), no Windows
+runner (PowerShell checks skip on Linux), Docker images are not digest-pinned (deliberate: the point is testing
+the CURRENT release).
 
 Data dumps from support sessions (CSV exports, browser output TXTs) live OUTSIDE the repo (they sit in the
 MeshCentral install folder) and root `/*.txt` + `/*.csv` are gitignored as a guard - never copy them in.
 - `tools/check.js`: `node --check` on the entry AND on every `lib/*.js`, the module wiring (each lib file is in the
   entry's `modules` list and vice versa, no orphan), the module rules (no `__dirname` in `lib/`, entry stays thin),
-  inline-script syntax/`{{`-hazard check, JSON validity of config files, and view-name↔render-name consistency over
+  inline-script syntax/`{{`-hazard check over EVERY `<script>` block of every view (v4.3.0; the report views must
+  contain none), JSON validity of config files, and view-name↔render-name consistency over
   the WHOLE JS tree (the `res.render()` calls live in `lib/routes.js`/`lib/reports.js` since v3.5.1).
   Must run anywhere (no dependencies).
-- `tools/test-plugin.js`: 419 behavioral assertions (71 steps) against the real module (mocked MeshCentral DB/webserver):
+- `tools/test-plugin.js`: 431 behavioral assertions (72 steps; with PowerShell AND a POSIX shell present) against the real module (mocked MeshCentral DB/webserver):
   the module wiring itself (every lib file attaches, a fresh instance exposes the same function surface, no
   module-level locals in `lib/`), locations grouping & counting, manual-rating severity override, FP exclusion, host-name preference, coverage
   numbers, multi-mesh scan/`mixed` logic, all POST handlers incl. validation/rejections, routes, admin gating
@@ -858,11 +882,21 @@ MeshCentral install folder) and root `/*.txt` + `/*.csv` are gitignored as a gua
   The winget table parser is additionally EXECUTED by PowerShell against a real winget 1.29 table (block between
   the `# invscanner:parse-begin/-end` markers; skipped where PowerShell is missing). The runner is the LAST
   statement of the file and prints `registered steps: N` - new steps must be pushed above it.
+  Runner guards (v4.3.0, audit 3): every step has a 120 s watchdog and an exit guard compares completed with
+  registered steps - before, a step that never called `next()` ended the process with exit 0 and silently
+  skipped everything after it. PowerShell-based checks go through `runPs()`, which returns null (SKIP) ONLY when
+  PowerShell is not installed (ENOENT); a parse error or exception is a FAIL (before, every failure was printed
+  as "SKIP ... PowerShell not available"). On the Linux CI runner the PowerShell checks are skipped, on a machine
+  without a POSIX shell the two `sh -n` checks are: the assertion count therefore depends on the platform
+  (431 with both shells present).
+  The module-state guard checks COLUMN-0 declarations in `lib/` (only `const x = require(...)` allowed) and
+  additionally that the `attach` bodies hold no 4-space-indented locals.
   Requests in tests carry `headers: XHDR` (the panel header); the test admin has `domain: ''`.
   Tests that assert on emitted CODE TEXT use `pluginSrc()` (entry + all `lib/*.js` concatenated) - never read
   `inventoryscanner.js` alone, that file has no implementation any more. The upgrade test copies the whole
   plugin tree including `lib/`, exactly like the installer unpacks it.
-- `tools/test-views.js`: compiles all three views and renders them with mock data **and empty data**.
+- `tools/test-views.js`: compiles all three views and renders them with mock data **and empty data**; without
+  handlebars it SKIPs locally but FAILS when the `CI` environment variable is set (v4.3.0).
 
 If you change data shapes, UPDATE these tests — they are the contract.
 
@@ -966,8 +1000,15 @@ the location/device picker wraps (flex) instead of scrolling sideways, and the s
 confirm) count devices inside an already-ticked location as part of that location ("1 whole location(s) + 2
 additional device(s)") - the old "1 device(s) + 1 whole location(s)" double count is gone; the POST body still
  sends every ticked id (the server task store keys by node id, so duplicates were and are harmless).
-v4.2.2 (this release): fix for issue #1 - the OS release upgrade ended in "ok: 0 found" because the running
+v4.2.2: fix for issue #1 - the OS release upgrade ended in "ok: 0 found" because the running
 wuauserv cached the TargetReleaseVersion policy and only re-reads it on a service restart; the upgrade script
 now restarts wuauserv right before the search and again after the policy restore (update mode never touches it).
 Security: the CodeQL `js/bad-tag-filter` alert on tools/check.js is fixed - the inline-<script> extraction regex
 is now case-insensitive and tolerates tag attributes (`/<script\b[^>]*>([\s\S]*?)<\/script>/i`).
+v4.3.0 (this release, audit 3 - details in AUDIT.md): deploy scripts quote all five PowerShell quote characters
+(`swPsQuote`) and execute exactly the verified bytes (Windows: hash through a held `FileShare.Read` handle; Linux:
+re-hashed private `mktemp -d` copy); `wgQueueNode` honours the group opt-in, reads `docs[0]` and skips non-Windows
+nodes; `sw_rescan_library` no longer re-imports indexed files; server notifications carry `domain:''`. Tests: per-step
+watchdog + exit guard, `runPs()` (failures no longer SKIP), column-0 module-state check, check.js over all script
+blocks, test-views FAILS in CI without handlebars, 431 assertions / 72 steps. CI: least-privilege permissions,
+SHA-pinned actions, env-passed step outputs, cache key with the commit sha. Panel texts corrected (see AUDIT.md T1-T8).

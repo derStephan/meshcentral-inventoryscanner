@@ -70,25 +70,31 @@ for (const f of libFiles) {
         src.split('\n').filter(l => l.indexOf('__dirname') >= 0)[0]);
 }
 
-// 2. inline script of the panel view
-const assPath = path.join(viewsDir, 'assessment.handlebars');
-if (fs.existsSync(assPath)) {
-    const src = fs.readFileSync(assPath, 'utf8');
-    const m = src.match(/<script\b[^>]*>([\s\S]*?)<\/script>/i);
-    report('assessment.handlebars has an inline <script>', !!m);
-    if (m) {
-        const js = m[1];
-        const stray = js.replace(/\{\{shortName\}\}/g, '').indexOf('{{');
-        report('panel script: no stray {{ (only {{shortName}})', stray < 0,
-            stray >= 0 ? js.substring(Math.max(0, stray - 40), stray + 40) : undefined);
-        const tmp = path.join(os.tmpdir(), 'invscanner-inline-check-' + Date.now() + '.js');
-        fs.writeFileSync(tmp, js, 'utf8');
-        jsCheck(tmp, 'panel inline script syntax');
-        try { fs.unlinkSync(tmp); } catch (e) { }
+// 2. inline scripts of ALL views (audit 3: before, only the FIRST <script> of the panel was checked;
+//    every block is checked now, and the report views must not contain any script at all)
+for (const vf of fs.readdirSync(viewsDir).filter(function (f) { return f.endsWith('.handlebars'); })) {
+    const vsrc = fs.readFileSync(path.join(viewsDir, vf), 'utf8');
+    const blocks = [];
+    const re = /<script\b[^>]*>([\s\S]*?)<\/script>/gi;
+    let mm;
+    while ((mm = re.exec(vsrc)) !== null) { blocks.push(mm[1]); }
+    if (vf === 'assessment.handlebars') {
+        report('assessment.handlebars has an inline <script>', blocks.length > 0);
+    } else {
+        report(vf + ' contains no <script> (static print view)', blocks.length === 0);
     }
-} else {
-    report('assessment.handlebars exists', false);
+    blocks.forEach(function (js, bi) {
+        const label = vf + ' script #' + (bi + 1);
+        const stray = js.replace(/\{\{shortName\}\}/g, '').indexOf('{{');
+        report(label + ': no stray {{ (only {{shortName}})', stray < 0,
+            stray >= 0 ? js.substring(Math.max(0, stray - 40), stray + 40) : undefined);
+        const tmp = path.join(os.tmpdir(), 'invscanner-inline-check-' + Date.now() + '-' + bi + '.js');
+        fs.writeFileSync(tmp, js, 'utf8');
+        jsCheck(tmp, label + ' syntax');
+        try { fs.unlinkSync(tmp); } catch (e) { }
+    });
 }
+if (!fs.existsSync(path.join(viewsDir, 'assessment.handlebars'))) { report('assessment.handlebars exists', false); }
 
 // 3. JSON files
 for (const f of [path.join(pluginDir, 'config.json'), path.join(root, 'package.json')]) {
