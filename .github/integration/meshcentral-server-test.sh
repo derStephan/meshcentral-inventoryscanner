@@ -61,6 +61,12 @@ if grep -q 'inventoryscanner' "$BODY"; then ok 'the panel references the plugin 
 chk 'POST without the cross-site header is refused'    403 "$(post_nohdr --data 'action=get_locations')"
 chk 'POST with an unknown action 404s'                 404 "$(post_auth --data 'action=does_not_exist')"
 chk 'GET with an unknown action 404s'                  404 "$(get_auth '&action=nope')"
+# v4.3.2: the name link on My Server -> Plugins (goPlugin) opens ?pin=inventoryscanner WITHOUT action
+chk 'GET without action (plugin list link) renders'    200 "$(get_auth '')"
+if grep -q "plugin v${PLUGIN_VER:-unknown}" "$BODY"; then ok '...and it is the panel'; else bad 'GET without action did not render the panel'; fi
+# v4.3.2: the one-click upgrade restarts the server only when it runs as the --launch child of
+# MeshCentral's launcher (which relaunches it on "Server restart..."). Prove the image does that.
+if cat /proc/[0-9]*/cmdline 2>/dev/null | tr '\0' ' ' | grep -q -- '[-]-launch'; then ok 'server runs under the MeshCentral launcher (--launch child, upgrade restart possible)'; else bad 'no --launch child process: an upgrade would fall back to the hot swap'; fi
 
 echo
 echo "== GET routes: scan, reports, CSV export =="

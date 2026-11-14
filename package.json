@@ -1,7 +1,7 @@
 {
   "name": "meshcentral-inventoryscanner",
-  "version": "4.3.1",
-  "description": "Software and hardware inventory with an offline CVE scan (NVD), ratings per location and printable reports. Optional: winget app updates, Windows/Linux OS updates and software deployment to selected devices - all opt-in, and a device is never rebooted.",
+  "version": "4.3.2",
+  "description": "Software and hardware inventory with an offline CVE scan (NVD), ratings per location and printable reports. Optional: winget app updates, Windows/Linux OS updates and software deployment to selected devices - all opt-in.",
   "main": "inventoryscanner.js",
   "scripts": {
     "check": "node tools/check.js",

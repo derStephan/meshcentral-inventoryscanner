@@ -84,7 +84,9 @@ without sending inventory data to anyone.
    first NVD download starts in the background (several GB - watch the tail of the download log in the Settings
    tab, no shell needed).
 
-Updates need no ceremony: push a new version here and every server offers **Upgrade** on the Plugins page.
+Updates need no ceremony: push a new version here and every server offers **Upgrade** on the Plugins page. One
+click is enough: the plugin notices the new files and restarts the MeshCentral server by itself (an admin toast
+announces it), so the new version is active after the restart - reload the page once it is back.
 Uninstall: remove the plugin on that page - MeshCentral deletes `<datapath>/plugins/inventoryscanner/` including the
 collected inventory, settings, update results and the deploy package library. The NVD feeds, ratings and scan history
 stay in `<datapath>/nvd/`; delete that folder too if you want them gone. Staged deploy copies in MeshCentral's own

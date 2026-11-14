@@ -239,7 +239,7 @@ GET `pluginadmin.ashx?pin=inventoryscanner`:
 
 | `action` | Handler | Result |
 |---|---|---|
-| `show` | `showAssessmentPanel` | renders `assessment` with `{shortName, meshList, lastUpdate, lastScan, scanIntervalHours, totalCves, version}` (version from the manifest beside the plugin file) |
+| `show` (or no `action`, v4.3.2 - the plugin list link) | `showAssessmentPanel` | renders `assessment` with `{shortName, meshList, lastUpdate, lastScan, scanIntervalHours, totalCves, version}` (version from the manifest beside the plugin file) |
 | `scan` | `assessmentScan` | JSON via `scanMultiMeshCves(meshIds)`; `?mesh=<id>,<id>,...` (comma-separated) |
 | `report` | `vulnerabilityReport` | renders `report` with `{shortName, report: buildOverallReport(), totalCves, lastUpdate}` |
 | `deviceReport` | `deviceReport` | renders `deviceReport`, same data |
@@ -400,14 +400,16 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
 
 ## Upgrade path (verified; user decision: NO polling)
 
-- The swap lives INSIDE server_startup (event-driven, called by MeshCentral after installPlugin);
+- The swap/restart lives INSIDE server_startup (event-driven, called by MeshCentral after installPlugin);
   there is deliberately no timer/watchdog checking the disk. If a MeshCentral build never calls
   server_startup again, the upgrade lands on the next restart - accepted trade-off, documented.
+  (The short `upgradeTreeReady` poll of v4.3.2 only runs AFTER server_startup detected an upgrade.)
 - Node events: DispatchEvent(ids, source, event) persists via db.StoreEvent (meshcentral.js);
   wg runs raise per-device events (etype 'node', visibility 'nodes', targets [nodeid, meshid])
   so results show on the device's events page (viewmode 16).
-- fixOwnPluginUrl() rewrites the stored plugin doc url to /pluginadmin.ashx?pin=...&action=show,
-  because MeshCentral's generic configure link (?viewmode=43) 404s for this plugin.
+- fixOwnPluginUrl() rewrites the stored plugin doc url to /pluginadmin.ashx?pin=...&action=show.
+  The plugin list's name link does NOT use that url (it calls goPlugin -> `?pin=` only), which is why
+  handleAdminReq treats a missing action as `show` since v4.3.2.
 - normalizeCveVersion: ANY distro decoration (ubuntu/dfsg/+exp/bzr/~ /debN/snap wrapper) -> ''
   (unknown) - Debian/Ubuntu patch fixes into identical upstream versions; plain '-1' suffixes
   and epochs-without-decoration still extract their numeric core.
@@ -418,8 +420,10 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   `inventoryscanner.js` briefly exists as a 0-byte file and the Plugins page keeps showing **Disabled** until the
   archive is fully unpacked (slower on small VMs / with antivirus scanning). Never restart or re-install in that
   phase; the Plugins page shows no progress at all (MeshCentral UI limitation) and can print the OLD version until
-  the page is refreshed. The plugin's own log line on a successful hot swap is
-  `upgrade detected ... reloading without server restart` / `hot reload complete`.
+  the page is refreshed. The plugin's own log lines on an upgrade (v4.3.2: in `nvd/nvd-download.log`, the
+  "Plugin & NVD feed log" of the Settings tab - before they went to winget-update.log) are
+  `upgrade detected ... restarting the MeshCentral server to load it` / `restarting MeshCentral now ...` (launcher
+  present) or `... reloading without server restart` / `hot reload complete` (hot-swap fallback).
   Since v3.5.1 this is even more important: the entry `require`s its `lib/` modules, so a tree that is only
   partially unpacked makes plugin loading fail with a visible `Cannot find module ...lib/<name>.js` - which
   means "wait for the extraction, then enable/upgrade again", never "the plugin is broken".
@@ -491,6 +495,20 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   installer stop by themselves. The routeAgentCommand monkey-patch resolves the current instance per call.
   An already-open browser page keeps running old inline JS until reloaded - HTML/exports are
   re-rendered fresh on every request, there is no server push channel to plugin pages.
+- **v4.3.2: restart instead of hot swap when possible.** Under MeshCentral's launcher (`meshServer.args.launch`
+  set - the normal `node meshcentral` start forks the real server as a `--launch` child; verified in
+  meshcentral.js `launchChildServer`) the detected mismatch calls `obj.scheduleUpgradeRestart(diskVer)`
+  instead: timers of the old instance stop (`timerGen++`, `__superseded`), it waits `UPGRADE_RESTART_DELAY_MS`
+  (5 s - installPlugin's `db.updatePlugin` with the new manifest runs right after server_startup) and polls
+  `upgradeTreeReady` (new version in config.json, entry + every lib/*.js + assessment view non-empty, max
+  2 min), raises a default-domain admin toast, prints `Server restart...` and exits 0 via `obj.exitProcess`.
+  That stdout line sets `childProcess.xrestart = 1` in the launcher, which relaunches the server - exactly
+  MeshCentral's own `resetserver` console command. Reason: the hot swap kept running on a process whose UI
+  showed the old version and users clicked Upgrade twice. Without a launcher (`--launch` absent, e.g. some
+  service wrappers/dev runs) an exit would STOP the server, so the hot swap remains the fallback.
+- **Plugin list link:** MeshCentral's `goPlugin()` (views/default.handlebars) opens
+  `/pluginadmin.ashx?pin=<shortName>` WITHOUT `action`; up to v4.3.1 `handleAdminReq` answered 404 there
+  ("Not Found" when clicking the plugin name). A missing/empty action now means `show`.
 
 ## Winget auto-update engine (verified contracts)
 
@@ -1017,8 +1035,16 @@ nodes; `sw_rescan_library` no longer re-imports indexed files; server notificati
 watchdog + exit guard, `runPs()` (failures no longer SKIP), column-0 module-state check, check.js over all script
 blocks, test-views FAILS in CI without handlebars, 431 assertions / 72 steps. CI: least-privilege permissions,
 SHA-pinned actions, env-passed step outputs, cache key with the commit sha. Panel texts corrected (see AUDIT.md T1-T8).
-v4.3.1 (this release): follow-up fixes. The Windows deploy script no longer starts the installer from
+v4.3.1: follow-up fixes. The Windows deploy script no longer starts the installer from
 `C:\Windows\Temp` (a standard user could plant a DLL next to it, CWE-427): it runs from a fresh
 `invsw-run-<guid>` folder with a protected SYSTEM + Administrators ACL. CodeQL `js/bad-tag-filter` #3 in
 tools/check.js fixed (end tags like `</script >`, plus an opener/block count check). Shorter plugin description.
 Test suite: 434 assertions / 72 steps on Windows.
+v4.3.2 (this release): plugin list + upgrade fixes. Clicking the plugin name on My Server -> Plugins opened
+`pluginadmin.ashx?pin=inventoryscanner` without `action` and got 404 - a missing action now renders the panel.
+An Upgrade now restarts MeshCentral by itself (launcher restart signal, see "Plugin upgrade path") instead of the
+hot swap that left users clicking Upgrade twice; the hot swap stays as fallback without a launcher. The
+"never rebooted" note was removed from the plugin description (config.json/package.json). Upgrade/restart/hot-reload
+lines moved from winget-update.log to nvd-download.log (Settings tab, heading now "Plugin & NVD feed log"). CI: the
+container test opens the panel without action and asserts the `--launch` child. Tests: +7 assertions,
++1 step: 441 / 73 on Windows with PowerShell + POSIX shell (verified run without sh: 439 PASS + 2 SKIP).

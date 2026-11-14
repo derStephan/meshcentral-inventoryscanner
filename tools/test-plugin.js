@@ -212,7 +212,11 @@ steps.push(function (next) {
                     check('route show: renders assessment, deleted meshes hidden', d4._view === 'assessment' && d4._data.meshList.length === 2, d4._data.meshList);
                     obj.handleAdminReq({ query: { action: 'bogus' } }, mockRes(function (d5) {
                         check('route unknown GET action -> 404', d5._status === 404, d5);
-                        next();
+                        // v4.3.2: the plugin list link (goPlugin) opens pluginadmin.ashx?pin=<name> without an action
+                        obj.handleAdminReq({ query: { pin: 'inventoryscanner' } }, mockRes(function (d6) {
+                            check('route without action (MeshCentral plugin list link) renders the panel, not 404', d6._view === 'assessment', d6._status || d6._view);
+                            next();
+                        }), user);
                     }), user);
                 }), user);
             }), user);
@@ -1411,6 +1415,54 @@ steps.push(function (next) {
     })());
     ph.plugins.inventoryscanner.timerGen++;
     next();
+});
+
+steps.push(function (next) {
+    // v4.3.2: under MeshCentral's launcher (--launch) the upgrade restarts the server instead of the
+    // hot swap: one Upgrade click, the new process loads the new code from a clean state.
+    var base = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-rst-'));
+    var pd = path.join(base, 'plugins', 'inventoryscanner');
+    fs.mkdirSync(path.join(pd, 'lib'), { recursive: true });
+    fs.mkdirSync(path.join(pd, 'views'), { recursive: true });
+    var srcDir = path.join(__dirname, '..');
+    ['inventoryscanner.js', 'cpe-table.json'].forEach(function (f) { fs.copyFileSync(path.join(srcDir, f), path.join(pd, f)); });
+    fs.readdirSync(path.join(srcDir, 'lib')).forEach(function (f) { fs.copyFileSync(path.join(srcDir, 'lib', f), path.join(pd, 'lib', f)); });
+    fs.copyFileSync(path.join(srcDir, 'views', 'assessment.handlebars'), path.join(pd, 'views', 'assessment.handlebars'));
+    fs.writeFileSync(path.join(pd, 'config.json'), fs.readFileSync(path.join(srcDir, 'config.json'), 'utf8').replace(/"version":\s*"[^"]+"/, '"version": "0.0.1"'));
+    var events = [];
+    var ms3 = { db: db, datapath: base, debug: function () { }, args: { launch: '1234' }, DispatchEvent: function (t, s, e) { events.push(e); },
+        config: { settings: { vulnerabilityScanner: { scanIntervalHours: 0, cpeTableEnabled: false }, inventoryScanner: { collectIntervalMinutes: 0 } } }, webserver: {} };
+    var ph = { parent: ms3, plugins: {}, exports: {} };
+    var inst = require(path.join(pd, 'inventoryscanner.js')).inventoryscanner(ph);
+    ph.plugins.inventoryscanner = inst;
+    fs.writeFileSync(path.join(pd, 'config.json'), fs.readFileSync(path.join(pd, 'config.json'), 'utf8').replace('"0.0.1"', '"0.0.2"'));
+    fs.writeFileSync(path.join(pd, 'lib', 'routes.js'), ''); // installer still busy: lib/ is unpacked last
+    var exits = [], logged = [];
+    inst.exitProcess = function (c) { exits.push(c); };
+    inst.UPGRADE_RESTART_DELAY_MS = 10; inst.UPGRADE_RESTART_POLL_MS = 50;
+    var noLauncher = ms3.args; ms3.args = {};
+    var noLauncherOk = inst.canRestartServer() === false;
+    ms3.args = noLauncher;
+    check('restart: canRestartServer only under the MeshCentral launcher', inst.canRestartServer() === true && noLauncherOk);
+    var genBefore = inst.timerGen;
+    inst.server_startup();
+    check('restart: no hot swap in the old instance, its timers stop', ph.plugins.inventoryscanner === inst && inst.__superseded === true && inst.timerValid(genBefore) === false);
+    setTimeout(function () {
+        check('restart: waits while the unpacked tree is incomplete', exits.length === 0 && inst.upgradeTreeReady('0.0.2') === false);
+        fs.copyFileSync(path.join(srcDir, 'lib', 'routes.js'), path.join(pd, 'lib', 'routes.js'));
+        var origLog = console.log;
+        console.log = function (m) { logged.push(String(m)); origLog.apply(console, arguments); };
+        setTimeout(function () {
+            console.log = origLog;
+            check('restart: complete tree -> launcher restart line + exit code 0 (MeshCentral resetserver semantics)',
+                exits.length === 1 && exits[0] === 0 && logged.indexOf('Server restart...') >= 0, [exits, logged]);
+            check('restart: admins get a default-domain toast before the restart', events.length === 1 && events[0].domain === '' && /0\.0\.2/.test(events[0].value), events);
+            var lg = fs.readFileSync(path.join(inst.nvdDataPath, 'nvd-download.log'), 'utf8');
+            check('restart: logged in the Settings-tab log (nvd-download.log), not in the winget log', lg.indexOf('restarting the MeshCentral server to load it') >= 0 && lg.indexOf('restarting MeshCentral now to activate plugin version 0.0.2') >= 0 &&
+                !(fs.existsSync(inst.wingetLogPath) && fs.readFileSync(inst.wingetLogPath, 'utf8').indexOf('restarting') >= 0));
+            next();
+        }, 2500);
+    }, 300);
 });
 
 // ---- v3.1.0: big NVD feeds, distro-managed packages, OS lifecycle, Windows release CPEs ----
