@@ -1879,6 +1879,10 @@ steps.push(function (next) {
         sW.indexOf(obj.SW_MARKER) < sW.indexOf('Stop-Transcript') && sW.indexOf('invscanner-deploy.log') >= 0);
     check('deploy win script: a missing download answers state no-file and is never executed',
         sW.indexOf("state='no-file'") >= 0 && sW.indexOf('break }') >= 0);
+    check('deploy win script (7z "no-file" report): the answer names WHICH case happened - nothing appeared vs a file whose hash never matched',
+        sW.indexOf('$invSaw = 1') >= 0 && sW.indexOf('$invWhy') >= 0 && sW.indexOf('$invSeen = [string]$invH') >= 0 &&
+        sW.indexOf('but its SHA-256 never matched') >= 0 && sW.indexOf('nothing ever appeared at ') >= 0 &&
+        sW.indexOf("error=('the download never arrived on the device: ' + $invWhy)") >= 0);
     var msp = obj.swBuildWindowsScript({ stageFile: 'invsw-x.msp', sha256: taskW.sha256, ext: 'msp', fileName: 'p.msp', args: '' });
     check('deploy win script: .msp uses msiexec /update /quiet', msp.indexOf('/update "') >= 0 && msp.indexOf('/quiet /norestart') >= 0);
     var ex = obj.swBuildWindowsScript({ stageFile: 'invsw-x.exe', sha256: taskW.sha256, ext: 'exe', fileName: 'a.exe', args: '--silent' });
@@ -1896,6 +1900,9 @@ steps.push(function (next) {
     check('deploy linux script: sha256sum check, dpkg noninteractive, stdin from /dev/null, never reboots',
         sL.indexOf('sha256sum') >= 0 && sL.indexOf('dpkg -i "$P"') >= 0 && sL.indexOf('DEBIAN_FRONTEND=noninteractive') >= 0 &&
         sL.indexOf('< /dev/null') >= 0 && !/shutdown -r|systemctl reboot/.test(sL));
+    check('deploy linux script: the no-file note distinguishes "never appeared" from "hash never matched" (same as Windows)',
+        sL.indexOf('GOT=0; SAW=0; SEEN=') >= 0 && sL.indexOf('SAW=1') >= 0 && sL.indexOf('but its sha256 never matched') >= 0 &&
+        sL.indexOf('nothing ever appeared at $F') >= 0 && (sL.match(/\bfi\b/g) || []).length === (sL.match(/\bthen\b/g) || []).length);
     var sR = obj.swBuildLinuxScript({ stageFile: 'invsw-x.rpm', sha256: 'ab'.repeat(32), ext: 'rpm', fileName: 'r.rpm', args: '' });
     var sB = obj.swBuildLinuxScript({ stageFile: 'invsw-x.bin', sha256: 'ab'.repeat(32), ext: 'bin', fileName: 'run.bin', args: '-q' });
     check('deploy linux script: rpm and direct bin cases, chmod 700 before direct execution',
@@ -2130,6 +2137,70 @@ steps.push(function (next) {
                         check('deploy delete guard: after the task is done the file can be deleted again', delDone.success === true, delDone);
                         next();
                     });
+                });
+            });
+        });
+    }
+});
+
+// ---- v4.3.3 deploy: the download ticket stays alive while the device waits, and a failed wget is reported ----
+steps.push(function (next) {
+    var fx = makeDeployFixture();
+    fx.node('node//w1');
+    fx.upload(function (f) {
+        fx.task({ fileId: f.id, nodeIds: 'node//w1' }, function (c) {
+            fx.wait(function () { return fx.sent.length >= 2; }, function () {
+                var e1 = fx.o.swPending['node//w1'];
+                check('deploy dispatch: a waiting device also arms a download-ticket re-send timer (the agentdownload cookie lives only 5 minutes)',
+                    e1 != null && e1.timer != null && e1.dlTimer != null && e1.wgetTries === 0, e1 && Object.keys(e1));
+                var stageAgain = String(fx.sent.filter(function (m) { return m.action === 'wget'; })[0].path).split(/[\\/]/).pop();
+                fx.sent.length = 0;
+                fx.o.swWgetRetry(e1, Date.now() + 60000);
+                check('deploy robustness: the re-send is the same target with a FRESH cookie (expired ticket / agent-side dropped wget self-heal instead of 15 silent minutes)',
+                    fx.sent.length === 1 && fx.sent[0].action === 'wget' && fx.sent[0].path.indexOf(stageAgain) > 0 &&
+                    String(fx.sent[0].urlpath).indexOf('c=ck2') > 0 && fx.cookies.length === 2 && e1.wgetTries === 1, [fx.sent.map(function (m) { return m.action; }), fx.cookies.length]);
+                check('deploy robustness: a re-send stops by itself at the deadline (no endless timer chain)', e1.dlTimer == null, e1.dlTimer);
+                e1.wgetTries = obj.SW_WGET_RETRIES_MAX - 1;
+                fx.sent.length = 0;
+                fx.o.swWgetRetry(e1, Date.now() + 900000);
+                check('deploy robustness: the re-sends are capped (an agent keys its downloader by urlpath and holds at most 4 - piling up tickets would jam it)',
+                    fx.sent.length === 1 && e1.wgetTries === obj.SW_WGET_RETRIES_MAX && e1.dlTimer == null, [fx.sent.length, e1.wgetTries, e1.dlTimer]);
+                var lgR = fs.readFileSync(fx.o.swLogPath, 'utf8');
+                check('deploy robustness: every re-send is logged', /download ticket re-sent \(attempt 1/.test(lgR), lgR.split(String.fromCharCode(10)).slice(-3));
+                fx.sent.length = 0;
+                fx.o.onAgentResponse({ action: 'msg', type: 'console', value: String.fromCharCode(10) + 'Batch upload failed, because the server replied with HTTP 404, file: C:\\Windows\\Temp\\' + stageAgain + String.fromCharCode(10) }, '', 'node//w1');
+                check('deploy evidence: the session-less wget failure text is buffered, it never ends the session',
+                    fx.o.swPending['node//w1'] === e1 && /HTTP 404/.test(e1.cbuf || ''), e1.cbuf);
+                var rcR = fx.sent.filter(function (m) { return m.action === 'runcommands'; })[0];
+                    fx.o.onAgentResponse({ action: 'msg', type: 'runcommands', sessionid: e1.sid, result: fx.o.SW_MARKER + '{"deploy":true,"state":"no-file","exit":null,"error":"the download never arrived on the device: nothing ever appeared at the staged path - the agent never fetched the file"}' }, '', 'node//w1');
+                var dn = fx.o.swTasks[c.taskId].devices['node//w1'];
+                check('deploy evidence: the agent\'s own reason lands in the device note (no-file used to be three guesses)',
+                    dn.state === 'no-file' && /the device said:.*HTTP 404/.test(dn.note) && dn.note.indexOf('re-sent 4 time(s)') > 0, dn.note);
+                check('deploy evidence: the finished session has no timer left and a late re-send sends nothing',
+                    e1.dlTimer == null && (fx.sent.length = 0, fx.o.swWgetRetry(e1, Date.now() + 60000), fx.sent.length === 0), fx.sent.length);
+                fx.o.swLoadTasks();
+                var silent = fx.o.swTasks['silntask'];
+                check('deploy evidence: the distiller keeps only download-related lines',
+                    obj.swWgetCrumbs('') === '' && obj.swWgetCrumbs('normal winget output\nNothing here') === '' &&
+                    /Connection reset by peer/.test(obj.swWgetCrumbs('x\nConnection reset by peer\nBadCert')) &&
+                    !/the install ran fine/.test(obj.swWgetCrumbs('the install ran fine\nBatch upload failed, because the server replied with HTTP 302')),
+                    obj.swWgetCrumbs('normal output\nNothing here'));
+                silentFlow();
+            });
+        });
+    });
+
+    function silentFlow() {
+        fx.upload(function (f2) {
+            fx.sent.length = 0;
+            fx.task({ fileId: f2.id, nodeIds: 'node//w1' }, function (t2) {
+                fx.wait(function () { return fx.sent.length >= 2; }, function () {
+                    var e2 = fx.o.swPending['node//w1'];
+                    fx.o.onAgentResponse({ action: 'msg', type: 'runcommands', sessionid: e2.sid, result: fx.o.SW_MARKER + '{"deploy":true,"state":"no-file","exit":null,"error":"the download never arrived on the device: nothing ever appeared at the staged path"}' }, '', 'node//w1');
+                    var d2 = fx.o.swTasks[t2.taskId].devices['node//w1'];
+                    check('deploy evidence: a device that never reported ANYTHING gets the real hint (agent URL / proxy on agentdownload.ashx), not just "wget failed"',
+                        d2.state === 'no-file' && /never reported a download attempt/.test(d2.note) && d2.note.indexOf('re-sent') < 0, d2.note);
+                    next();
                 });
             });
         });

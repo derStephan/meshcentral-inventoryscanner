@@ -670,6 +670,22 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   consumed only when the marker parses; console lines of an sw session are mirrored into software-deploy.log).
   Watchdog 2 h (`SW_RUN_TIMEOUT_MS`), parallel `SW_MAX_PARALLEL = 2`. The winget/OS pumps skip nodes with an sw
   session and vice versa (one runcommands session per agent, verified in meshcore.js).
+- **Download ticket lifetime (v4.3.3)**: wget answers NOTHING, so a device that only waits used to be blind for
+  `SW_FILE_WAIT_MIN` (15 min) and then said "no-file" with three guesses. Two changes:
+  1. `swWgetRetry(entry, deadline)` re-sends the SAME wget with a FRESH cookie every `SW_WGET_RETRY_MS` (90 s) while
+     the session is pending and the device is 'running' - the `tmpdl` ticket lives only 5 minutes
+     (`decodeCookie(.., 5)`), and an agent-side wget can be dropped by its own 4-request cap or a proxy hop.
+     Capped at `SW_WGET_RETRIES_MAX` = 4 re-sends (an agent keys its downloader by urlpath - piling up tickets
+     forever could jam it); it calls `swEnsureStaged` first, because a swept stage file would answer 404 for the
+     whole remaining lifetime of the task. The timer is `entry.dlTimer` and is cleared with the session
+     (`swHandleResponse` / `swTimeout` / `swAbortDispatch`).
+  2. `swWgetCrumbs(cbuf)` distils the agent's session-less console text (meshcore prints
+     "Batch upload failed, because the server replied with HTTP nnn", a 'BadCert' or a socket error there) and a
+     `no-file`/download-`error` answer carries it - or, when the device printed nothing at all, the hint that the
+     agent never reached `/agentdownload.ashx` (its MeshServer URL / a proxy in front of the server).
+     The scripts themselves distinguish the two physical cases: "nothing ever appeared at <stage>" vs
+     "a file appeared but its SHA-256 never matched (last seen <16 hex>*)" (Windows `$invSaw`/`$invSeen`/`$invWhy`,
+     Linux `SAW`/`SEEN`/`NOTE`). A re-send never renews `SW_FILE_WAIT_MIN`.
 - **Reconnect queue**: every queued device of a task is re-tried by `hook_agentCoreIsStable` →
   `obj.swOnNodeConnect(nodeid)` (staggered like collection) and by `swSweepOnce` every `SW_SWEEP_MS` (10 min,
   gen-guarded chain via `scheduleSwSweep`, also invoked from `rescheduleAll`). A device still 'running' but with NO
@@ -1040,7 +1056,7 @@ v4.3.1: follow-up fixes. The Windows deploy script no longer starts the installe
 `invsw-run-<guid>` folder with a protected SYSTEM + Administrators ACL. CodeQL `js/bad-tag-filter` #3 in
 tools/check.js fixed (end tags like `</script >`, plus an opener/block count check). Shorter plugin description.
 Test suite: 434 assertions / 72 steps on Windows.
-v4.3.2 (this release): plugin list + upgrade fixes. Clicking the plugin name on My Server -> Plugins opened
+v4.3.2: plugin list + upgrade fixes. Clicking the plugin name on My Server -> Plugins opened
 `pluginadmin.ashx?pin=inventoryscanner` without `action` and got 404 - a missing action now renders the panel.
 An Upgrade now restarts MeshCentral by itself (launcher restart signal, see "Plugin upgrade path") instead of the
 hot swap that left users clicking Upgrade twice; the hot swap stays as fallback without a launcher. The
@@ -1048,3 +1064,12 @@ hot swap that left users clicking Upgrade twice; the hot swap stays as fallback 
 lines moved from winget-update.log to nvd-download.log (Settings tab, heading now "Plugin & NVD feed log"). CI: the
 container test opens the panel without action and asserts the `--launch` child. Tests: +7 assertions,
 +1 step: 441 / 73 on Windows with PowerShell + POSIX shell (verified run without sh: 439 PASS + 2 SKIP).
+v4.3.3 (this release): deploy is no longer blind while a device waits for its installer (field report: a 7-Zip .exe
+ended in "no-file - the download never arrived (wget failed, wrong hash, or the file is still in transit after
+15 minutes)" with no way to tell which). A waiting device now gets its agentdownload wget RE-SENT with a fresh cookie
+every 90 s, max 4 times (`swWgetRetry`; the tmpdl ticket lives only 5 minutes and an agent can drop the request), and
+the staged copy is re-checked before every re-send (a swept file would answer 404 forever). The answer now carries the
+agent's own console words when there are any (`swWgetCrumbs`: "the server replied with HTTP 404", 'BadCert', socket
+errors) or the explicit hint that the agent never reached /agentdownload.ashx; the scripts separate "nothing ever
+appeared at ..." from "a file appeared but its SHA-256 never matched (last seen ...)". Tests: +10 assertions, +1 step:
+451 / 74 on Windows with PowerShell (the two sh -n checks skip here, CI runs them).

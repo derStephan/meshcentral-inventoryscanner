@@ -290,10 +290,15 @@ win, and that section states which table file is in force - the code holds no se
   `C:\ProgramData\InventoryScanner`) - that is the place to look when the server side stays silent.
 * **Reports look wrong** - check the inventory age first: offline devices show their last collected state.
 * **A deploy task stays "queued (waiting for connect)"** - the device has not been online since the task was
-  created; the queue is server-side and survives restarts. It says *no-file* once it ran but the download never
-  arrived (a firewall between agent and server's web port is the usual cause - the same path the agent itself
-  uses, so this only happens with exotic per-port rules). The device's `invscanner-deploy.log` (Windows: next to
+  created; the queue is server-side and survives restarts. The device's `invscanner-deploy.log` (Windows: next to
   `meshagent.exe` or `C:\ProgramData\InventoryScanner`; Linux: `/var/log/`) has the client-side view.
+* **A deploy says *no-file*** - the script ran but the installer never reached the device. Since v4.3.3 the message
+  names the actual cause instead of guessing: *nothing ever appeared at ...* (the agent never fetched it - the
+  download ticket, the agent's own server URL or a proxy/firewall on `/agentdownload.ashx` is the usual reason; the
+  device's own words, e.g. "the server replied with HTTP 404", are appended when it printed any) versus *a file
+  appeared but its SHA-256 never matched* (a partial or replaced download - retry the device). While a device waits,
+  its download ticket is re-sent with a fresh cookie every 90 s (up to 4 times), because the agentdownload ticket is
+  only valid 5 minutes - an expired or dropped wget self-heals now instead of costing 15 silent minutes.
 
 ## Known limitations
 
