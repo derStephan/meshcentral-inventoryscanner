@@ -229,6 +229,12 @@ administrators can deploy, and nothing installs without a task an admin created.
 * Rolling distributions (Arch, Manjaro, openSUSE Tumbleweed) have no releases to upgrade to; *force OS updates* is
   the regular way to keep them current. On Tumbleweed the plugin runs `zypper update`, not the recommended
   `zypper dup`, so run `zypper dup` yourself from time to time.
+* One **broken third-party repository does not fail the run** (v4.3.4): `apt-get update` exits non-zero when any
+  source is unusable (an unsigned Google Chrome/any repo gives `W: GPG error`), even though every distribution
+  repository downloaded. The plugin then continues with the refreshed lists and puts the apt `W:`/`E:` line into the
+  device note ("apt-get update reported a repository problem ... the other repositories worked"); it only reports
+  *failed* (and installs nothing) when no package list was refreshed at all. Fix the source on the device to make
+  the note disappear.
 * Requirements on every Linux device: the MeshCentral agent runs as root (the default installation), the device has
   network access to its package repositories, and `base64` and `gzip` are installed (present on all distributions
   above).

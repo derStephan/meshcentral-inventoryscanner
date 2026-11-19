@@ -1648,11 +1648,19 @@ steps.push(function (next) {
     check('os win script: one statement per line', openers.length === 0, openers.slice(0, 2));
 
     var lsU = oO.osBuildLinuxScript('update'), lsG = oO.osBuildLinuxScript('upgrade');
-    check('os linux script: apt update + upgrade and the other package managers, stdin from /dev/null',
-        lsU.indexOf('apt-get -q update && step upgrade apt-get $APTOPT upgrade') >= 0 && lsU.indexOf('dnf -y upgrade') >= 0 && lsU.indexOf('zypper --non-interactive update') >= 0 &&
+    check('os linux script: apt/dnf/zypper/pacman/apk update paths, stdin from /dev/null',
+        lsU.indexOf('aptrefresh; if [ $APFAIL -eq 0 ]; then step upgrade apt-get $APTOPT upgrade; fi') >= 0 && lsU.indexOf('dnf -y upgrade') >= 0 && lsU.indexOf('zypper --non-interactive update') >= 0 &&
         lsU.indexOf('pacman -Syu --noconfirm') >= 0 && lsU.indexOf('apk upgrade') >= 0 && lsU.indexOf('< /dev/null') >= 0);
+    check('os linux script (issue #2): one broken third-party repository no longer fails the run - aptrefresh keeps the apt W:/E: line as a NOTE and only fails when NO list was refreshed at all (then the install step is skipped, so stale lists are never reported ok)',
+        /aptrefresh\(\) \{ step refresh apt-get -q update; if \[ \$RC -ne 0 \]/.test(lsU) &&
+        lsU.indexOf("APE=$(grep -hE '^[WE]:' \"$LOG\" 2>/dev/null | tail -n 1 | cut -c1-160)") >= 0 &&
+        lsU.indexOf("-name '*Packages' -mmin -60") >= 0 && lsU.indexOf('APWARN="apt-get update reported a repository problem: $APE (the other repositories worked)"; RC=0') >= 0 &&
+        lsU.indexOf('NOTE="apt-get update refreshed no repository at all: $APE"; APFAIL=1') >= 0 &&
+        lsU.indexOf('if [ -n "$APWARN" ]; then') >= 0 && !/step refresh apt-get -q update &&/.test(lsU), lsU.split(String.fromCharCode(10)).filter(function (l) { return l.indexOf('aptrefresh') >= 0; }));
     check('os linux script: upgrade = dist-upgrade + do-release-upgrade (Ubuntu only), never reboots',
-        lsG.indexOf('dist-upgrade') >= 0 && lsG.indexOf('do-release-upgrade -f DistUpgradeViewNonInteractive') >= 0 && lsG.indexOf('ID=ubuntu') >= 0 && !/\breboot\s*$|shutdown -r|systemctl reboot/m.test(lsG));
+        lsG.indexOf('dist-upgrade') >= 0 && lsG.indexOf('do-release-upgrade -f DistUpgradeViewNonInteractive') >= 0 && lsG.indexOf('ID=ubuntu') >= 0 &&
+        lsG.indexOf('aptrefresh; if [ $APFAIL -eq 0 ]; then step dist-upgrade apt-get $APTOPT dist-upgrade; fi') >= 0 &&
+        !/\breboot\s*$|shutdown -r|systemctl reboot/m.test(lsG));
     var lt = oO.osLinuxTransport(lsU);
     check('os linux transport: one line, gunzips back to the script', lt.indexOf(String.fromCharCode(10)) < 0 && gunz(lt, /echo '([A-Za-z0-9+\/=]+)'/) === lsU);
 
@@ -1857,10 +1865,48 @@ steps.push(function (next) {
     else { check('os win script: PowerShell parser reports no errors', !psr.failed && psr.text.trim() === '0', psr.text.trim()); }
     var pL = path.join(dir, 'os.sh');
     fs.writeFileSync(pL, obj.osBuildLinuxScript('upgrade'));
+    var pL2 = path.join(dir, 'os-update.sh');
+    fs.writeFileSync(pL2, obj.osBuildLinuxScript('update'));
     var shOk = null;
-    ['sh', 'bash', 'C:\\Program Files\\Git\\bin\\sh.exe'].some(function (sh) { try { cp.execFileSync(sh, ['-n', pL], { stdio: 'pipe', timeout: 30000 }); shOk = true; return true; } catch (e) { if (e.status != null) { shOk = false; return true; } return false; } });
+    ['sh', 'bash', 'C:\\Program Files\\Git\\bin\\sh.exe'].some(function (sh) {
+        try { cp.execFileSync(sh, ['-n', pL], { stdio: 'pipe', timeout: 30000 }); cp.execFileSync(sh, ['-n', pL2], { stdio: 'pipe', timeout: 30000 }); shOk = true; return true; }
+        catch (e) { if (e.status != null) { shOk = false; return true; } return false; }
+    });
     if (shOk == null) { console.log('SKIP os script: sh -n (no POSIX shell available)'); }
-    else { check('os linux script: sh -n reports no syntax errors', shOk === true); }
+    else { check('os linux script: sh -n reports no syntax errors (upgrade AND update)', shOk === true); }
+    next();
+});
+
+// ---- issue #2: the aptrefresh() of the GENERATED linux script, executed by a real POSIX shell ----
+steps.push(function (next) {
+    var cp = require('child_process');
+    var SH = ['sh', 'bash', 'C:\\Program Files\\Git\\bin\\sh.exe'].filter(function (s) { try { cp.execFileSync(s, ['-c', 'exit 0'], { stdio: 'pipe', timeout: 20000 }); return true; } catch (e) { return false; } })[0];
+    if (SH == null) { console.log('SKIP aptrefresh harness: no POSIX shell available'); return next(); }
+    var posix = function (p) { return String(p).split(path.sep).join('/'); };
+    var src = obj.osBuildLinuxScript('update');
+    var line = src.split(String.fromCharCode(10)).filter(function (l) { return l.indexOf('aptrefresh() {') === 0; })[0];
+    if (typeof line !== 'string' || line.length < 100) { check('aptrefresh harness: the function is present in the generated script, so the harness runs the REAL code', false, String(line).substring(0, 60)); return next(); }
+    check('aptrefresh harness: the function is present in the generated script, so the harness runs the REAL code', true);
+    var dir = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-apt-'));
+    var logFile = posix(path.join(dir, 'osupdate.log'));
+    if (logFile.indexOf("'") >= 0) { console.log('SKIP aptrefresh harness: temp path holds a quote'); return next(); }
+    var bin = path.join(dir, 'bin'); fs.mkdirSync(bin, { recursive: true });
+    function wfile(p, txt) { fs.writeFileSync(p, txt, { mode: 0o755 }); try { fs.chmodSync(p, 0o755); } catch (e) { } }
+    wfile(path.join(bin, 'apt-get'), '#!/bin/sh\necho "W: GPG error: http://dl.google.com/linux/chrome/deb stable InRelease: The following signatures could not be verified" >&2\nexit 100\n');
+    wfile(path.join(bin, 'find'), '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "find (GNU findutils) 4.9"; exit 0; fi\nif [ "${FAKE_FRESH:-yes}" = "yes" ]; then echo "/var/lib/apt/lists/partial_x_Packages"; fi\nexit 0\n');
+    var runner = path.join(dir, 'run.sh');
+    wfile(runner, ['#!/bin/sh', "LOG='" + logFile + "'", 'RC=0; STEP=\'\'; NOTE=\'\'; APWARN=\'\'; APFAIL=0',
+        'step() { STEP="$1"; shift; echo "== step: $*" >> "$LOG"; "$@" >> "$LOG" 2>&1 < /dev/null; RC=$?; return $RC; }',
+        line, 'aptrefresh', 'echo "RC=$RC APFAIL=$APFAIL NOTE=$NOTE"', 'echo "APWARN=$APWARN"', ''].join(String.fromCharCode(10)));
+    var out = { yes: '', no: '' };
+    ['yes', 'no'].forEach(function (k) {
+        try { out[k] = cp.execFileSync(SH, [posix(runner)], { encoding: 'utf8', timeout: 30000, env: Object.assign({}, process.env, { PATH: posix(bin) + path.delimiter + process.env.PATH, FAKE_FRESH: k }) }); }
+        catch (e) { out[k] = 'HARNESS-FAILED ' + (e && e.message ? e.message : e); }
+    });
+    check('aptrefresh behaviour (issue #2): one broken repository + fresh lists -> RC=0, APFAIL=0, the apt W: line lands in APWARN (the run continues)',
+        out.yes.indexOf('RC=0 APFAIL=0 NOTE=') === 0 && /APWARN=apt-get update reported a repository problem: W: GPG error/.test(out.yes) && /the other repositories worked/.test(out.yes), out.yes);
+    check('aptrefresh behaviour (issue #2): nothing refreshed at all -> the non-zero exit STANDS and APFAIL=1, so the install step is skipped',
+        /RC=100 APFAIL=1 NOTE=apt-get update refreshed no repository at all: W: GPG error/.test(out.no), out.no);
     next();
 });
 
