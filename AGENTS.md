@@ -77,7 +77,7 @@ Consequences an agent must respect:
   settings/assessments â†’ data (nvd, nvdindex, cpetable, matching, oslifecycle, osscan, inventory) â†’
   collectors/engines (collector, scheduling, winget, winget-handlers, osupdate, swstore, swdeploy,
   swdeploy-handlers) â†’ output (reports, csv, nodes) â†’ routes â†’ browser.
-- **Functions that were local helpers are now members too** (`obj.formatCsvField`, `obj.timestamp`,
+- **Functions that were local helpers are now members too** (`obj.formatCsvField`, `obj.csvCellCompare`, `obj.csvRowCompare`, `obj.pacedEach`, `obj.timestamp`,
   `obj.parseMeshIds`, `obj.isFindingId`, `obj.boolSetting`, `obj.safeNodeDir`, `obj.fetchSysinfo`,
   `obj.httpGetToFile`, `obj.winRelNum`, `obj.ubuRelNum`, `obj.MAX_TIMEOUT_MS`) - same reason: they are
   used from several modules. Keep new shared helpers on `obj` as well.
@@ -108,7 +108,7 @@ Consequences an agent must respect:
 | `lib/swdeploy.js` | deploy engine: `swBuildWindowsScript`/`swBuildLinuxScript`, `swWgetCommand`, queue/pump/`swDispatchNode`/`swHandleResponse`/watchdogs, `swOnNodeConnect`/`swSweepOnce`/`scheduleSwSweep`, `swTaskDoneCheck`, `swCreateTask`/`swTaskView` |
 | `lib/swdeploy-handlers.js` | `sw_files`, `sw_upload`, `sw_delete_file`, `sw_rescan_library`, `sw_serverfiles`, `sw_devices`, `sw_create_task`, `sw_status`, `sw_retry_task`, `sw_cancel_task` handlers |
 | `lib/reports.js` | `scanMeshCves`, `scanMultiMeshCves`, `assessmentScan` (the `action=scan` route), `summarizeDeviceSwVer`, `buildOverallReport`, `vulnerabilityReport`, `deviceReport` |
-| `lib/csv.js` | CSV formatting helpers, `buildCsvForNodes`, the `action=export` route |
+| `lib/csv.js` | CSV formatting helpers (`formatCsvField`, `csvCellCompare`, `csvRowCompare`), `buildCsvForNodes`, the `action=export` route |
 | `lib/nodes.js` | `fetchSysinfo`, `scanNodeSoftware`, `getGroupName`, `getHostName`, `windowsUpdatesFinding` |
 | `lib/routes.js` | `handleAdminReq`/`handleAdminPostReq` dispatch, `isAuthorizedAdmin`, `isSameOriginRequest`, panel render, `get_locations`, `get_log`, `parseMeshIds` |
 | `lib/browser.js` | `uiCustomEvent` (server-side) + the three browser-exported functions |
@@ -240,10 +240,10 @@ GET `pluginadmin.ashx?pin=inventoryscanner`:
 | `action` | Handler | Result |
 |---|---|---|
 | `show` (or no `action`, v4.3.2 - the plugin list link) | `showAssessmentPanel` | renders `assessment` with `{shortName, meshList, lastUpdate, lastScan, scanIntervalHours, totalCves, version}` (version from the manifest beside the plugin file) |
-| `scan` | `assessmentScan` | JSON via `scanMultiMeshCves(meshIds)`; `?mesh=<id>,<id>,...` (comma-separated) |
+| `scan` | `assessmentScan` | JSON via `scanMultiMeshCves(meshIds, cb, opts)`; `?mesh=<id>,<id>,...` (comma-separated). `?cached=1` answers **only** from the stored snapshot `obj.scanResults` (no device is touched; payload carries `cached:true`, `cacheTime`, `missing:[meshIds]`, and `scanning:true` when a live pass is running) - that is what opening the page does since v4.4.0. Without it the devices are really scanned (`opts.store` writes the new snapshot); a second live request with the same sorted mesh set **joins** the running one (`obj.scanInFlight`) instead of doubling the work. |
 | `report` | `vulnerabilityReport` | renders `report` with `{shortName, report: buildOverallReport(), totalCves, lastUpdate}` |
 | `deviceReport` | `deviceReport` | renders `deviceReport`, same data |
-| `export` | `exportCsv` | streams a CSV **attachment** for ALL non-deleted nodes (`type=hardware|software|vulns`, default vulns; invalid â†’ 400). UTF-8 BOM, `Content-Disposition: attachment; filename=<Base>_<timestamp>.csv`; built with the same `buildCsvForNodes` as the toolbar exports. Intended for bookmarks and the panel top nav. |
+| `export` | `exportCsv` | streams a CSV **attachment** for ALL non-deleted nodes (`type=hardware|software|vulns`, default vulns; invalid â†’ 400). UTF-8 BOM, `Content-Disposition: attachment; filename=<Base>_<timestamp>.csv`; built with the same `buildCsvForNodes` as the toolbar exports - **sorted column by column, left to right** (Group, Host Name, then the rest) since v4.4.0. Intended for bookmarks and the panel top nav. |
 
 POST body `action=`:
 
@@ -353,7 +353,11 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
 
 ## Panel behavior (views/assessment.handlebars inline JS)
 
-- Auto-scan on load; location selection = floating DIV (checkbox per mesh + "All locations"), persisted in
+- **No scan on load (v4.4.0)**: opening the page (and *Apply* in the location panel) calls
+  `scan&cached=1`, which reads the stored snapshot - instant, no device traffic - and says whose result it
+  is ("Cached result of <time>"). **Scan & Review** is the only button that touches the devices; while it
+  runs the rest of the server still answers (paced), and a second panel joins the running pass.
+  Location selection = floating DIV (checkbox per mesh + "All locations"), persisted in
   `localStorage` key `invscanner_locations`; toggle button fixed top-right.
 - Sortable columns (`data-key`, click toggles asc/desc, default cvss desc) + filters (text, effective severity,
   status: CVE/false positive/rated/unrated). Since v2.7.1 seven columns: CVE, Severity, CVSS, **Software & Version**
@@ -905,7 +909,7 @@ MeshCentral install folder) and root `/*.txt` + `/*.csv` are gitignored as a gua
   contain none), JSON validity of config files, and view-nameâ†”render-name consistency over
   the WHOLE JS tree (the `res.render()` calls live in `lib/routes.js`/`lib/reports.js` since v3.5.1).
   Must run anywhere (no dependencies).
-- `tools/test-plugin.js`: 452 behavioral assertions (75 steps; on Windows with PowerShell AND a POSIX shell present) against the real module (mocked MeshCentral DB/webserver):
+- `tools/test-plugin.js`: 467 behavioral assertions (77 steps; on Windows with PowerShell AND a POSIX shell present) against the real module (mocked MeshCentral DB/webserver):
   the module wiring itself (every lib file attaches, a fresh instance exposes the same function surface, no
   module-level locals in `lib/`), locations grouping & counting, manual-rating severity override, FP exclusion, host-name preference, coverage
   numbers, multi-mesh scan/`mixed` logic, all POST handlers incl. validation/rejections, routes, admin gating
@@ -977,8 +981,10 @@ message alone, without the diff:
   compare) and the `@version` line in the inventoryscanner.js file header. No CHANGELOG.md file - changelogUrl
   points at the GitHub commits page on purpose (commit messages ARE the changelog); the field itself is
   REQUIRED by isValidConfig even when it links to commits. versionHistoryUrl/downgrades are not offered.
-- The panel auto-scans ALL locations on load â€” cheap locally (no network) but DB-heavy on huge fleets; if that ever
-  matters, make the initial scan opt-in rather than removing the floating selector.
+- The panel does NOT scan on load since v4.4.0 (it reads the snapshot, `scan&cached=1`); the device work
+  happens only on "Scan & Review" and on the scheduled runs. Keep it that way - a page open that scans a
+  few hundred devices made the whole server unresponsive. Every path that iterates devices (scanMeshCves,
+  buildOverallReport, buildCsvForNodes) must therefore go through `obj.pacedEach`, never a bare forEach.
 - NVD feed download: go through `obj.runNvdUpdate(force, cb)` (the only sanctioned entry - it holds the nvdUpdateRunning guard); A stale-looking `.meta` mismatch is
   a warning, not an error (verified NVD behavior). Never treat `.json.gz` presence alone as "feed exists" â€” the
   decompressed `.json` is what `loadNvdFromAllFiles` reads.
@@ -1083,7 +1089,7 @@ agent's own console words when there are any (`swWgetCrumbs`: "the server replie
 errors) or the explicit hint that the agent never reached /agentdownload.ashx; the scripts separate "nothing ever
 appeared at ..." from "a file appeared but its SHA-256 never matched (last seen ...)". Tests: +10 assertions, +1 step:
 451 / 74 on Windows with PowerShell (the two sh -n checks skip here, CI runs them).
-v4.3.4 (this release): issue #2 - one broken third-party apt repository no longer fails a whole OS update/upgrade.
+v4.3.4: issue #2 - one broken third-party apt repository no longer fails a whole OS update/upgrade.
 `apt-get update` exits non-zero when ANY source is unusable (reported: `W: GPG error` from dl.google.com/linux/chrome)
 even though all distribution repositories downloaded, and the `step refresh apt-get -q update && step upgrade ...`
 chain aborted the device on that - in BOTH modes. New `aptrefresh()` checks `/var/lib/apt/lists` for fresh
@@ -1094,3 +1100,17 @@ all". A warning is never a failed device, and a device with only stale lists is 
 runs the generated `aptrefresh()` in a REAL POSIX shell with `apt-get`/`find` shims (3 assertions there, SKIP without
 sh), the script checks pin both call sites, and sh -n now parses the update AND the upgrade script:
 452 PASS + 3 SKIP / 75 steps locally.
+v4.4.0 (this release): the panel stops scanning on every page open, and nothing blocks the server any more.
+- Panel: opening the page and Apply in the location panel now read the stored snapshot (action=scan&cached=1 - no device
+  is touched, answer carries cached:true/cacheTime/missing, scanning:true while a live pass runs); Scan & Review is
+  the only button that queries devices, and a second one joins the running pass (obj.scanInFlight) instead of
+  doubling the work. A live scan also updates the snapshot.
+- Server stays usable: obj.pacedEach (scheduling.js, SCAN_PARALLEL 4, at most one batch per event-loop turn) now
+  drives scanMeshCves, buildOverallReport and buildCsvForNodes - the old firehose forEach over hundreds of devices
+  was one long synchronous turn that starved every other request (the reported 15 s of unreachable tabs).
+- CSV: hardware/software/vulns exports are sorted column by column left to right (csvCellCompare = empty first,
+  case-insensitive NATURAL order so Firefox 9 < Firefox 121; escaping happens after the sort, so the formula
+  guard is untouched). The toolbar exports share the builder, so they are sorted too.
+- Tests: +15 assertions, +2 steps (467 / 77): cached read never calls scanMeshCves, current ratings applied to a
+  stored snapshot, missing locations reported, one pass answering two panels, snapshot stored, pacedEach yields
+  to the event loop and never exceeds SCAN_PARALLEL, both CSV orderings.

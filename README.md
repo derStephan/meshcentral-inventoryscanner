@@ -104,11 +104,21 @@ the id (the full description stays in the tooltip), so a rating rarely needs a t
 **Updates** (winget), **OS Updates**, **Deploy** and **Settings** (with the CPE mapping table) tabs live on the
 same page - one feature per tab, settings last on the right.
 
+**Opening the panel reads the stored result - it does not scan (v4.4.0).** The table appears immediately with the
+findings of the last scan (its date is shown, plus any location that has no stored result yet), and changing the
+location selection with *Apply* only re-reads that snapshot. **Scan & Review** is the one button that asks the
+devices: on a big fleet it takes a while, but the server stays usable while it runs (other tabs, other users and the
+rest of MeshCentral keep answering). The scheduled scans keep the stored result fresh on their own, and a second
+admin pressing the button joins the pass that is already running instead of starting another one.
+
 **A finding never claims a version that is not on every device.** If the affected machines run different
 versions, the row shows *varies (N)* and the per-device truth is one hover away - the exact per-device list is
 always the software/vulnerability CSV.
 
 **CSV exports** - tick devices and use the toolbar buttons, or export everything with a URL you can bookmark:
+
+Every CSV is sorted column by column from left to right (Group, then Host Name, then Software/Component), so a
+device block is contiguous and version numbers read in natural order - Firefox 9 before Firefox 121 (v4.4.0).
 
 ```
 /pluginadmin.ashx?pin=inventoryscanner&action=export&type=hardware   (or: software, vulns)

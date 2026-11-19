@@ -230,6 +230,100 @@ steps.push(function (next) {
         mockRes(function (d) { check('non-admin POST -> 401', d._status === 401, d); next(); }), { name: 'x', siteadmin: 0 });
 });
 
+// ---- v4.4.0: CSV rows sorted column by column ----
+steps.push(function (next) {
+    check('csv sort: cell compare is empty-first, case-insensitive and NATURAL (Firefox 9 before Firefox 121)',
+        obj.csvCellCompare('', 'a') < 0 && obj.csvCellCompare('b', '') > 0 && obj.csvCellCompare('chrome', 'Chrome') === 0 &&
+        obj.csvCellCompare('Firefox 9', 'Firefox 121') < 0 && obj.csvCellCompare('Windows 10', 'Windows 11') < 0);
+    check('csv sort: row compare decides left to right',
+        obj.csvRowCompare(['A', 'z'], ['B', 'a']) < 0 && obj.csvRowCompare(['A', 'b'], ['A', 'c']) < 0 && obj.csvRowCompare(['A'], ['A', '']) === 0);
+    obj.buildCsvForNodes(nodes.slice(), 'software', function (cerr, csv) {
+        var lines = String(csv).split('\r\n').filter(function (l) { return l !== ''; });
+        var cells = lines.slice(1).map(function (l) { return l.split(/,(?![^"]*"(?:(?:[^"]*"){2})*[^"]*$)/); });
+        var pairs = cells.map(function (c) { return c[0].replace(/"/g, '') + '|' + c[1].replace(/"/g, '') + '|' + c[2].replace(/"/g, ''); });
+        var sortedCopy = pairs.slice().sort();
+        check('csv software export: sorted by Group, then Host Name, then Software name (was: database order)',
+            !cerr && pairs.join('#') === sortedCopy.join('#'), pairs);
+        check('csv software export: Branch really comes before HQ and its devices sort by host name (Given4Only before host3)',
+            pairs[0].indexOf('Branch|Given4Only|') === 0 && pairs.indexOf('Branch|host3|Chrome') > 0 &&
+            pairs.filter(function (p) { return p.indexOf('Branch|') === 0; }).length < pairs.length, pairs.slice(0, 4));
+        check('csv software export: inside one device the programs are alphabetical (Chrome, Firefox, OEM Tool)',
+            pairs.filter(function (p) { return p.indexOf('Branch|host3|') === 0; }).map(function (p) { return p.split('|')[2]; }).join(',') === 'Chrome,Firefox,OEM Tool',
+            pairs.filter(function (p) { return p.indexOf('Branch|host3|') === 0; }));
+        obj.buildCsvForNodes(nodes.slice(), 'hardware', function (herr, csv2) {
+            var hl = String(csv2).split('\r\n').filter(function (l) { return l !== ''; }).slice(1);
+            var hg = hl.map(function (l) { var c = l.split(','); return c[0].replace(/"/g, '') + '|' + c[1].replace(/"/g, ''); });
+            var runs = 1;
+            for (var i = 1; i < hg.length; i++) { if (hg[i] !== hg[i - 1]) { runs++; } }
+            var distinct = Object.keys(hg.reduce(function (a, k) { a[k] = 1; return a; }, {})).length;
+            check('csv hardware export: exactly one contiguous block per device (runs == distinct devices), blocks in group/host order',
+                runs === distinct && hg[0].indexOf('Branch|') === 0, { rows: hg.length, runs: runs, distinct: distinct, first: hg[0] });
+            next();
+        });
+    });
+});
+
+// ---- v4.4.0: opening the panel reads the snapshot; live scans are paced and coalesced ----
+steps.push(function (next) {
+    var scans = 0, saves = 0;
+    var realMesh = obj.scanMeshCves, realSave = obj.saveScans;
+    obj.assessments = { 'mesh//grp1:CVE-2024-0001': { meshId: 'mesh//grp1', cveId: 'CVE-2024-0001', assessment: 'LOW', comment: 'patched tuesday', lastModified: 'x', assessedBy: 'a', assessedById: 'b' } };
+    obj.scanResults = { 'mesh//grp1': { time: '2026-01-01T00:00:00Z', cves: [
+        { cve: 'CVE-2024-0001', severity: 'CRITICAL', cvss: 9.8, description: 'crit bug', software: 'Firefox', version: '1.0', devices: ['host1'], deviceList: [{ name: 'host1', software: 'Firefox', version: '1.0' }] },
+        { cve: 'CVE-2024-0009', severity: 'LOW', cvss: 2.0, description: 'old', software: 'Chrome', version: '2.0', devices: ['host1'], deviceList: [{ name: 'host1', software: 'Chrome', version: '2.0' }] }
+    ] } };
+    obj.scanMeshCves = function (meshId, cb) { scans++; return realMesh(meshId, cb); };
+    obj.saveScans = function () { saves++; };
+
+    obj.handleAdminReq({ query: { action: 'scan', mesh: 'mesh//grp1', cached: '1' } }, mockRes(function (d0) {
+        check('scan cached=1: answers from the snapshot WITHOUT touching a single device',
+            scans === 0 && d0.cached === true && d0.cves.length === 2 && d0.cacheTime === '2026-01-01T00:00:00Z' && (d0.missing || []).length === 0, [scans, d0.cacheTime, (d0.cves || []).length]);
+        check('scan cached=1: the CURRENT rating is applied to the stored findings (a rating saved after the scan still counts)',
+            d0.cves[0].assessment && d0.cves[0].assessment.assessment === 'LOW' && d0.cves[0].severity === 'CRITICAL', d0.cves[0].assessment);
+        obj.handleAdminReq({ query: { action: 'scan', mesh: 'mesh//grp1,mesh//grp2', cached: '1' } }, mockRes(function (d1) {
+            check('scan cached=1: locations with no stored result are reported as missing, not silently empty',
+                scans === 0 && (d1.missing || []).join() === 'mesh//grp2' && d1.cves.length === 2, [d1.missing, d1.cves.length]);
+            // a real device pass is asynchronous; the mock would otherwise finish inside one turn
+            obj.scanMeshCves = function (meshId, cb) { scans++; setTimeout(function () { realMesh(meshId, cb); }, 25); };
+            var live = [];
+            obj.handleAdminReq({ query: { action: 'scan', mesh: 'mesh//grp1' } }, mockRes(function (dA) { live.push(dA); }), user);
+            obj.handleAdminReq({ query: { action: 'scan', mesh: 'mesh//grp1' } }, mockRes(function (dB) { live.push(dB); }), user);
+            setTimeout(function () {
+                check('live scan: ONE device pass answered BOTH panels that pressed the button (the second joined it)',
+                    live.length === 2 && scans === 1 && obj.scanInFlight == null &&
+                    live[0].cached === false && JSON.stringify(live[0].cves) === JSON.stringify(live[1].cves), [live.length, scans]);
+                check('live scan: the result became the stored snapshot (the next page open reads it, no device work)',
+                    obj.scanResults['mesh//grp1'] != null && obj.scanResults['mesh//grp1'].time > '2026-01-01' && saves >= 1, [saves, obj.scanResults['mesh//grp1']]);
+                obj.scanMeshCves = realMesh; obj.saveScans = realSave; obj.scanResults = {}; obj.assessments = {};
+                var ghost = { key: 'mesh//grp1', waiters: [], started: Date.now() - (obj.SCAN_JOIN_MAX_MS + 1000) };
+                obj.scanInFlight = ghost;
+                obj.handleAdminReq({ query: { action: 'scan', mesh: 'mesh//grp1', cached: '1' } }, mockRes(function (dg) {
+                    check('scan: an abandoned live pass never locks the panel out - a run older than SCAN_JOIN_MAX_MS is not joined',
+                        dg.scanning !== true && dg.cached === true, dg);
+                    obj.scanInFlight = null;
+                }), user);
+                var hits = 0, yielded = false;
+                setImmediate(function () { yielded = true; });
+                var many = [];
+                for (var q = 0; q < 200; q++) { many.push(q); }
+                obj.pacedEach(many, function (item, done) { hits++; done(); }, function () {
+                    check('pacedEach: every item ran exactly once, done came last AND the loop yielded to the event loop (that is the whole point)',
+                        hits === 200 && yielded === true, [hits, yielded]);
+                    var peak = 0, live2 = 0;
+                    obj.pacedEach(many.slice(0, 40), function (item, done) { live2++; if (live2 > peak) { peak = live2; } setTimeout(function () { live2--; done(); }, 0); }, function () {
+                        check('pacedEach: never more than SCAN_PARALLEL items in flight', peak > 0 && peak <= obj.SCAN_PARALLEL, [peak, obj.SCAN_PARALLEL]);
+                        var emptyWorkerRan = false;
+                        obj.pacedEach([], function () { emptyWorkerRan = true; }, function () {
+                            check('pacedEach: an empty list runs no worker but still calls done', emptyWorkerRan === false);
+                            next();
+                        });
+                    });
+                });
+            }, 60);
+        }), user);
+    }), user);
+});
+
 // ---- direct CSV download (main-menu exports) ----
 steps.push(function (next) {
     obj.handleAdminReq({ query: { action: 'export', type: 'vulns' } }, mockRes(function (d) {
