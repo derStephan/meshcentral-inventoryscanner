@@ -108,6 +108,7 @@ Consequences an agent must respect:
 | `lib/wutroubleshoot.js` | per-device Windows Update troubleshooter (v4.6.0): `wuBuildDiagnoseScript`/`wuBuildRepairScript`/`wuHead`, `wuDispatch`, `wuHandleResponse`/`wuTimeout`, reboot-state reporting, `wu_diag`/`wu_repair` handlers, `wu-troubleshoot.json` + `wu-troubleshoot.log` |
 | `lib/devreboot.js` | per-device force restart + user notice (v4.7.0): `rbBuild*Script`/`rbBuildScript`/`rbProbeLines`/`rbCleanMessage`/`rbB64`, `rbDispatch`, `rbHandleResponse`/`rbTimeout`, `reboot_now`/`reboot_notify` handlers, `device-reboot.json` + `device-reboot.log` |
 | `lib/license.js` | license keys/info in the software CSV (v4.8.0): curated `license-table.json` + remote fetch + custom rules (`applyLicenseTableText`/`sanitizeLicenseRules`/`licenseRulesForApp`), read-only `licenseBuildScript`, `licDispatch`/`licHandleResponse`/`licTimeout`, per-node `data/<node>/license.json`, `lic_status`/`lic_collect`/`get_license_table`/`add_license`/`remove_license`, `license-collection.log` |
+| `lib/fleetindex.js` | READ-ONLY fleet index for the two unified views (v4.9.5, issue #8): `buildFleetIndex` aggregates stored software (`getStoredSoftware`) + the same `scanNodeSoftware` matcher the CSV/reports use + `wgResults` (updatable) + `licenseMapForNode` into a distinct-software table and a per-device CVE count; `swFleetHandler` (POST `sw_fleet`, 60 s in-memory cache, `?refresh=1`). No agent command, no new outbound request. |
 | `lib/swstore.js` | deploy foundation: installer library index/folders, resumable upload parts, task store load/save/prune, staging into `<filespath>/tmp`, `swDownloadCookie` (agentdownload), name/args/extension sanitizers, `swEnsureStaged` |
 | `lib/swdeploy.js` | deploy engine: `swBuildWindowsScript`/`swBuildLinuxScript`, `swWgetCommand`, queue/pump/`swDispatchNode`/`swHandleResponse`/watchdogs, `swOnNodeConnect`/`swSweepOnce`/`scheduleSwSweep`, `swTaskDoneCheck`, `swCreateTask`/`swTaskView` |
 | `lib/swdeploy-handlers.js` | `sw_files`, `sw_upload`, `sw_delete_file`, `sw_rescan_library`, `sw_serverfiles`, `sw_devices`, `sw_create_task`, `sw_status`, `sw_retry_task`, `sw_cancel_task` handlers |
@@ -318,6 +319,7 @@ POST body `action=`:
 | `lic_collect` | `nodeId` OR `all:'true'` | (v4.8.0) runs the READ-ONLY license extraction (registry value / file regex-jsonfield-line / WMI property) built from the curated+custom rule table on one (or all online) Windows device(s). Refused while `licenseCollectionEnabled` is off (default). {started} / {started,devices} or {error}; the marker answer is stored in `data/<node>/license.json` |
 | `get_license_table` | â€” | (v4.8.0) the full license rule table `{entries:[{match,label,rules,source:'table'|'custom'}], licenseTable:{source,origin,updated,url,tableEnabled,entries,custom}}` |
 | `add_license` / `remove_license` | match, label, rules (JSON array) / index | (v4.8.0) custom rule editor; every field validated (`isSafeTableRegex`, type ∈ registry/file/wmi, lengths, ≤8 rules) before storing to `license-custom.json`; custom wins over the table |
+| `sw_fleet` | `refresh` (optional '1') | (v4.9.5, issue #8) READ-ONLY fleet index that powers the two unified views: `{devices, software:[{name, version, versions, publisher, deviceCount, vulnerable, cve, maxSeverity, updatable, hasLicense}], byDevice:{<nodeId>:{cve, maxSeverity}}, generated}`. Built only from data already on the server (stored software + the report/CSV matcher + winget results + local license maps); sends nothing to any agent and makes no new outbound request. Cached ~60 s so switching between the two views does not re-scan. |
 | `update_nvd` | â€” | starts `runNvdUpdate(true)` (background) and answers {started:true} / {alreadyRunning:true}; concurrent runs skip via the `nvdUpdateRunning` flag |
 | `get_nvdlog` | â€” | `{lines:[...last 200 of nvd-download.log], size, file}`; `note` if file missing |
 | `get_locations` | â€” | all non-deleted meshes `{locations:[{id,name}]}` (also feeds the Settings tab group table) |
@@ -432,14 +434,20 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   existing panel is tagged `data-main`/`data-sub` and `selectSub(main, sub)` shows exactly one, builds the
   sub-tab row, moves `#pageTitle`/`#statusMeta` + the location panel, and runs only that panel's loader. All
   ids and handlers are unchanged - only the HTML was regrouped (no feature logic touched):
-    Devices -> Software updates (`loadWgTab`), OS updates & reboot (`loadOsStatus`), PC reset (`loadDrStatus`);
-    Software -> Deployment (`loadSwTab`), License keys (`loadLicenseSection`);
+    Devices -> Device list (`loadDeviceList`, the unified per-device view), Software updates (`loadWgTab`),
+      OS updates & reboot (`loadOsStatus`), PC reset (`loadDrStatus`);
+    Software -> Software list (`loadSwFleet`, the unified fleet-wide view), Deployment (`loadSwTab`),
+      License keys (`loadLicenseSection`);
     Vulnerabilities -> Assessment (the CVE table + location panel, the default landing), Reports & NVD & CPE table
       (the two printable reports + CSV exports, "Update NVD database now" + download log via `loadNvdLog`, and
       the CPE mapping table with its config via `loadCpeTable`);
     Settings -> General (scan/collection/lifecycle/notify options + device groups).
-  The unified per-device action list and the fleet-wide software list asked for in issue #8 are deliberately
-  DEFERRED to v4.10.0; v4.9.0 regroups the existing functionality under the new navigation. The engines still
+  The two unified views the issue also asked for shipped in v4.9.5 (they were the "deferred" half of v4.9.0):
+  `Device list` merges the existing `os_status`/`wg_status`/`dr_status`/`lic_status` with the new read-only
+  `sw_fleet` index into one row per device with an action-checkbox batch; `Software list` renders the `sw_fleet`
+  distinct-software table. Both add NO new agent command - the device list's batch only calls the existing run
+  routes (`wg_run`/`os_run`/`lic_collect`/`wu_repair`) over the selected devices, and Restart/Reset are never
+  batched (each row links to the panel that does the per-device typed-name confirm). The engines still
   share the winget `excludeNodes` list and the one-runcommands-session-per-agent rule.
 
 - Deploy tab (v4.0.0): library table + `<input type=file>` upload (FileReader chunks â†’ `sw_upload`, sequential
@@ -1383,7 +1391,7 @@ v4.8.0: issue #7 - software license keys / info in the inventory CSV (asset mana
   offline/busy, dispatch consumed + stored + `licenseMapForNode` + `data/<node>/license.json`, add_license /
   remove_license / a rejected unknown type, lic_status summary, get_log, the pump-exclusion wiring, and the
   two new License columns actually appearing in the software CSV. Version 4.7.0 -> 4.8.0.
-v4.9.0 (this release): issue #8 - two-layer navigation, panels regrouped by topic.
+v4.9.0: issue #8 - two-layer navigation, panels regrouped by topic.
 - The old flat tab strip (Assessment | Updates | OS Updates | Deploy | PC Reset | Settings, plus a line of
   report/export links) became two layers: four MAIN sections Devices | Software | Vulnerabilities | Settings,
   each with its own row of SUB-tabs built on demand (`navTree` + `renderSubnav` + `selectSub(main, sub)`).
@@ -1396,9 +1404,34 @@ v4.9.0 (this release): issue #8 - two-layer navigation, panels regrouped by topi
 - PRESENTATION ONLY: no route, no handler, no engine, no data file changed; every existing element id and all
   one-runcommands-session-per-agent / reboot-policy invariants are untouched. Each `.tab-content` is now tagged
   `data-main`/`data-sub` and the controller shows panels by those attributes (not by id) so it never guesses.
-- Deferred to v4.10.0 (explicitly out of this release): the two NEW views asked for in issue #8 - one unified
-  per-device action list with option checkboxes, and one fleet-wide software list. v4.9.0 regroups what exists.
+- Deferred out of this release (then shipped in v4.9.5): the two NEW views asked for in issue #8 - one unified
+  per-device action list with option checkboxes, and one fleet-wide software list. v4.9.0 only regroups what exists.
 - Tests: +8 render assertions in tools/test-views.js (four main sections, sub-nav container, old navtab markup
   gone, the two new panels exist once, the extracted blocks carry main+sub tags, the moved config ids appear
   exactly once - no collision, and the shared save path). check.js still node --check's the inline script.
   test-plugin unchanged (552 PASS + 3 SKIP / 88 steps, no server-logic change). Version 4.8.0 -> 4.9.0.
+v4.9.5 (this release): issue #8 (second half) - the two unified views.
+- `lib/fleetindex.js` (new): a READ-ONLY `sw_fleet` route + `buildFleetIndex`. It walks every node and joins
+  data that is already on the server (the collector's stored software, the same `scanNodeSoftware` matcher the
+  CSV export and the printable reports use, the last `wgResults` for "update available", and the locally
+  collected `licenseMapForNode`) into a distinct-software table (name, versions, publisher, deviceCount,
+  vulnerable, cve, maxSeverity, updatable, hasLicense) and a per-device CVE count. It sends NO agent command,
+  makes no new outbound request, defines no scheduler/pump and reboots nothing - a test pins all of that.
+  The result is cached ~60 s in memory (never persisted) so the two views do not re-scan the fleet on toggling.
+- Devices > Device list (`loadDeviceList`): one row per device merged live from `os_status` + `wg_status` +
+  `dr_status` + `lic_status` + `sw_fleet` (app updates / OS state / reboot pending / reset readiness /
+  vulnerability count / collected licenses). Check devices and run ONE non-destructive operation over them
+  via the existing routes (`wg_run`/`os_run` update|upgrade / `lic_collect` / `wu_repair`). Restart and Reset
+  are NOT batched - each row's button opens the sub-panel that does the per-device typed-name confirmation, so
+  the reboot policy is unchanged (the views add a way in, not a new way to reboot).
+- Software > Software list (`loadSwFleet`): the fleet-wide distinct-software table with per-row flags and an
+  "Update everywhere" that calls `wg_run {pkgId}` (needs the winget id; rows without one are inert), reusing
+  `wg_programs` for the name-to-id map. Vulnerability/license cells link to their existing panels.
+- This is the only server-side addition in the v4.9.x UI work; v4.9.0 was presentation-only, v4.9.5 adds just
+  the read-only aggregate. Every v4.9.0 invariant (ids, routes, session-per-agent, opt-in gates, reboot policy)
+  still holds.
+- Tests: +11 `sw_fleet` assertions + 1 step (read-only sends nothing, device/version/CVE counts, updatable +
+  license flags, byDevice per-device CVE, the 60 s cache and the force rebuild, and the no-scheduler/
+  no-command policy guard). +5 render assertions in tools/test-views.js (the two new sub-tabs + panels and the
+  two loaders). Suite: 563 PASS + 3 SKIP / 89 steps. check.js still node --check's the inline script.
+  Version 4.9.0 -> 4.9.5.

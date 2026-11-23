@@ -100,6 +100,12 @@ try {
     console.log((count(a, /id="setUpdateHours"/g) === 1 ? 'PASS ' : (failed++, 'FAIL ')) + 'nav: moved NVD-refresh field appears exactly once (no id collision)');
     console.log((count(a, /id="setCpeTableEnabled"/g) === 1 && count(a, /id="setLicCollect"/g) === 1 ? 'PASS ' : (failed++, 'FAIL ')) + 'nav: moved CPE/license config fields appear once each');
     console.log(((a.indexOf('doSaveSettings') >= 0 && a.indexOf('saveSettingsBtn2') >= 0 && a.indexOf('saveSettingsBtn3') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'nav: relocated settings keep one shared save path');
+    // v4.9.5: the two unified views (issue #8 second half) - new panels + loaders, built from existing routes.
+    console.log(((a.indexOf('id="tab-devicelist"') >= 0 && a.indexOf('data-main="devices" data-sub="devicelist"') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v4.9.5: unified device panel present under Devices');
+    console.log(((a.indexOf('id="tab-swlist"') >= 0 && a.indexOf('data-main="software" data-sub="softwarelist"') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v4.9.5: unified software panel present under Software');
+    console.log(((a.indexOf("key: 'devicelist'") >= 0 && a.indexOf("key: 'softwarelist'") >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v4.9.5: the two new sub-tabs are in the nav tree');
+    console.log(((a.indexOf('function loadDeviceList') >= 0 && a.indexOf('function loadSwFleet') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v4.9.5: both views have loaders');
+    console.log(((a.indexOf("post('sw_fleet'") >= 0 && a.indexOf("post('os_status'") >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v4.9.5: views reuse existing routes (no invented endpoint)');
 } catch (e) { failed++; console.log('FAIL nav checks: ' + e.message); }
 
 console.log(failed === 0 ? '\ntest-views: ALL PASSED' : '\ntest-views: ' + failed + ' FAILURE(S)');

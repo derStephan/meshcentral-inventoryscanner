@@ -21,7 +21,7 @@
  * NVD feed is downloaded.
  *
  * @author derStephan
- * @version 4.9.0
+ * @version 4.9.5
  *
  * Transparency: This plugin was created with the assistance of Qwen 3.6 27B and Qwen 3.8 Flash Next.
  * Audits: 2026-11-06 (NVIDIA Nemotron 3 550B A55B), 2026-11-11 (Claude Opus 5.5, v3.0.1) and 2026-11-14 (Claude Opus 5.5, v4.3.0) via opencode - see AUDIT.md.
@@ -71,6 +71,10 @@ try { MODULE_CODE_VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, 'con
  *   lib/license.js          license keys/info in the software CSV (issue #7, v4.8.0): a curated + remote +
  *                           custom rule table (name -> registry/file/WMI extraction), on-demand read-only
  *                           collection per Windows device, stored locally and added to the software CSV
+ *   lib/fleetindex.js       read-only fleet index for the two unified views (issue #8, v4.9.5): a distinct
+ *                           software table and a per-device CVE count, built only from data already on this
+ *                           server (stored software + the same matcher the CSV/reports use + winget + licenses);
+ *                           no new agent command, no new outbound request
  *   lib/swstore.js          deploy foundation: installer library, upload parts, task store,
  *                           staging in <filespath>/tmp, agentdownload cookie, name/arg quoting
  *   lib/swdeploy.js         deploy engine: install scripts, wget+runcommands dispatch,
@@ -93,7 +97,7 @@ try { MODULE_CODE_VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, 'con
  */
 const modules = [
     'lifecycle', 'settings', 'assessments', 'nvd', 'nvdindex', 'cpetable', 'matching', 'oslifecycle',
-    'osscan', 'inventory', 'collector', 'scheduling', 'winget', 'winget-handlers', 'osupdate', 'devreset', 'wutroubleshoot', 'devreboot', 'license',
+    'osscan', 'inventory', 'collector', 'scheduling', 'winget', 'winget-handlers', 'osupdate', 'devreset', 'wutroubleshoot', 'devreboot', 'license', 'fleetindex',
     'swstore', 'swdeploy', 'swdeploy-handlers',
     'reports', 'csv', 'nodes', 'routes', 'browser'
 ];

@@ -3139,6 +3139,58 @@ steps.push(function (next) {
     }), user);
 });
 
+steps.push(function (next) {
+    var dpF = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-fleet-'));
+    var fNodes = [
+        { _id: 'node//f1', meshid: 'mesh//grp1', rname: 'f1', name: 'Alpha', osdesc: 'Microsoft Windows 11' },
+        { _id: 'node//f2', meshid: 'mesh//grp1', rname: 'f2', name: 'Beta', osdesc: 'Microsoft Windows 10' }
+    ];
+    var dbF = { GetAllType: function (t, cb) { cb(null, t === 'node' ? fNodes.slice() : meshes.slice()); }, Get: function (id, cb) { cb(null, fNodes.filter(function (n) { return n._id === id; })); } };
+    var sentF = [];
+    var agentsF = { 'node//f1': { send: function (m) { sentF.push(m); } }, 'node//f2': { send: function (m) { sentF.push(m); } } };
+    var oF = factory({ parent: { db: dbF, datapath: dpF, debug: function () { }, config: { settings: {} }, webserver: { meshes: {}, wsagents: agentsF }, DispatchEvent: function () { } } });
+    oF.softwareInventory = {
+        f1: { time: new Date().toISOString(), apps: [{ name: 'Firefox', version: '1.0', publisher: 'Mozilla' }, { name: 'Notepad', version: '11', publisher: 'Microsoft' }] },
+        f2: { time: new Date().toISOString(), apps: [{ name: 'Firefox', version: '1.2', publisher: 'Mozilla' }] }
+    };
+    oF.licenseInventory = { f1: { time: new Date().toISOString(), items: [{ name: 'Firefox', license: 'FIRE-KEY', source: 'registry' }], ms: [] } };
+    oF.wgResults = { 'node//f1': { time: new Date().toISOString(), dry: true, results: [{ id: 'Microsoft.Notepad', name: 'Notepad', from: '11', to: '12', state: 'dry-run' }] } };
+    oF.scanDeviceSoftware = function (list, cb) {
+        var out = [];
+        for (var i = 0; i < (list || []).length; i++) {
+            var a = list[i]; var nm = String((a && (a.name || a.Name)) || '');
+            if (/firefox/i.test(nm)) out.push({ isCve: true, cve: 'CVE-2024-0001', severity: 'CRITICAL', software: nm, version: String(a.version || '') });
+            else out.push({ isCve: false, cve: '', severity: '', software: nm, version: String(a.version || '') });
+        }
+        cb(out);
+    };
+    check('fleet index: buildFleetIndex + swFleetHandler exist and the route is wired',
+        typeof oF.buildFleetIndex === 'function' && typeof oF.swFleetHandler === 'function' && /action === 'sw_fleet'/.test(pluginSrc()));
+
+    oF.handleAdminPostReq({ headers: XHDR, body: { action: 'sw_fleet' } }, mockRes(function (d) {
+        var ff = (d.software || []).filter(function (x) { return /firefox/i.test(x.name); })[0];
+        var nn = (d.software || []).filter(function (x) { return /notepad/i.test(x.name); })[0];
+        check('sw_fleet: read-only - the route sends NO agent command', sentF.length === 0, sentF.length);
+        check('sw_fleet: deviceCount per software + fleet device count', d.devices === 2 && ff && ff.deviceCount === 2 && nn && nn.deviceCount === 1, [d.devices, ff, nn]);
+        check('sw_fleet: vulnerable flag + distinct CVE count + max severity per software',
+            ff && ff.vulnerable === true && ff.cve === 1 && ff.maxSeverity === 'CRITICAL' && nn && nn.vulnerable === false, [ff, nn]);
+        check('sw_fleet: the winget updatable flag joins the last dry run by name', nn && nn.updatable === true && ff && ff.updatable === false, [ff, nn]);
+        check('sw_fleet: the collected-license flag comes only from the local license map', ff && ff.hasLicense === true && nn && nn.hasLicense === false, [ff, nn]);
+        check('sw_fleet: byDevice carries the per-device CVE count for the unified device list',
+            d.byDevice && d.byDevice['node//f1'] && d.byDevice['node//f1'].cve === 1 && d.byDevice['node//f2'] && d.byDevice['node//f2'].cve === 1, d.byDevice);
+        check('sw_fleet: distinct installed versions are counted (Firefox has 2 across the fleet)', ff && ff.versions === 2, ff);
+        oF.buildFleetIndex(function (e1, data1) {
+            check('sw_fleet: the result is cached (the next read returns the same object, no re-scan)', data1 === d && oF._fleetIndexCache != null, typeof data1);
+            oF.buildFleetIndex(function (e2, data2) {
+                check('sw_fleet: force bypasses the cache and rebuilds a fresh object', data2 !== d && Array.isArray(data2.software), typeof data2);
+                check('fleet index: the module adds no scheduler/pump and sends no command (pure aggregation)',
+                    typeof oF.licPump === 'undefined' && typeof oF.swFleetPump === 'undefined' && typeof oF.scheduleFleetIndex === 'undefined' && sentF.length === 0, sentF.length);
+                next();
+            }, true);
+        });
+    }), user);
+});
+
 // The runner MUST stay the last statement: every steps.push() above has to be registered before
 // step 0 starts (pre-3.0.1 it sat mid-file and the trailing steps only ran because an earlier
 // step happened to be asynchronous). New steps go ABOVE this block.

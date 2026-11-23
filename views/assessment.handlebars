@@ -360,6 +360,72 @@
             <div id="licenseMsg"></div>
         </div>
 
+        <div class="tab-content" id="tab-devicelist" data-main="devices" data-sub="devicelist">
+            <div class="info">
+                One row per device (merged live from the update, OS, reset and license engines plus the fleet
+                index - it sends nothing new). Tick the devices, then pick <strong>one</strong> operation to run on
+                them. Non-destructive operations run as a batch; <strong>Restart</strong> and <strong>Reset</strong>
+                open their own panel and always need the per-device typed-name confirmation - they are never batched.
+            </div>
+            <div class="controls">
+                <button id="dlRefreshBtn" class="small">Refresh</button>
+                <span class="exportlabel">Export:</span>
+                <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=export&amp;type=hardware" target="_blank" rel="noopener">Hardware CSV</a>
+                <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=export&amp;type=software" target="_blank" rel="noopener">Software CSV</a>
+                <label class="dlselall"><input type="checkbox" id="dlSelectAll"> select all</label>
+            </div>
+            <div class="controls">
+                <span class="hint">Run on the selected devices:</span>
+                <button class="green dlRun" data-op="appupdates">Software updates</button>
+                <button class="dlRun" data-op="osupdate">OS updates</button>
+                <button class="dlRun" data-op="osupgrade">OS upgrade</button>
+                <button class="dlRun" data-op="troubleshoot">Windows Update repair</button>
+                <button class="purple dlRun" data-op="licenses">Collect licenses</button>
+                <span id="dlRunInfo" class="hint"></span>
+            </div>
+            <div class="table-container">
+                <table>
+                    <thead><tr>
+                        <th style="width:26px;"></th><th style="cursor:default">Device</th><th style="cursor:default">Group</th>
+                        <th style="width:70px;">Online</th><th style="width:60px;">OS</th>
+                        <th style="width:96px;">App updates</th><th style="width:120px;">OS state</th>
+                        <th style="width:84px;">Reboot</th><th style="width:84px;">Reset</th>
+                        <th style="width:88px;">Vulnerabilities</th><th style="width:70px;">License</th>
+                        <th style="width:150px;">Device actions</th>
+                    </tr></thead>
+                    <tbody id="dlDeviceBody"><tr><td colspan="13" style="color:#888">Loading...</td></tr></tbody>
+                </table>
+            </div>
+            <div id="dlMsg"></div>
+        </div>
+
+        <div class="tab-content" id="tab-swlist" data-main="software" data-sub="softwarelist">
+            <div class="info">
+                Every distinct installed program across all devices, with how many carry it and whether it has a
+                CVE, a winget update, or a collected license. "Update everywhere" runs the existing winget update
+                for that package on every device in scope (it needs a winget id; rows without one cannot).
+            </div>
+            <div class="controls">
+                <input type="text" id="swfFilter" class="filter-input" placeholder="Filter by software or publisher..." style="min-width:260px;">
+                <button id="swfRefreshBtn" class="small">Refresh</button>
+                <label class="dlselall"><input type="checkbox" id="swfSelectUpdatable"> select updatable</label>
+                <span id="swfRunInfo" class="hint"></span>
+            </div>
+            <div class="table-container">
+                <table>
+                    <thead><tr>
+                        <th style="width:26px;"></th><th style="cursor:default">Software</th>
+                        <th style="cursor:default">Version</th><th style="cursor:default">Publisher</th>
+                        <th style="width:64px;cursor:default">Devices</th><th style="width:118px;">Vulnerabilities</th>
+                        <th style="width:80px;">Update</th><th style="width:66px;">License</th><th style="width:130px;">Actions</th>
+                    </tr></thead>
+                    <tbody id="swfBody"><tr><td colspan="9" style="color:#888">Loading...</td></tr></tbody>
+                </table>
+            </div>
+            <div class="controls"><button class="green" id="swfUpdateAllBtn">Update the selected packages everywhere</button></div>
+            <div id="swfMsg"></div>
+        </div>
+
         <div class="tab-content" id="tab-updates" data-main="devices" data-sub="updates">
             <div class="info">
                 Automatic software updates via <code>winget</code> on Windows devices. Nothing runs automatically until you enable
@@ -685,17 +751,19 @@
         // ---------- tabs ----------
 
         var navTree = {
-            devices: [ { key: 'updates', label: 'Software updates' }, { key: 'os', label: 'OS updates & reboot' }, { key: 'reset', label: 'PC reset' } ],
-            software: [ { key: 'deploy', label: 'Deployment' }, { key: 'license', label: 'License keys' } ],
+            devices: [ { key: 'devicelist', label: 'Device list' }, { key: 'updates', label: 'Software updates' }, { key: 'os', label: 'OS updates & reboot' }, { key: 'reset', label: 'PC reset' } ],
+            software: [ { key: 'softwarelist', label: 'Software list' }, { key: 'deploy', label: 'Deployment' }, { key: 'license', label: 'License keys' } ],
             vulns: [ { key: 'assessment', label: 'Assessment' }, { key: 'data', label: 'Reports, NVD & CPE table' } ],
             settings: [ { key: 'general', label: 'General' } ]
         };
         var subTitles = {
+            devicelist: 'Devices', softwarelist: 'Installed Software (all devices)',
             updates: 'Software Updates (winget)', os: 'Operating System Updates', reset: 'Reset a Windows PC',
             deploy: 'Deploy Software', license: 'Software License Keys',
             assessment: 'Vulnerability Assessment', data: 'Vulnerability Data & Tables', settings: 'Settings'
         };
         var subLoaders = {
+            devicelist: function () { loadDeviceList(); }, softwarelist: function () { loadSwFleet(); },
             updates: function () { loadWgTab(); }, os: function () { loadOsStatus(); },
             deploy: function () { loadSwTab(); }, reset: function () { loadDrStatus(); },
             license: function () { loadLicenseSection(); },
@@ -2521,6 +2589,219 @@
             }).catch(function (ex) { showMsg('licMsg', 'Add failed: ' + ex.message, false); });
         });
         $('refreshLicLogBtn').addEventListener('click', loadLicLog);
+
+        // ---------- unified device list (v4.9.5, issue #8) ----------
+
+        var dlApp = { devices: [], byId: {} };
+
+        function dlSevBadge(n, sev) {
+            if (!n) { return '<span style="color:#888">none</span>'; }
+            var s = (sev && /^(CRITICAL|HIGH|MEDIUM|LOW|UNKNOWN)$/.test(sev)) ? sev : 'UNKNOWN';
+            return '<span class="sev sev-' + s + '">' + n + '</span>';
+        }
+
+        function loadDeviceList() {
+            var b = $('dlRunInfo'); if (b) { b.textContent = 'merging device states...'; }
+            Promise.all([
+                post('os_status', {}), post('wg_status', {}), post('dr_status', {}), post('lic_status', {}), post('sw_fleet', {})
+            ]).then(function (rs) {
+                var byId = {};
+                function ensure(d) {
+                    var e = byId[d.id];
+                    if (!e) { e = byId[d.id] = { id: d.id, host: d.host || '', given: d.given || '', group: d.group || '', online: !!d.online, platform: d.platform || '', os: d.os || '' }; }
+                    if (d.platform) { e.platform = d.platform; }
+                    if (d.os) { e.os = d.os; }
+                    if (d.online) { e.online = true; }
+                    if (!e.given && d.given) { e.given = d.given; }
+                    if (!e.group && d.group) { e.group = d.group; }
+                    if (!e.host && d.host) { e.host = d.host; }
+                    return e;
+                }
+                ((rs[0] && rs[0].devices) || []).forEach(function (d) {
+                    var e = ensure(d);
+                    e.osState = d.releaseState || ''; e.outdated = !!d.outdated; e.urgent = !!d.urgent;
+                    e.rb = d.rb || null;
+                });
+                ((rs[1] && rs[1].devices) || []).forEach(function (d) {
+                    var e = ensure(d); if (!e.platform) { e.platform = 'windows'; }
+                    e.appUpdates = d.last ? (d.last.would || 0) : null; e.appError = d.last && d.last.error ? d.last.error : '';
+                });
+                ((rs[2] && rs[2].devices) || []).forEach(function (d) {
+                    var e = ensure(d); if (!e.platform) { e.platform = 'windows'; }
+                    e.resetReady = !!d.hasProbe; e.resetModes = d.modes || null;
+                });
+                ((rs[3] && rs[3].devices) || []).forEach(function (d) {
+                    var e = ensure(d); e.license = d.collected ? (d.collected.found || 0) : null;
+                });
+                var fx = rs[4] || {};
+                for (var id in (fx.byDevice || {})) { if (byId[id]) { byId[id].cve = (fx.byDevice[id].cve || 0); byId[id].cveSev = fx.byDevice[id].maxSeverity || ''; } }
+                var arr = Object.keys(byId).map(function (k) { return byId[k]; });
+                arr.sort(function (a, b2) { return (a.group === b2.group) ? String(a.given || a.host).localeCompare(String(b2.given || b2.host)) : String(a.group).localeCompare(String(b2.group)); });
+                dlApp.byId = byId; dlApp.devices = arr;
+                renderDeviceList();
+            }).catch(function (e) { if (b) { b.textContent = ''; } showMsg('dlMsg', 'Failed to load the device list: ' + e.message, false); });
+        }
+
+        function renderDeviceList() {
+            var html = '';
+            for (var i = 0; i < dlApp.devices.length; i++) {
+                var d = dlApp.devices[i];
+                var on = d.online ? 'yes' : 'no';
+                var pf = d.platform === 'windows' ? 'Win' : (d.platform === 'linux' ? 'Linux' : '?');
+                var apps = d.appUpdates == null ? '<span style="color:#888">not run</span>' : (d.appUpdates ? ('<b>' + d.appUpdates + ' avail</b>') : 'none');
+                var oss = d.osState ? (d.osState + (d.urgent ? ' <span class="sev sev-HIGH">urgent</span>' : (d.outdated ? ' outdated' : ''))) : '<span style="color:#888">-</span>';
+                var rb = d.rb ? (String(d.rb.state || d.rb.kind || 'ran')) : '<span style="color:#888">-</span>';
+                var rst = pf === 'Win' ? (d.resetReady ? 'ready' : 'not checked') : '<span style="color:#888">n/a</span>';
+                var lic = d.license == null ? '<span style="color:#888">-</span>' : (d.license + ' found');
+                html += '<tr>'
+                    + '<td><input type="checkbox" class="dlc" value="' + esc(d.id) + '" data-online="' + (d.online ? '1' : '0') + '"></td>'
+                    + '<td><b>' + esc(d.given || d.host) + '</b><div class="hint">' + esc(d.host) + '</div></td>'
+                    + '<td>' + esc(d.group) + '</td>'
+                    + '<td>' + on + '</td>'
+                    + '<td>' + pf + '</td>'
+                    + '<td>' + apps + '</td>'
+                    + '<td>' + oss + '</td>'
+                    + '<td>' + rb + '</td>'
+                    + '<td>' + rst + '</td>'
+                    + '<td>' + dlSevBadge(d.cve || 0, d.cveSev) + '</td>'
+                    + '<td>' + lic + '</td>'
+                    + '<td>' + (pf === 'Win' ? '<button class="small dlGo" data-op="reset" data-id="' + esc(d.id) + '">Reset</button> ' : '')
+                    + '<button class="small red dlGo" data-op="reboot" data-id="' + esc(d.id) + '">Restart</button></td>'
+                    + '</tr>';
+            }
+            if (html === '') { html = '<tr><td colspan="13" style="color:#888">No devices found.</td></tr>'; }
+            $('dlDeviceBody').innerHTML = html;
+            var ri = $('dlRunInfo'); if (ri) { ri.textContent = dlApp.devices.length + ' device(s).'; }
+            var sa = $('dlSelectAll'); if (sa) { sa.checked = false; }
+        }
+
+        function dlCheckedOnline() {
+            var out = [];
+            var cbs = document.querySelectorAll('#dlDeviceBody input.dlc:checked');
+            for (var i = 0; i < cbs.length; i++) { if (cbs[i].getAttribute('data-online') === '1') { out.push(cbs[i].value); } }
+            return out;
+        }
+
+        function dlAfterRun(d) {
+            var ri = $('dlRunInfo');
+            if (d && d.busy) { if (ri) { ri.textContent = 'another batch is already running - try again when it finishes.'; } return; }
+            if (d && d.error) { showMsg('dlMsg', d.error, false); return; }
+            if (ri) { ri.textContent = 'started - follow the device result in the matching sub-tab (these run in the background).'; }
+        }
+
+        function dlRun(op) {
+            var ids = dlCheckedOnline();
+            if (ids.length === 0) { showMsg('dlMsg', 'Tick at least one ONLINE device first.', false); return; }
+            if (op === 'osupgrade' && !window.confirm('Upgrade the OS release on ' + ids.length + ' device(s)? They must reboot afterwards (the tool never reboots them).')) { return; }
+            if (op === 'appupdates') { post('wg_run', { nodeIds: ids.join(','), dry: 'false' }).then(dlAfterRun).catch(function (e) { showMsg('dlMsg', e.message, false); }); }
+            else if (op === 'osupdate') { post('os_run', { mode: 'update', nodeIds: ids.join(',') }).then(dlAfterRun).catch(function (e) { showMsg('dlMsg', e.message, false); }); }
+            else if (op === 'osupgrade') { post('os_run', { mode: 'upgrade', nodeIds: ids.join(',') }).then(dlAfterRun).catch(function (e) { showMsg('dlMsg', e.message, false); }); }
+            else if (op === 'licenses') { Promise.all(ids.map(function (id) { return post('lic_collect', { nodeId: id }); })).then(function () { dlAfterRun({ started: true }); }).catch(function (e) { showMsg('dlMsg', e.message, false); }); }
+            else if (op === 'troubleshoot') { Promise.all(ids.map(function (id) { return post('wu_repair', { nodeId: id }); })).then(function () { dlAfterRun({ started: true }); }).catch(function (e) { showMsg('dlMsg', e.message, false); }); }
+        }
+
+        function dlGo(op) {
+            // reboot and reset are NEVER batched: jump to the panel that does the per-device typed-name confirm.
+            if (op === 'reboot') { selectSub('devices', 'os'); }
+            else if (op === 'reset') { selectSub('devices', 'reset'); }
+            showMsg('dlMsg', 'Restart/Reset run per device with a typed-name confirmation - use the panel you were taken to.', true);
+        }
+
+        function dlRunClick() { dlRun(this.getAttribute('data-op')); }
+        function dlGoClick() { dlGo(this.getAttribute('data-op')); }
+        function dlSelectAllClick() {
+            var cbs = document.querySelectorAll('#dlDeviceBody input.dlc');
+            var on = $('dlSelectAll').checked;
+            for (var i = 0; i < cbs.length; i++) { cbs[i].checked = on; }
+        }
+
+        $('dlRefreshBtn').addEventListener('click', loadDeviceList);
+        $('dlSelectAll').addEventListener('click', dlSelectAllClick);
+        var dlRunBtns = document.querySelectorAll('.dlRun');
+        for (var dri = 0; dri < dlRunBtns.length; dri++) { dlRunBtns[dri].addEventListener('click', dlRunClick); }
+        $('dlDeviceBody').addEventListener('click', function (e) { var t = e.target; if (t && t.classList && t.classList.contains('dlGo')) { dlGo(t.getAttribute('data-op')); } });
+
+        // ---------- unified software list (v4.9.5, issue #8) ----------
+
+        var swfApp = { software: [], wgMap: {}, devices: 0 };
+
+        function loadSwFleet() {
+            var ri = $('swfRunInfo'); if (ri) { ri.textContent = 'building the fleet index...'; }
+            Promise.all([post('sw_fleet', {}), post('wg_programs', {})])
+                .then(function (rs) {
+                    var data = rs[0] || {};
+                    if (data.error) { showMsg('swfMsg', data.error, false); return; }
+                    var map = {};
+                    var pkgs = (rs[1] && rs[1].packages) || [];
+                    for (var i = 0; i < pkgs.length; i++) { if (pkgs[i] && pkgs[i].name) { map[String(pkgs[i].name).toLowerCase()] = { id: pkgs[i].id, ready: pkgs[i].ready || 0 }; } }
+                    swfApp.software = data.software || []; swfApp.wgMap = map; swfApp.devices = data.devices || 0;
+                    renderSwFleet();
+                })
+                .catch(function (e) { if (ri) { ri.textContent = ''; } showMsg('swfMsg', 'Failed to build the software index: ' + e.message, false); });
+        }
+
+        function renderSwFleet() {
+            var f = String($('swfFilter').value || '').toLowerCase();
+            var html = '';
+            for (var i = 0; i < swfApp.software.length; i++) {
+                var s = swfApp.software[i];
+                var low = String(s.name).toLowerCase();
+                if (f !== '' && low.indexOf(f) < 0 && String(s.publisher || '').toLowerCase().indexOf(f) < 0) { continue; }
+                var w = swfApp.wgMap[low];
+                var upd = w ? '<span class="badge badge-custom">winget</span>' : (s.updatable ? '<span style="color:#888">avail</span>' : '<span style="color:#888">-</span>');
+                var vuln = s.vulnerable ? dlSevBadge(s.cve || 1, s.maxSeverity) : '<span style="color:#888">none</span>';
+                var lic = s.hasLicense ? '<span class="badge badge-custom">yes</span>' : '<span style="color:#888">-</span>';
+                var ver = esc(s.version || '') + (s.versions > 1 ? ' <span class="badge badge-varies" title="' + s.versions + ' versions installed">+' + (s.versions - 1) + '</span>' : '');
+                html += '<tr>'
+                    + '<td><input type="checkbox" class="swfc" value="' + esc(low) + '" data-pkg="' + esc(w ? w.id : '') + '" data-ready="' + (w && w.ready ? '1' : '0') + '"></td>'
+                    + '<td><b>' + esc(s.name) + '</b></td>'
+                    + '<td>' + ver + '</td>'
+                    + '<td>' + esc(s.publisher || '') + '</td>'
+                    + '<td>' + s.deviceCount + '</td>'
+                    + '<td>' + vuln + '</td>'
+                    + '<td>' + upd + '</td>'
+                    + '<td>' + lic + '</td>'
+                    + '<td>' + (w ? '<button class="small green swfUpd" data-pkg="' + esc(w.id) + '" data-name="' + esc(s.name) + '">Update everywhere</button>' : '<span style="color:#888">no winget id</span>') + '</td>'
+                    + '</tr>';
+            }
+            if (html === '') { html = '<tr><td colspan="9" style="color:#888">No installed software collected yet (run an inventory collection first).</td></tr>'; }
+            $('swfBody').innerHTML = html;
+            var ri = $('swfRunInfo'); if (ri) { ri.textContent = swfApp.software.length + ' distinct program(s) across ' + swfApp.devices + ' device(s).'; }
+        }
+
+        function swfUpdateOne(pkgId, name) {
+            if (!pkgId) { showMsg('swfMsg', 'That package has no winget id and cannot be updated this way.', false); return; }
+            post('wg_run', { pkgId: pkgId, mode: 'update' }).then(function (d) {
+                if (d.busy) { showMsg('swfMsg', 'A winget batch is already running.', false); return; }
+                if (d.error) { showMsg('swfMsg', d.error, false); return; }
+                showMsg('swfMsg', 'Update of ' + name + ' started on every in-scope device (follow the winget tab).', true);
+            }).catch(function (e) { showMsg('swfMsg', e.message, false); });
+        }
+
+        function swfUpdateAll() {
+            var cbs = document.querySelectorAll('#swfBody input.swfc:checked');
+            var seen = {}, n = 0;
+            for (var i = 0; i < cbs.length; i++) {
+                var pkg = cbs[i].getAttribute('data-pkg');
+                if (!pkg || seen[pkg]) { continue; }
+                seen[pkg] = 1;
+                post('wg_run', { pkgId: pkg, mode: 'update' }).then(function () { }).catch(function () { });
+                n++;
+            }
+            if (n === 0) { showMsg('swfMsg', 'Tick at least one winget-managed package.', false); }
+            else { showMsg('swfMsg', n + ' package update batch(es) started on every in-scope device.', true); }
+        }
+
+        function swfRowClick(e) { var t = e.target; if (t && t.classList && t.classList.contains('swfUpd')) { swfUpdateOne(t.getAttribute('data-pkg'), t.getAttribute('data-name')); } }
+
+        $('swfRefreshBtn').addEventListener('click', function () { post('sw_fleet', { refresh: '1' }).catch(function () { }); loadSwFleet(); });
+        $('swfFilter').addEventListener('input', renderSwFleet);
+        $('swfUpdateAllBtn').addEventListener('click', swfUpdateAll);
+        $('swfBody').addEventListener('click', swfRowClick);
+        $('swfSelectUpdatable').addEventListener('click', function () {
+            var cbs = document.querySelectorAll('#swfBody input.swfc'); var on = $('swfSelectUpdatable').checked;
+            for (var i = 0; i < cbs.length; i++) { cbs[i].checked = on && cbs[i].getAttribute('data-ready') === '1'; }
+        });
 
         // ---------- init ----------
 

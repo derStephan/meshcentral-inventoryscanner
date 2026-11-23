@@ -127,10 +127,13 @@ button. Pick the locations you work on (floating *Locations* button, remembered 
 aggregated table of unique findings: sort by any column, filter by text/severity/status, rate a finding for all
 affected locations in one action, or mark it a false positive (with undo). Every CVE shows its first words under
 the id (the full description stays in the tooltip), so a rating rarely needs a trip to nvd.nist.gov. Since v4.9.0
-the panel uses **two-layer navigation**: four main sections **Devices** (software updates, OS updates & reboot,
-PC reset), **Software** (deployment, license keys), **Vulnerabilities** (assessment, reports / NVD update / CPE
-table) and **Settings**, each opening its own row of sub-tabs. It is the same functionality, just grouped by
-topic instead of one flat strip.
+the panel uses **two-layer navigation**: four main sections **Devices** (a unified **Device list**, software
+updates, OS updates & reboot, PC reset), **Software** (a fleet-wide **Software list**, deployment, license keys),
+**Vulnerabilities** (assessment, reports / NVD update / CPE table) and **Settings**, each opening its own row of
+sub-tabs. The Device list merges every engine's per-device state into one table (tick devices, run an update /
+OS update / OS upgrade / Windows Update repair / license collection, with Restart and Reset kept per-device and
+typed-name confirmed); the Software list shows each program once across the fleet with its CVE, winget-update
+and license status. Same engines and routes, grouped and aggregated rather than spread over separate tabs.
 
 **Opening the panel reads the stored result - it does not scan (v4.4.0).** The table appears immediately with the
 findings of the last scan (its date is shown, plus any location that has no stored result yet), and changing the
