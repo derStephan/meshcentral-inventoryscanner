@@ -95,6 +95,7 @@
         <a href="#" class="navtab" data-tab="updates">Updates</a>
         <a href="#" class="navtab" data-tab="os">OS Updates</a>
         <a href="#" class="navtab" data-tab="deploy">Deploy</a>
+        <a href="#" class="navtab" data-tab="reset">PC Reset</a>
         <a href="#" class="navtab" data-tab="settings">Settings</a>
         <span class="navsep"></span>
         <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=report" target="_blank" rel="noopener">Vulnerability Report</a>
@@ -490,6 +491,37 @@
             <div><button id="refreshSwLogBtn" class="small">Refresh log</button> <span id="swLogInfo" class="hint"></span></div>
             <pre id="swLog" style="max-height:260px;overflow:auto;background:#0f1720;color:#cfe3f5;padding:8px;border-radius:6px;font-size:11px;margin-top:6px;white-space:pre-wrap;">(not loaded yet)</pre>
         </div>
+
+        <div class="tab-content" id="tab-reset">
+            <div class="info">
+                <strong>This is the one feature that restarts a device.</strong> It resets a single
+                <strong>Windows</strong> PC with the built-in <code>systemreset</code> tool. A reset cannot run from inside
+                the booted OS: as soon as it starts, the machine <strong>reboots into Windows RE and resets itself</strong>
+                there, so it disappears from the console and comes back as a fresh install. For that reason this is
+                <strong>per-device, manual and never automatic</strong> - no fleet, no schedule - and you must
+                <strong>type the device name</strong> to confirm before anything is sent.<br>
+                Two modes: <strong>Keep my files</strong> removes apps and settings but keeps personal files;
+                <strong>Remove everything</strong> wipes the drive. Press <em>Check</em> first: it reads, without changing
+                anything, whether <code>systemreset</code> is present, the build supports the non-interactive switches
+                (Windows 10 1809 / build <span id="drMinBuild">-</span> or newer), Windows RE is enabled and whether
+                <strong>BitLocker</strong> protects the system drive. <strong>Remove everything is blocked while BitLocker
+                protection is on</strong> (or its state is unknown) until you confirm the recovery key is available -
+                otherwise the device comes back locked. A reset only runs on a device that is online, idle (no winget,
+                OS, deploy or another reset session) and passed its check within the last 6 hours.
+            </div>
+            <div class="controls">
+                <button id="drRefreshBtn" class="small">Refresh</button>
+                <span id="drRunState" class="hint"></span>
+            </div>
+            <div id="drMsg"></div>
+            <div class="table-container"><table>
+                <thead><tr><th>Device</th><th>Group</th><th style="width:200px;">OS</th><th style="width:60px;">Online</th><th style="width:340px;">Check</th><th style="width:220px;">Last reset</th><th style="width:240px;">Actions</th></tr></thead>
+                <tbody id="drDevBody"><tr><td colspan="7" style="color:#888">Loading...</td></tr></tbody>
+            </table></div>
+            <h3>PC reset log</h3>
+            <div><button id="refreshDrLogBtn" class="small">Refresh log</button> <span id="drLogInfo" class="hint"></span></div>
+            <pre id="drLog" style="max-height:260px;overflow:auto;background:#0f1720;color:#cfe3f5;padding:8px;border-radius:6px;font-size:11px;margin-top:6px;white-space:pre-wrap;">(not loaded yet)</pre>
+        </div>
     </div>
 
     <div id="invFloat" style="display:none;position:fixed;top:18px;left:50%;transform:translateX(-50%);color:#fff;padding:10px 22px;border-radius:8px;z-index:9999;font-weight:600;box-shadow:0 4px 14px rgba(0,0,0,.35);transition:opacity .6s;max-width:80%;"></div>
@@ -599,7 +631,7 @@
 
         // ---------- tabs ----------
 
-        var tabTitles = { assessment: 'Vulnerability Assessment', settings: 'Settings', updates: 'Software Updates (winget)', os: 'Operating System Updates', deploy: 'Deploy Software' };
+        var tabTitles = { assessment: 'Vulnerability Assessment', settings: 'Settings', updates: 'Software Updates (winget)', os: 'Operating System Updates', deploy: 'Deploy Software', reset: 'Reset a Windows PC' };
         var tabs = document.querySelectorAll('.navtab');
         for (var t = 0; t < tabs.length; t++) {
             tabs[t].addEventListener('click', function (e) {
@@ -617,6 +649,7 @@
                 if (name === 'updates') { loadWgTab(); }
                 if (name === 'os') { loadOsStatus(); }
                 if (name === 'deploy') { loadSwTab(); }
+                if (name === 'reset') { loadDrStatus(); }
                 var sm = document.getElementById('statusMeta');
                 if (sm) { sm.style.display = ((name === 'assessment') || (name === 'settings')) ? '' : 'none'; }
                 var pt = document.getElementById('pageTitle');
@@ -2099,6 +2132,130 @@
                 loadSettings();
             }).catch(function (e) { showMsg('settingsMsg', 'Reset failed: ' + e.message, false); });
         });
+        // ---------- device reset (v4.5.0, issue #4) ----------
+
+        var drApp = { status: null };
+        var drPollTimer = null;
+
+        function drDevLabel(id) {
+            var ds = (drApp.status && drApp.status.devices) || [];
+            for (var i = 0; i < ds.length; i++) { if (ds[i].id === id) { return ds[i].given || ds[i].host || id; } }
+            return id;
+        }
+
+        function drCheckText(d) {
+            var p = d.probe;
+            if (!d.hasProbe || !p || p.state !== 'ok') { return p && p.state ? ('<span style="color:#a33">' + esc(p.state) + '</span>') : '<span style="color:#888">not checked yet</span>'; }
+            var bits = [];
+            bits.push(p.systemreset ? 'systemreset ok' : '<b style="color:#a33">no systemreset</b>');
+            bits.push('build ' + esc(p.build));
+            bits.push(p.winre === 'disabled' ? '<span style="color:#a33">WinRE off</span>' : (p.winre === 'enabled' ? 'WinRE on' : 'WinRE ?'));
+            bits.push(p.bitlocker === 'on' ? '<span style="color:#c80">BitLocker ON</span>' : (p.bitlocker === 'unknown' ? 'BitLocker ?' : 'BitLocker off'));
+            if (p.domain) bits.push('domain');
+            if (p.battery && !p.onac) bits.push('<span style="color:#c80">on battery</span>');
+            var h = '<div style="font-size:11px">' + bits.join(' &middot; ') + '</div>';
+            if (p.user) h += '<div style="font-size:10px;color:#666">logged on: ' + esc(p.user) + '</div>';
+            return h;
+        }
+
+        function drLastText(d) {
+            var l = d.last;
+            if (!l || l.kind === 'probe' || (!l.state && !l.error)) { return '<span style="color:#888">-</span>'; }
+            var col = l.state === 'resetting' ? '#1d7a3a' : (l.state === 'refused' ? '#a33' : '#c80');
+            return '<div style="font-size:11px"><span style="color:' + col + '">' + esc(l.state) + ' (' + esc(l.mode || '') + ')</span><br>' + esc(fmtLocal(l.time)) + '</div>' + (l.note ? '<div style="font-size:10px;color:#666">' + esc(String(l.note).substring(0, 120)) + '</div>' : '');
+        }
+
+        function renderDrDevices() {
+            var s = drApp.status || { devices: [] };
+            var html = '';
+            for (var i = 0; i < s.devices.length; i++) {
+                var d = s.devices[i];
+                html += '<tr>';
+                html += '<td>' + esc(d.given || d.host || d.id) + '</td><td>' + esc(d.group) + '</td>';
+                html += '<td style="font-size:11px">' + esc(d.os) + '</td>';
+                html += '<td>' + (d.online ? '<span style="color:#1d7a3a">yes</span>' : '<span style="color:#a33">no</span>') + '</td>';
+                html += '<td>' + drCheckText(d) + '</td>';
+                html += '<td>' + drLastText(d) + '</td>';
+                html += '<td style="white-space:nowrap">';
+                if (d.pending) {
+                    html += '<span class="hint">' + esc(d.pending.kind === 'reset' ? 'reset dispatched' : 'checking') + '…</span>';
+                } else {
+                    html += '<button class="small" data-dract="probe" data-drid="' + esc(d.id) + '">Check</button> ';
+                    if (d.modes.keepfiles) { html += '<button class="small purple" data-dract="keep" data-drid="' + esc(d.id) + '">Keep my files</button>'; }
+                    if (d.modes.clean) { html += ' <button class="small red" data-dract="clean" data-drid="' + esc(d.id) + '">Remove everything</button>'; }
+                    else if (!d.hasProbe) { html += ' <span class="hint">reset needs a fresh Check</span>'; }
+                }
+                html += '</td></tr>';
+            }
+            if (html === '') { html = '<tr><td colspan="7" style="color:#888">No Windows devices reported an OS yet.</td></tr>'; }
+            $('drDevBody').innerHTML = html;
+            var nm = document.getElementById('drMinBuild'); if (nm && s.minBuild) { nm.textContent = s.minBuild; }
+            var run = (s.pending && s.pending.length) ? (s.pending.length + ' device(s) have a reset or check in flight.') : '';
+            $('drRunState').textContent = run;
+        }
+
+        function loadDrLog() {
+            post('get_log', { type: 'reset' }).then(function (data) {
+                if (data.error) { $('drLog').textContent = data.error; return; }
+                $('drLog').textContent = (data.lines && data.lines.length) ? localizeLog(data.lines).join(String.fromCharCode(10)) : '(empty)';
+                $('drLogInfo').textContent = data.note || ((data.lines || []).length + ' lines · ' + (data.file || ''));
+            }).catch(function (ex) { $('drLog').textContent = 'Failed: ' + ex.message; });
+        }
+
+        function loadDrStatus() {
+            post('dr_status', {}).then(function (s) {
+                if (s.error) { showMsg('drMsg', s.error, false); return; }
+                drApp.status = s; renderDrDevices(); loadDrLog();
+                if (drPollTimer != null) { clearTimeout(drPollTimer); drPollTimer = null; }
+                if (s.pending && s.pending.length) { drPollTimer = setTimeout(loadDrStatus, 5000); }
+            }).catch(function (ex) { showMsg('drMsg', 'Failed to load reset state: ' + ex.message, false); });
+        }
+
+        function drProbe(id) {
+            post('dr_probe', { nodeId: id }).then(function (d) {
+                if (d.error) { showMsg('drMsg', d.error, false); return; }
+                floatMsg('Check started on ' + drDevLabel(id) + ' - the result appears in the table.', true);
+                setTimeout(loadDrStatus, 2500);
+            }).catch(function (ex) { showMsg('drMsg', 'Check failed: ' + ex.message, false); });
+        }
+
+        function drReset(id, mode) {
+            var label = drDevLabel(id);
+            var needAck = (mode === 'clean');
+            var ack = '';
+            if (mode === 'clean') {
+                var d = null, ds = (drApp.status && drApp.status.devices) || [];
+                for (var i = 0; i < ds.length; i++) { if (ds[i].id === id) { d = ds[i]; } }
+                var bl = d && d.probe && d.probe.state === 'ok' ? d.probe.bitlocker : 'unknown';
+                if (bl !== 'off') {
+                    if (!window.confirm('BitLocker protection is ' + bl + ' on ' + label + '. A "Remove everything" reset usually makes the recovery key necessary on the next boot.\n\nDo you have the BitLocker recovery key of this device available?')) { return; }
+                    ack = 'true';
+                }
+                if (!window.confirm('RESET "' + label + '" and REMOVE EVERYTHING on it?\nThe drive is wiped and the device restarts into Windows RE. This cannot be undone. The next prompt wants the exact device name typed.')) { return; }
+            } else {
+                if (!window.confirm('Reset "' + label + '" and KEEP personal files?\nApps and settings are removed and the device restarts into Windows RE. The next prompt wants the exact device name typed.')) { return; }
+            }
+            var typed = window.prompt('Type the device name exactly to confirm the reset:\n\n' + label);
+            if (typed == null) { return; }
+            post('dr_reset', { nodeId: id, mode: mode, confirm: typed, bitlockerAck: ack }).then(function (d) {
+                if (d.error) { showMsg('drMsg', d.error, false); return; }
+                floatMsg('Reset (' + mode + ') started - ' + label + ' is restarting into Windows RE.', true);
+                setTimeout(loadDrStatus, 2500);
+            }).catch(function (ex) { showMsg('drMsg', 'Reset failed: ' + ex.message, false); });
+        }
+
+        $('drRefreshBtn').addEventListener('click', loadDrStatus);
+        $('refreshDrLogBtn').addEventListener('click', loadDrLog);
+        $('drDevBody').addEventListener('click', function (e) {
+            var b = e.target;
+            while (b && b !== this && !(b.getAttribute && b.getAttribute('data-dract'))) { b = b.parentNode; }
+            if (!b || b === this) { return; }
+            var act = b.getAttribute('data-dract'), id = b.getAttribute('data-drid');
+            if (act === 'probe') { drProbe(id); }
+            else if (act === 'keep') { drReset(id, 'keepfiles'); }
+            else if (act === 'clean') { drReset(id, 'clean'); }
+        });
+
         // ---------- init ----------
 
         restoreLocationSelection();

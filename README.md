@@ -48,8 +48,15 @@ without sending inventory data to anyone.
   you pick (single machines or whole locations): upload the package from your PC into the plugin's library, take it
   from MeshCentral's Server Files, or place it in the plugin's server folder. Optional command-line parameters,
   **offline devices install automatically as soon as they reconnect**, every transfer is **SHA-256 verified on the
-  device before anything runs**, and no device is ever rebooted. Per device you get state + exit code + the
-  installer's own message.
+   device before anything runs**, and no device is ever rebooted. Per device you get state + exit code + the
+   installer's own message.
+* **Reset a Windows PC (PC Reset tab)** - reset one chosen Windows machine with the built-in `systemreset` tool,
+   *Keep my files* or *Remove everything*. This is **the one feature that restarts a device** (a reset runs in
+   Windows RE, not inside the booted OS), so it is deliberately manual and per-device: you press *Check* first
+   (reads `systemreset`, the build, WinRE, BitLocker, …), you must **type the device name** to confirm, and
+   *Remove everything* stays **blocked while BitLocker protection is on** until you confirm the recovery key.
+   Never automatic, never a fleet action.
+
 
 ## Requirements
 

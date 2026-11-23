@@ -2624,6 +2624,153 @@ steps.push(function (next) {
     });
 });
 
+// ---- v4.5.0 device reset (issue #4): scripts, mode gating, routes, timeout ----
+steps.push(function (next) {
+    // builders + pure logic on the shared obj (no dispatch).
+    var ps = obj.devBuildProbeScript();
+    check('devreset probe script: reads systemreset/build/WinRE/BitLocker/domain/battery, prints the marker, runs no reboot command',
+        ps.indexOf('systemreset.exe') >= 0 && ps.indexOf("reagentc '/info'") >= 0 && ps.indexOf('Get-BitLockerVolume') >= 0 && ps.indexOf('manage-bde') >= 0 &&
+        ps.indexOf('Win32_Battery') >= 0 && ps.indexOf('PartOfDomain') >= 0 && ps.indexOf('UserName') >= 0 &&
+        ps.indexOf(obj.DEV_MARKER) >= 0 && ps.indexOf('invscanner-devreset.log') >= 0 && !/Restart-Computer|shutdown/i.test(ps));
+    var openersP = ps.split(String.fromCharCode(10)).filter(function (l) { return /[({]\s*$/.test(l); });
+    check('devreset probe script: one statement per line', openersP.length === 0, openersP.slice(0, 2));
+
+    var rc = obj.devBuildResetScript('clean', false);
+    var rk = obj.devBuildResetScript('keepfiles', true);
+    check('devreset reset script: launches systemreset non-interactively and prints the marker BEFORE the launch (the reboot wins the race)',
+        rc.indexOf("$invSw = '-cleanpc'") >= 0 && rk.indexOf("$invSw = '-keepfiles'") >= 0 &&
+        rc.indexOf("Start-Process -FilePath $invSr -ArgumentList $invSw,'-noUI'") >= 0 &&
+        rc.indexOf(obj.DEV_MARKER) < rc.indexOf('Start-Process') && /-cleanpc|-keepfiles/.test(rc));
+    check('devreset reset script: re-checks build/WinRE/BitLocker on the device; the only reboot path is systemreset (never Restart-Computer/shutdown)',
+        rc.indexOf('-lt ' + obj.DEV_MIN_BUILD) >= 0 && rc.indexOf("reagentc '/info'") >= 0 && rc.indexOf('-inotmatch') >= 0 &&
+        rc.indexOf('systemreset') >= 0 && !/Restart-Computer|shutdown/i.test(rc));
+    check('devreset reset script: the recovery-key confirmation only travels as the ack literal, clean defaults to no-ack',
+        rc.indexOf('$invAck = $false') >= 0 && rk.indexOf('$invAck = $true') >= 0);
+    var openersR = rc.split(String.fromCharCode(10)).filter(function (l) { return /[({]\s*$/.test(l); });
+    check('devreset reset script: one statement per line', openersR.length === 0, openersR.slice(0, 2));
+
+    // The documented exception to the "never reboot" invariant: this feature reboots ONLY through a
+    // manual per-device systemreset - no batch, no scheduling, no other engine triggers it.
+    check('devreset invariant: the ONLY rebooting feature is manual per-device, there is no batch or scheduled reset',
+        typeof obj.devStartBatch === 'undefined' && typeof obj.scheduleDevReset === 'undefined' &&
+        typeof obj.devTargetNodes === 'undefined' && typeof obj.devPump === 'undefined');
+
+    // mode gating is a pure decision on a probe object + a clock.
+    var now = Date.now();
+    var freshIso = new Date(now - 60000).toISOString();
+    var oldIso = new Date(now - (7 * 24 * 60 * 60 * 1000)).toISOString();
+    var base = { kind: 'probe', state: 'ok', systemreset: true, build: 26200, clean: true, keepfiles: true, winre: 'enabled', bitlocker: 'off', time: freshIso };
+    check('devreset gate: a fresh passing probe allows both modes; a clean reset needs no ack when BitLocker is off',
+        obj.devModeAllowed(base, 'clean', '').allowed === true && obj.devModeAllowed(base, 'keepfiles', '').allowed === true);
+    check('devreset gate: "Remove everything" is blocked while BitLocker is on unless the recovery key is confirmed',
+        obj.devModeAllowed(Object.assign({}, base, { bitlocker: 'on' }), 'clean', '').allowed === false &&
+        /recovery key/.test(obj.devModeAllowed(Object.assign({}, base, { bitlocker: 'on' }), 'clean', '').reason) &&
+        obj.devModeAllowed(Object.assign({}, base, { bitlocker: 'on' }), 'clean', 'true').allowed === true &&
+        obj.devModeAllowed(Object.assign({}, base, { bitlocker: 'unknown' }), 'clean', '').allowed === false);
+    check('devreset gate: an unknown BitLocker state blocks a clean reset (fail-safe), never silently allowed',
+        obj.devModeAllowed(Object.assign({}, base, { bitlocker: 'unknown' }), 'clean', '').allowed === false);
+    check('devreset gate: BitLocker does not block "Keep my files"',
+        obj.devModeAllowed(Object.assign({}, base, { bitlocker: 'on' }), 'keepfiles', '').allowed === true);
+    check('devreset gate: no/stale probe, missing systemreset, disabled WinRE or an unsupported build each refuse with a reason',
+        obj.devModeAllowed(null, 'clean', 'true').allowed === false && obj.devModeAllowed({ kind: 'probe', state: 'ok', systemreset: true, clean: true, keepfiles: true, winre: 'enabled', bitlocker: 'off', time: oldIso }, 'clean', 'true').allowed === false &&
+        obj.devModeAllowed(Object.assign({}, base, { systemreset: false }), 'keepfiles', '').allowed === false &&
+        obj.devModeAllowed(Object.assign({}, base, { winre: 'disabled' }), 'keepfiles', '').allowed === false &&
+        obj.devModeAllowed(Object.assign({}, base, { clean: false, bitlocker: 'off' }), 'clean', '').allowed === false);
+
+    // PowerShell parser on both generated scripts (SKIP where PowerShell is absent).
+    var dir = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-drps-'));
+    var pp = path.join(dir, 'dr.ps1');
+    fs.writeFileSync(pp, rc);
+    var psr = runPs(['-NoProfile', '-NonInteractive', '-Command', "$t=$null;$e=$null;[void][System.Management.Automation.Language.Parser]::ParseFile('" + pp + "',[ref]$t,[ref]$e);$e.Count"]);
+    if (psr == null) { console.log('SKIP devreset scripts: PowerShell parser (PowerShell not available)'); }
+    else { check('devreset reset script: PowerShell parser reports no errors', !psr.failed && psr.text.trim() === '0', psr.text.trim()); }
+    next();
+});
+
+steps.push(function (next) {
+    var dpD = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-dr-'));
+    var drNodes = [
+        { _id: 'node//dw1', meshid: 'mesh//grp1', rname: 'dw1', name: 'ResetOne', osdesc: 'Microsoft Windows 11 Pro' },
+        { _id: 'node//dl1', meshid: 'mesh//grp2', rname: 'dl1', name: 'LinuxOne', osdesc: 'Ubuntu 24.04 LTS' },
+        { _id: 'node//doff', meshid: 'mesh//grp1', rname: 'doff', name: 'ResetOff', osdesc: 'Microsoft Windows 10' }
+    ];
+    var dbD = { GetAllType: function (t, cb) { cb(null, t === 'node' ? drNodes.slice() : meshes.slice()); }, Get: function (id, cb) { cb(null, drNodes.filter(function (n) { return n._id === id; })); } };
+    var sentD = [];
+    var agents = { 'node//dw1': { send: function (m) { sentD.push(JSON.parse(m)); } }, 'node//dl1': { send: function (m) { sentD.push(JSON.parse(m)); } } };
+    var oD = factory({ parent: { db: dbD, datapath: dpD, debug: function () { }, config: { settings: {} }, webserver: { meshes: {}, wsagents: agents }, DispatchEvent: function () { } } });
+    var gunz = function (cmd, re) { var mm = String(cmd).match(re); return mm ? require('zlib').gunzipSync(Buffer.from(mm[1], 'base64')).toString('utf8') : ''; };
+
+    oD.handleAdminPostReq({ headers: XHDR, body: { action: 'dr_probe', nodeId: 'node//dw1' } }, mockRes(function (d1) {
+        check('dr_probe: dispatches a read-only probe on an invscanner-dr- session (runcommands type 1)',
+            d1.started === true && sentD.length === 1 && sentD[0].action === 'runcommands' && sentD[0].type === 1 &&
+            String(sentD[0].sessionid).indexOf('invscanner-dr-') === 0 && oD.devPending['node//dw1'] != null, sentD[0]);
+        oD.handleAdminPostReq({ headers: XHDR, body: { action: 'dr_probe', nodeId: 'node//dl1' } }, mockRes(function (dL) {
+            check('dr_probe: a non-Windows device is refused (reset is a Windows tool)', !!dL.error && /Windows/.test(dL.error), dL);
+            oD.onAgentResponse({ action: 'msg', type: 'runcommands', sessionid: sentD[0].sessionid, result: 'noise' + oD.DEV_MARKER +
+                '{"probe":true,"state":"ok","systemreset":true,"build":26200,"clean":true,"keepfiles":true,"winre":"enabled","bitlocker":"on","bldetail":"On","domain":false,"user":"admin","battery":false,"onac":true}' + String.fromCharCode(10) }, '', 'node//dw1');
+            var pr = oD.devResults['node//dw1'];
+            check('dr_probe: the marker answer is consumed and stored as a fresh probe (BitLocker on)',
+                pr && pr.kind === 'probe' && pr.systemreset === true && pr.bitlocker === 'on' && oD.devProbeFresh(pr) === true && oD.devPending['node//dw1'] == null, pr);
+
+            oD.handleAdminPostReq({ headers: XHDR, body: { action: 'dr_reset', nodeId: 'node//dw1', mode: 'clean', confirm: 'ResetOne' } }, mockRes(function (dnc) {
+                check('dr_reset: "Remove everything" is blocked while BitLocker is on and no recovery key is confirmed', !!dnc.error && /recovery key/.test(dnc.error), dnc);
+                oD.handleAdminPostReq({ headers: XHDR, body: { action: 'dr_reset', nodeId: 'node//dw1', mode: 'keepfiles', confirm: 'WrongName' } }, mockRes(function (dwn) {
+                    check('dr_reset: a mistyped device name is refused (the typed confirmation guard)', !!dwn.error && /device name/.test(dwn.error), dwn);
+                    sentD.length = 0;
+                    oD.handleAdminPostReq({ headers: XHDR, body: { action: 'dr_reset', nodeId: 'node//dw1', mode: 'clean', confirm: 'resetone', bitlockerAck: 'true' } }, mockRes(function (dgo) {
+                        check('dr_reset: name typed (case-insensitive) + BitLocker confirmed -> a clean systemreset is dispatched',
+                            dgo.started === true && dgo.mode === 'clean' && sentD.length === 1 && String(sentD[0].sessionid).indexOf('invscanner-dr-') === 0 &&
+                            gunz(sentD[0].cmds, /FromBase64String\('([A-Za-z0-9+\/=]+)'\)/).indexOf('-cleanpc') >= 0, [dgo, sentD.length]);
+                        var dms = oD.onAgentResponse({ action: 'msg', type: 'runcommands', sessionid: sentD[0].sessionid, result: oD.DEV_MARKER + '{"reset":true,"mode":"clean","result":"starting","error":"","build":26200}' + String.fromCharCode(10) }, '', 'node//dw1');
+                        check('dr_reset: a "starting" answer stores state resetting (in the last-reset slot, the probe stays) and is consumed (no browser leak)',
+                            dms === true && oD.devLast['node//dw1'].state === 'resetting' && oD.devLast['node//dw1'].kind === 'reset' &&
+                            oD.devResults['node//dw1'].kind === 'probe' && oD.devPending['node//dw1'] == null, oD.devLast['node//dw1']);
+
+                        oD.wgPending['node//dw1'] = { nodeid: 'node//dw1' };
+                        oD.handleAdminPostReq({ headers: XHDR, body: { action: 'dr_probe', nodeId: 'node//dw1' } }, mockRes(function (busy) {
+                            check('dr_probe: a device holding a winget/OS/deploy session is refused (one runcommands session per agent)', !!busy.error && /running/.test(busy.error), busy);
+                            delete oD.wgPending['node//dw1'];
+                            oD.handleAdminPostReq({ headers: XHDR, body: { action: 'dr_reset', nodeId: 'node//doff', mode: 'keepfiles', confirm: 'ResetOff' } }, mockRes(function (dof) {
+                                check('dr_reset: an unchecked/offline device is refused - a reset never runs on a stale or absent check', !!dof.error && /Check/.test(dof.error), dof);
+                                oD.handleAdminPostReq({ headers: XHDR, body: { action: 'dr_status' } }, mockRes(function (st) {
+                                    var ids = st.devices.map(function (x) { return x.id; });
+                                    var w = st.devices.filter(function (x) { return x.id === 'node//dw1'; })[0];
+                                    check('dr_status: lists only Windows devices, with the fresh probe and both offered modes',
+                                        st.devices.length === 2 && ids.indexOf('node//dl1') < 0 && w.hasProbe === true && w.modes.keepfiles === true && w.modes.clean === true, st.devices);
+                                    oD.handleAdminPostReq({ headers: XHDR, body: { action: 'get_log', type: 'reset' } }, mockRes(function (lgr) {
+                                        check('get_log reset: the device-reset audit log is reachable', Array.isArray(lgr.lines) && lgr.file === 'plugins/inventoryscanner/device-reset.log', lgr);
+                                        next();
+                                    }), user);
+                                }), user);
+                            }), user);
+                        }), user);
+                    }), user);
+                }), user);
+            }), user);
+        }), user);
+    }), user);
+});
+
+steps.push(function (next) {
+    var dpT = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-drt-'));
+    var tNodes = [{ _id: 'node//to1', meshid: 'mesh//grp1', rname: 'to1', name: 'ToOne', osdesc: 'Microsoft Windows 11' }];
+    var dbT = { GetAllType: function (t, cb) { cb(null, t === 'node' ? tNodes.slice() : meshes.slice()); }, Get: function (id, cb) { cb(null, tNodes.filter(function (n) { return n._id === id; })); } };
+    var agentsT = {};
+    var oT = factory({ parent: { db: dbT, datapath: dpT, debug: function () { }, config: { settings: {} }, webserver: { meshes: {}, wsagents: agentsT }, DispatchEvent: function () { } } });
+    var e1 = { nodeid: 'node//to1', kind: 'reset', mode: 'clean', since: Date.now() };
+    oT.devPending['node//to1'] = e1;
+    oT.devResetTimeout(e1);
+    check('dr timeout: reset + the device went offline (it restarted into WinRE) = resetting, not a failure',
+        oT.devLast['node//to1'] && oT.devLast['node//to1'].state === 'resetting' && oT.devPending['node//to1'] == null, oT.devLast['node//to1']);
+    agentsT['node//to1'] = { send: function () { } };
+    var e2 = { nodeid: 'node//to1', kind: 'reset', mode: 'clean', since: Date.now() };
+    oT.devPending['node//to1'] = e2;
+    oT.devResetTimeout(e2);
+    check('dr timeout: reset + the device is still online and silent = no answer (the reset did not start)',
+        oT.devLast['node//to1'] && oT.devLast['node//to1'].state === 'no-answer', oT.devLast['node//to1']);
+    next();
+});
+
 // The runner MUST stay the last statement: every steps.push() above has to be registered before
 // step 0 starts (pre-3.0.1 it sat mid-file and the trailing steps only ran because an earlier
 // step happened to be asynchronous). New steps go ABOVE this block.

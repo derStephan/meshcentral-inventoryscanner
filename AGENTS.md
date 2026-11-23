@@ -104,6 +104,7 @@ Consequences an agent must respect:
 | `lib/winget.js` | `wgBuildScript`/`wgTransport`/queue/pump/watchdogs, results+log persistence, `wgNodeDue`/`wgSweepOnce`/`scheduleWingetUpdates`, `psTranscriptLines`, `wingetConfig` |
 | `lib/winget-handlers.js` | `wg_get_config`, `wg_save_config`, `wg_run`, `wg_status`, `wg_programs` handlers |
 | `lib/osupdate.js` | OS batch engine: `osBuildWindowsScript`, `osBuildLinuxScript`, `osLinuxTransport`, targeting/`osUpgradeInfo`/`osUrgency`, `os_run` + `os_status` handlers |
+| `lib/devreset.js` | per-device Windows PC reset (v4.5.0, the ONLY rebooting feature): `devBuildProbeScript`/`devBuildResetScript`, `devDispatch`, `devModeAllowed`/`devProbeFresh`/`devBitlockerState` gates, `devHandleResponse`/`devResetTimeout`, `dr_status`/`dr_probe`/`dr_reset` handlers, `device-reset.json` + `device-reset.log` |
 | `lib/swstore.js` | deploy foundation: installer library index/folders, resumable upload parts, task store load/save/prune, staging into `<filespath>/tmp`, `swDownloadCookie` (agentdownload), name/args/extension sanitizers, `swEnsureStaged` |
 | `lib/swdeploy.js` | deploy engine: `swBuildWindowsScript`/`swBuildLinuxScript`, `swWgetCommand`, queue/pump/`swDispatchNode`/`swHandleResponse`/watchdogs, `swOnNodeConnect`/`swSweepOnce`/`scheduleSwSweep`, `swTaskDoneCheck`, `swCreateTask`/`swTaskView` |
 | `lib/swdeploy-handlers.js` | `sw_files`, `sw_upload`, `sw_delete_file`, `sw_rescan_library`, `sw_serverfiles`, `sw_devices`, `sw_create_task`, `sw_status`, `sw_retry_task`, `sw_cancel_task` handlers |
@@ -141,8 +142,13 @@ sub-domain admins of a multi-tenant server are refused since v3.0.1):
 6. **Software deployment** (Deploy tab, v4.0.0): install an MSI/EXE/MSP/DEB/RPM/SH package on explicitly chosen
    devices or whole locations - package from the browser-uploaded library, from MeshCentral's Server Files or from
    the plugin's server folder; optional command-line arguments; offline devices are QUEUED and install on reconnect;
-   every delivery is SHA-256 verified on the device before it runs; results per device (state + exit code) plus
-   toast/event-log feedback. Nothing ever installs on its own - a task exists only because an admin created it.
+    every delivery is SHA-256 verified on the device before it runs; results per device (state + exit code) plus
+    toast/event-log feedback. Nothing ever installs on its own - a task exists only because an admin created it.
+7. **Windows PC reset** (PC Reset tab, v4.5.0, issue #4): reset ONE chosen Windows device with the built-in
+   `systemreset` tool, "Keep my files" or "Remove everything". The only feature that reboots a device (a reset
+   runs in Windows RE, not inside the booted OS), so it is strictly manual and per-device: a read-only Check must
+   pass, the exact device name has to be typed to confirm, and "Remove everything" is blocked while BitLocker
+   protection is on until the recovery key is confirmed. Never scheduled, never a fleet action.
 
 ## Verified API facts (do not guess)
 
@@ -267,7 +273,7 @@ POST body `action=`:
     failed packages additionally get one `FAILED` line per package in `winget-update.log`, and upgraded
      packages that match (exactly or as substring) an ignore entry raise a `WARNING` line there |
 | `wg_programs` | â€” | the PACKAGES view (v3.0.0): aggregates `wgResults` per package id -> `{packages:[{id,name,ready,ok,failed,skipped,devices:[{node,label,state,from,to,time,dry}]}],note}` (â‰¤400 packages, â‰¤200 devices each, sorted by ready+failed). `label` = admin given name first, then host name, then id; results of deleted devices are dropped; `not-installed` counts into `skipped` |
-| `get_log` | `type` = nvd\|winget\|os\|deploy | whitelisted log tail (last 300 lines) |
+| `get_log` | `type` = nvd\|winget\|os\|deploy\|reset | whitelisted log tail (last 300 lines) |
 | `sw_files` | â€” | installer library `{files:[{id,name,ext,size,sha256,time,by}], parts:[{uploadId,bytes}], limits:{chunkBytes,maxBytes,exts}, note}` |
 | `sw_upload` | `uploadId` (hex 8..40), `name`, `index`, `data` (base64url â‰¤ `chunkBytes` raw), `last` | chunked upload into `software/parts/<id>.part`; `{ok,next}`, order-error `{error,next,have}` or `{done,file}` (hash computed, committed as immutable `<newid>.<ext>`) |
 | `sw_delete_file` | `fileId` | removes an unused library entry + its file; refused (error) while a NOT-done task references it |
@@ -280,6 +286,9 @@ POST body `action=`:
 | `sw_cancel_task` | `taskId` | queued devices â†’ 'cancelled' (running sessions finish normally), queue entries dropped â†’ `{success, cancelled, note}` |
 | `os_run` | `mode` = update\|upgrade, optional `nodeIds` (csv) | v3.5.0 manual OS batch (`osStartBatch`); `update` = every non-excluded node with `osPlatformOf` windows\|linux, `upgrade` = only nodes where `osUpgradeInfo` says outdated AND has a method; explicit ids are filtered by the same rule; {busy} while a winget or OS batch runs |
 | `os_status` | â€” | every Windows/Linux node: `platform, os, online, excluded, outdated, upgradable, target, note, last, pending` + `running, mode, active, queued, current:{windows11, ubuntuLts}` |
+| `dr_status` | â€” | (v4.5.0) every Windows node `{devices:[{id,host,given,group,os,online,excluded,probe,hasProbe,modes:{clean,keepfiles},last,pending}], minBuild, pending:[nodeids]}` - cached probe + last reset, no agent command sent |
+| `dr_probe` | `nodeId` | (v4.5.0) dispatches the read-only probe on `invscanner-dr-<node>` (runcommands type 1); {started} or {error} (offline / non-Windows / a busy session). The answer arrives on the route hook |
+| `dr_reset` | `nodeId`, `mode` (`clean`\|`keepfiles`), `confirm` (typed device name), `bitlockerAck` (`true` for a clean reset past BitLocker) | (v4.5.0) the ONLY rebooting action: gated on a fresh passing probe + a correctly typed name + (clean) BitLocker ack, then dispatches `systemreset -cleanpc/-keepfiles -noUI`; {started,mode} or {error}. The device restarts into WinRE, so the reply is often replaced by the offline transition |
 | `update_nvd` | â€” | starts `runNvdUpdate(true)` (background) and answers {started:true} / {alreadyRunning:true}; concurrent runs skip via the `nvdUpdateRunning` flag |
 | `get_nvdlog` | â€” | `{lines:[...last 200 of nvd-download.log], size, file}`; `note` if file missing |
 | `get_locations` | â€” | all non-deleted meshes `{locations:[{id,name}]}` (also feeds the Settings tab group table) |
@@ -388,19 +397,26 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   tab is a section at the bottom of this tab (ids and handlers unchanged: `loadCpeTable`/`cpeTableBody`/...).
 
 - Navigation is one feature per tab: Assessment | **Updates** (winget only) | **OS Updates** (the OS engine -
-  its own button since v4.1.0, formerly an `<h2>` section inside Updates) | **Deploy** | **Settings** (last on
-  the right since v4.2.0, now including the former CPE Mapping tab).
-  Opening a tab loads ONLY its own data (`loadWgTab` / `loadOsStatus` / `loadSwTab`); ids and handlers on both
-  sides are unchanged by the splits, only the HTML moved. The two engines still share the winget `excludeNodes`
-  list and the one-runcommands-session-per-agent rule, and each tab's info box says so.
+  its own button since v4.1.0, formerly an `<h2>` section inside Updates) | **Deploy** | **PC Reset** (v4.5.0) |
+  **Settings** (last on the right since v4.2.0, now including the former CPE Mapping tab).
+  Opening a tab loads ONLY its own data (`loadWgTab` / `loadOsStatus` / `loadSwTab` / `loadDrStatus`); ids and
+  handlers on both sides are unchanged by the splits, only the HTML moved. The engines still share the winget
+  `excludeNodes` list and the one-runcommands-session-per-agent rule, and each tab's info box says so.
 
 - Deploy tab (v4.0.0): library table + `<input type=file>` upload (FileReader chunks â†’ `sw_upload`, sequential
   POSTs with resume-on-gap, progress text), source switch plugin-library â‡„ MeshCentral Server Files (two selects,
   filled by `sw_files` / `sw_serverfiles`), arguments input, location+device picker from `get_locations` +
   `sw_devices` (offline flagged, non-Windows/Linux disabled), and the task list from `sw_status` with per-row
   expander (device state, decimal+hex exit code, note) plus Retry-open / Cancel buttons. Uploads and tasks poll
-  every 10 s while anything is open. The tab MUST keep sending the `X-InvScanner-Request` header on every POST
-  (the shared `post()` helper does - a new fetch path must use it).
+   every 10 s while anything is open. The tab MUST keep sending the `X-InvScanner-Request` header on every POST
+   (the shared `post()` helper does - a new fetch path must use it).
+
+- PC Reset tab (v4.5.0): one row per **Windows** device from `dr_status` (Check result column = the cached probe
+  facts, Last reset column = `devLast`). *Check* posts `dr_probe`; the reset buttons post `dr_reset` only after
+  `window.confirm` and then a `window.prompt` that must match the device name (the server re-checks it, so a
+  bypassed prompt is still refused). *Remove everything* first asks for the BitLocker recovery key when the probe
+  says protection is on/unknown and sends `bitlockerAck=true`. The info box states explicitly that this is the
+  one feature that restarts the device. It polls `dr_status` every 5 s only while a check/reset is in flight.
 
 ## Upgrade path (verified; user decision: NO polling)
 
@@ -646,7 +662,12 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   skipped (`APFAIL=1`), the non-zero exit stands and the note says "refreshed no repository at all". Used by BOTH
   modes (update before `apt-get upgrade`, upgrade before `dist-upgrade`/`do-release-upgrade`). A repository warning
   is never a failed device, and a device that only has stale lists is never reported ok.
-- Never any reboot (asserted by tests).
+- Never any reboot (asserted by tests). **The one documented exception (v4.5.0):** the per-device
+  PC Reset feature restarts a machine on purpose, because a Windows reset cannot run from inside the
+  booted OS. It goes through the built-in `systemreset` tool ONLY - never `Restart-Computer`/`shutdown`
+  (the never-reboot token scan of every other script stays green) - and only on an explicit, typed,
+  per-device request that passed the Check and the name/BitLocker gates. No batch, no schedule, no
+  other engine ever triggers it. See the PC Reset engine below.
 
 ## Software deploy engine (v4.0.0, verified contracts)
 
@@ -727,6 +748,48 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   created them. The winget `excludeNodes` list is intentionally NOT consulted (the admin selects targets
   explicitly; the device picker shows the flag). Multi-server peering: like upstream batch upload, only agents
   connected to THIS server get wget (`wsagents`), peers stay queued.
+
+## PC Reset engine (v4.5.0, issue #4, verified contracts)
+
+- One module `devreset.js`, one tab "PC Reset". Resets a **single Windows** device with the built-in
+  `systemreset` tool. State: `obj.devPending` (live `probe`/`reset` sessions), `obj.devResults`
+  (cached **probe** per node, the gate), `obj.devLast` (last **reset** record per node), persisted to
+  `device-reset.json` (`devLoadResults`/`devSaveResults`); audit `device-reset.log` (`devLog`, ~5 MB
+  rotate). No config section, **no automation**: a reset only happens because an admin typed the
+  device name of a specific online device.
+- **The reboot exception**: every other engine never reboots; this one restarts the machine because a
+  Windows reset cannot run inside the booted OS. The ONLY reboot command is `systemreset
+  -cleanpc|-keepfiles -noUI` (PowerShell `Start-Process`); the generated scripts never contain
+  `Restart-Computer`/`shutdown`, so the global never-reboot token assertions of the winget/OS/deploy
+  scripts stay valid and a dedicated test pins that `devStartBatch`/`scheduleDevReset`/`devPump` do
+  not exist (no fleet reset, no scheduled reset).
+- **Two scripts**: `devBuildProbeScript()` (read-only: `systemreset.exe` present, `BuildNumber`
+  (fallback registry `CurrentBuildNumber`), the `-cleanpc`/`-keepfiles` switches by parsing
+  `systemreset /?` AND the documented build gate `DEV_MIN_BUILD = 17763`, `reagentc /info` -> WinRE,
+  `Get-BitLockerVolume` (fallback `manage-bde -status`) ProtectionStatus of `$env:SystemDrive`,
+  `Win32_ComputerSystem.PartOfDomain`/`.UserName`, `Win32_Battery` (BatteryStatus 2 = on AC)); and
+  `devBuildResetScript(mode, ack)` which **re-checks the facts on the device** (a probe can be
+  stale), prints the marker line BEFORE `Start-Process` (the reboot wins the race), and refuses if a
+  re-check fails (missing tool, old build, WinRE disabled, or "clean" while BitLocker protection is
+  not `Off` and `ack` is false). Both go through `wgTransport` (base64+gzip, runcommands type 1) and
+  answer one `@@INVDR@@{json}` line; both wrap `psTranscriptLines('invscanner-devreset.log')`.
+- **Server-side gates** (`devModeAllowed` + `devResetHandler`): a fresh probe (`devProbeFresh`,
+  `DEV_PROBE_MAX_AGE_MS` 6 h) whose `state` is `ok`, `systemreset` true, the mode supported, WinRE not
+  `disabled`; for `clean`, BitLocker `off` **or** `bitlockerAck='true'` (an `unknown` state blocks -
+  fail-safe); the typed `confirm` must equal the device name (given name, else host) case-insensitive;
+  the device must be online and idle. Every rejection answers a specific `error`, never a silent no.
+- **Session + mutual exclusion**: `invscanner-dr-<node>` on the shared `routeAgentCommand` hook,
+  consumed first in the runcommands branch (`drOurs`) and buffered on `.cbuf` in the console branch
+  (same ownership rules as sw/os/wg). `devDispatch` reserves the node synchronously and refuses when
+  `devPending`/`wgPending`/`osPending`/`swPending` already holds it; the three pumps were extended to
+  skip nodes with a `devPending` entry (one runcommands session per agent).
+- **Answering and the watchdog** (`DEV_RESET_TIMEOUT_MS` 15 min, `DEV_PROBE_TIMEOUT_MS` 2 min): a
+  reset usually has NO runcommands reply (the machine is already restarting), so `devResetTimeout`
+  decides by presence - offline means `resetting` (as expected), still-online means `no-answer` (it
+  did not start). A marker with `result:starting` is confirmed `resetting`; `result:refused` stores
+  the device's own reason. Every outcome writes `devLast`, `device-reset.log` and a device event.
+- Routes: `dr_status` / `dr_probe` / `dr_reset` (all `isAuthorizedAdmin` + the origin header); the
+  `get_log` whitelist gained `reset`.
 
 ## Design decisions (with reasons)
 
@@ -909,7 +972,7 @@ MeshCentral install folder) and root `/*.txt` + `/*.csv` are gitignored as a gua
   contain none), JSON validity of config files, and view-nameâ†”render-name consistency over
   the WHOLE JS tree (the `res.render()` calls live in `lib/routes.js`/`lib/reports.js` since v3.5.1).
   Must run anywhere (no dependencies).
-- `tools/test-plugin.js`: 467 behavioral assertions (77 steps; on Windows with PowerShell AND a POSIX shell present) against the real module (mocked MeshCentral DB/webserver):
+- `tools/test-plugin.js`: 496 behavioral assertions (80 steps; on Windows with PowerShell AND a POSIX shell present) against the real module (mocked MeshCentral DB/webserver):
   the module wiring itself (every lib file attaches, a fresh instance exposes the same function surface, no
   module-level locals in `lib/`), locations grouping & counting, manual-rating severity override, FP exclusion, host-name preference, coverage
   numbers, multi-mesh scan/`mixed` logic, all POST handlers incl. validation/rejections, routes, admin gating
@@ -1100,7 +1163,7 @@ all". A warning is never a failed device, and a device with only stale lists is 
 runs the generated `aptrefresh()` in a REAL POSIX shell with `apt-get`/`find` shims (3 assertions there, SKIP without
 sh), the script checks pin both call sites, and sh -n now parses the update AND the upgrade script:
 452 PASS + 3 SKIP / 75 steps locally.
-v4.4.0 (this release): the panel stops scanning on every page open, and nothing blocks the server any more.
+v4.4.0: the panel stops scanning on every page open, and nothing blocks the server any more.
 - Panel: opening the page and Apply in the location panel now read the stored snapshot (action=scan&cached=1 - no device
   is touched, answer carries cached:true/cacheTime/missing, scanning:true while a live pass runs); Scan & Review is
   the only button that queries devices, and a second one joins the running pass (obj.scanInFlight) instead of
@@ -1114,3 +1177,18 @@ v4.4.0 (this release): the panel stops scanning on every page open, and nothing 
 - Tests: +15 assertions, +2 steps (467 / 77): cached read never calls scanMeshCves, current ratings applied to a
   stored snapshot, missing locations reported, one pass answering two panels, snapshot stored, pacedEach yields
   to the event loop and never exceeds SCAN_PARALLEL, both CSV orderings.
+v4.5.0 (this release): issue #4 - reset a Windows PC. New module `lib/devreset.js`, new "PC Reset"
+tab, new routes `dr_status` / `dr_probe` / `dr_reset`, new state `device-reset.json` + audit log
+`device-reset.log`. It resets ONE online Windows device with the built-in `systemreset` tool, "Keep my
+files" or "Remove everything". **This is the documented exception to the "never reboot" invariant** - a
+reset restarts the machine into Windows RE on purpose - so it is strictly per-device, manual and never
+scheduled/batched, the exact device name has to be typed, and a read-only **Check** (systemreset, build
+>= 17763, WinRE, BitLocker, domain, battery, logged-on user) is required first and re-checked on the
+device. "Remove everything" is hard-blocked while BitLocker protection is on/unknown until the recovery
+key is confirmed. Same transport as the OS engine (invscanner-dr- sessions, @@INVDR@@ marker,
+wgTransport); the winget/OS/deploy pumps now also skip a node with a reset in flight; the timeout tells
+"resetting" (device went offline into WinRE, the normal path) from "no answer" (still online).
+Tests: +26 assertions, +3 steps (496 / 80, i.e. 493 PASS + 3 sh -n SKIP on Windows): probe/reset script shape and
+the never-reboot token scan with the systemreset-only exception, every mode gate (BitLocker on/unknown,
+stale/missing probe, WinRE off, unsupported build), the typed-name + ack + busy + offline route paths,
+the console-channel probe answer, and both timeout verdicts.
