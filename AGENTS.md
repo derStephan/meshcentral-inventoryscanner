@@ -161,11 +161,15 @@ sub-domain admins of a multi-tenant server are refused since v3.0.1):
    (send a message to the logged-on user via `msg`/`wall`, no reboot) and *Restart* (reboot after a grace,
    messaging the user through the OS shutdown banner) - for before/after an upgrade. The second explicit
    reboot path: per-device, manual, device name typed, never automatic, never a batch or schedule.
-10. **License keys in the software CSV** (Settings tab "License keys", v4.8.0, issue #7): a curated + remote +
+ 10. **License keys in the software CSV** (Software > License keys, v4.8.0, panel regrouped in v4.9.0, issue #7): a curated + remote +
    custom rule table maps a program name to where its license lives (registry value / file regex/JSON/line /
    WMI property); an OPT-IN, on-demand read-only collection per Windows device adds License + License Source
    columns to the software-inventory CSV for asset management. Microsoft keys via the SoftwareLicensingProduct
-   WMI class. Nothing is sent off-server; there is deliberately no background license scan.
+    WMI class. Nothing is sent off-server; there is deliberately no background license scan.
+11. **Two-layer navigation** (v4.9.0, issue #8): the panel is reorganised under four main sections -
+    Devices, Software, Vulnerabilities, Settings - each with its own row of sub-tabs, replacing the old flat
+    tab strip so related functionality is grouped instead of grown side by side. This is presentation only:
+    the same panels, routes, ids and handlers, no behaviour or data changed (see Panel behavior below).
 
 ## Verified API facts (do not guess)
 
@@ -344,7 +348,7 @@ never a code change. If neither file loads, `activeSoftwareTable()` is EMPTY (cu
 work, the panel says so loudly) - deliberately no hidden fallback list. `cpeTableStatus().origin`
 reports where the live file came from ('downloaded' | 'cache' | 'bundled'); custom (UI) entries always come first.
 Entry regexes compile with the `i` flag ONLY;
-bad JSON/regex â†’ payload rejected, current table keeps running. Keys: `cpeTableEnabled`/`cpeTableUrl` (Settings tab).
+bad JSON/regex â†’ payload rejected, current table keeps running. Keys: `cpeTableEnabled`/`cpeTableUrl` (Vulnerabilities > Reports, NVD & CPE table).
 A table row may replace `vendor`/`product` with **`kind:'driver'|'firmware'`** (out-of-NVD-scope marker, see below);
 `applyCpeTableText` validates that shape and `matchTableEntry` returns it, kind rows win over the name heuristics.
 
@@ -418,15 +422,25 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   field carries a source select
   ("set in plugin settings" / "from config.json" / "built-in default") offering `revert_setting` when overridden;
   Save posts the full field set, "Reset all" posts `reset=true`. The group table is filled client-side from
-  `get_locations`; all-checked or none-checked is sent as an empty list = "all groups". The former CPE Mapping
-  tab is a section at the bottom of this tab (ids and handlers unchanged: `loadCpeTable`/`cpeTableBody`/...).
+   `get_locations`; all-checked or none-checked is sent as an empty list = "all groups". Since v4.9.0 the CPE
+   table, the NVD update + download log and the license-key config that used to live at the bottom of this tab
+   are now sub-panels under Vulnerabilities and Software; they are the SAME fields (ids unchanged), and this
+   tab's Save still writes them (the relocated panels reuse one shared `doSaveSettings` path).
 
-- Navigation is one feature per tab: Assessment | **Updates** (winget only) | **OS Updates** (the OS engine -
-  its own button since v4.1.0, formerly an `<h2>` section inside Updates) | **Deploy** | **PC Reset** (v4.5.0) |
-  **Settings** (last on the right since v4.2.0, now including the former CPE Mapping tab).
-  Opening a tab loads ONLY its own data (`loadWgTab` / `loadOsStatus` / `loadSwTab` / `loadDrStatus`); ids and
-  handlers on both sides are unchanged by the splits, only the HTML moved. The engines still share the winget
-  `excludeNodes` list and the one-runcommands-session-per-agent rule, and each tab's info box says so.
+- Navigation is TWO LAYERS since v4.9.0 (issue #8): four main sections in the top bar (Devices | Software |
+  Vulnerabilities | Settings) and a second row of sub-tabs that changes with the selected main section. Each
+  existing panel is tagged `data-main`/`data-sub` and `selectSub(main, sub)` shows exactly one, builds the
+  sub-tab row, moves `#pageTitle`/`#statusMeta` + the location panel, and runs only that panel's loader. All
+  ids and handlers are unchanged - only the HTML was regrouped (no feature logic touched):
+    Devices -> Software updates (`loadWgTab`), OS updates & reboot (`loadOsStatus`), PC reset (`loadDrStatus`);
+    Software -> Deployment (`loadSwTab`), License keys (`loadLicenseSection`);
+    Vulnerabilities -> Assessment (the CVE table + location panel, the default landing), Reports & NVD & CPE table
+      (the two printable reports + CSV exports, "Update NVD database now" + download log via `loadNvdLog`, and
+      the CPE mapping table with its config via `loadCpeTable`);
+    Settings -> General (scan/collection/lifecycle/notify options + device groups).
+  The unified per-device action list and the fleet-wide software list asked for in issue #8 are deliberately
+  DEFERRED to v4.10.0; v4.9.0 regroups the existing functionality under the new navigation. The engines still
+  share the winget `excludeNodes` list and the one-runcommands-session-per-agent rule.
 
 - Deploy tab (v4.0.0): library table + `<input type=file>` upload (FileReader chunks â†’ `sw_upload`, sequential
   POSTs with resume-on-gap, progress text), source switch plugin-library â‡„ MeshCentral Server Files (two selects,
@@ -881,7 +895,8 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
 
 ## License collection engine (v4.8.0, issue #7, verified contracts)
 
-- One module `license.js`, a section in the Settings tab. The asset-management counterpart of the CPE table:
+- One module `license.js`, a sub-panel under Software (a Settings section until the v4.9.0 nav regroup). The
+  asset-management counterpart of the CPE table:
   a rule maps an installed-software NAME to WHERE its license is stored. Three rule types only, each with data
   fields and NO command: `{type:'registry', path, value}` (read with `Get-Item .GetValue`), `{type:'file', path,
   regex|jsonfield|line}` (read the file and extract), `{type:'wmi', class, property, filter}` (read one CIM
@@ -1349,7 +1364,7 @@ its two explicit paths.
   scheduled answer with a pending reboot + user surfaced, os_status carrying `rb`, the get_log route, both
   timeout verdicts and the "only PC Reset + Force Restart reboot, no batch/schedule" policy test.
   Version 4.6.0 -> 4.7.0 (config.json + package.json + @version); plugin description unchanged.
-v4.8.0 (this release): issue #7 - software license keys / info in the inventory CSV (asset management).
+v4.8.0: issue #7 - software license keys / info in the inventory CSV (asset management).
 - New module `lib/license.js` + a "License keys" section in the Settings tab. Like the CPE table, a curated
   `license-table.json` (shipped, re-downloaded from its URL, cached) + admin custom rules map an installed
   program name to WHERE its license is stored, via three data-only rule types: a registry value, a file
@@ -1368,3 +1383,22 @@ v4.8.0 (this release): issue #7 - software license keys / info in the inventory 
   offline/busy, dispatch consumed + stored + `licenseMapForNode` + `data/<node>/license.json`, add_license /
   remove_license / a rejected unknown type, lic_status summary, get_log, the pump-exclusion wiring, and the
   two new License columns actually appearing in the software CSV. Version 4.7.0 -> 4.8.0.
+v4.9.0 (this release): issue #8 - two-layer navigation, panels regrouped by topic.
+- The old flat tab strip (Assessment | Updates | OS Updates | Deploy | PC Reset | Settings, plus a line of
+  report/export links) became two layers: four MAIN sections Devices | Software | Vulnerabilities | Settings,
+  each with its own row of SUB-tabs built on demand (`navTree` + `renderSubnav` + `selectSub(main, sub)`).
+  Devices -> Software updates / OS updates & reboot / PC reset. Software -> Deployment / License keys.
+  Vulnerabilities -> Assessment (default landing, with the location panel) / Reports, NVD & CPE table.
+  Settings -> General. The report + CSV-export links and the NVD update + download log + CPE table moved out of
+  the Settings tab and the top bar into the Vulnerabilities sub-panel; the License keys section out of Settings
+  into Software. Their config inputs (setUpdateHours, setCpeTable*, setLic*) keep the SAME ids so loadSettings
+  and the save form still work; the relocated panels reuse one shared `doSaveSettings` save path.
+- PRESENTATION ONLY: no route, no handler, no engine, no data file changed; every existing element id and all
+  one-runcommands-session-per-agent / reboot-policy invariants are untouched. Each `.tab-content` is now tagged
+  `data-main`/`data-sub` and the controller shows panels by those attributes (not by id) so it never guesses.
+- Deferred to v4.10.0 (explicitly out of this release): the two NEW views asked for in issue #8 - one unified
+  per-device action list with option checkboxes, and one fleet-wide software list. v4.9.0 regroups what exists.
+- Tests: +8 render assertions in tools/test-views.js (four main sections, sub-nav container, old navtab markup
+  gone, the two new panels exist once, the extracted blocks carry main+sub tags, the moved config ids appear
+  exactly once - no collision, and the shared save path). check.js still node --check's the inline script.
+  test-plugin unchanged (552 PASS + 3 SKIP / 88 steps, no server-logic change). Version 4.8.0 -> 4.9.0.

@@ -88,5 +88,19 @@ try {
     console.log(((dev.indexOf('host1') >= 0 && dev.indexOf('Given1') < 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'device report shows host names, not given names');
 } catch (e) { failed++; console.log('FAIL spot checks: ' + e.message); }
 
+// v4.9.0 issue #8: two-layer navigation (main sections + sub tabs), old flat nav gone, no moved-control id duplicates
+try {
+    const a = fs.readFileSync(path.join(outDir, 'assessment-data.html'), 'utf8');
+    const count = (s, re) => (s.match(re) || []).length;
+    console.log((/class="maintab[^"]*" data-main="devices"/.test(a) && /data-main="software"/.test(a) && /data-main="vulns"/.test(a) && /data-main="settings"/.test(a) ? 'PASS ' : (failed++, 'FAIL ')) + 'nav: four main sections present');
+    console.log(((a.indexOf('id="subnav"') >= 0 && a.indexOf('id="mainnav"') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'nav: sub-nav container present');
+    console.log((a.indexOf('data-tab=') < 0 && a.indexOf('class="navtab') < 0 ? 'PASS ' : (failed++, 'FAIL ')) + 'nav: old flat navtab markup removed');
+    console.log(((count(a, /id="tab-vulndata"/g) === 1 && count(a, /id="tab-license"/g) === 1) ? 'PASS ' : (failed++, 'FAIL ')) + 'nav: CPE/NVD reports panel and license panel exist once each');
+    console.log(((a.indexOf('data-main="vulns" data-sub="data"') >= 0 && a.indexOf('data-main="software" data-sub="license"') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'nav: extracted blocks carry main+sub tags');
+    console.log((count(a, /id="setUpdateHours"/g) === 1 ? 'PASS ' : (failed++, 'FAIL ')) + 'nav: moved NVD-refresh field appears exactly once (no id collision)');
+    console.log((count(a, /id="setCpeTableEnabled"/g) === 1 && count(a, /id="setLicCollect"/g) === 1 ? 'PASS ' : (failed++, 'FAIL ')) + 'nav: moved CPE/license config fields appear once each');
+    console.log(((a.indexOf('doSaveSettings') >= 0 && a.indexOf('saveSettingsBtn2') >= 0 && a.indexOf('saveSettingsBtn3') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'nav: relocated settings keep one shared save path');
+} catch (e) { failed++; console.log('FAIL nav checks: ' + e.message); }
+
 console.log(failed === 0 ? '\ntest-views: ALL PASSED' : '\ntest-views: ' + failed + ' FAILURE(S)');
 process.exit(failed === 0 ? 0 : 1);

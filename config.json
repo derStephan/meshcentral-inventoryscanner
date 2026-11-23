@@ -1,7 +1,7 @@
 {
   "name": "Inventory & Vulnerability Scanner",
   "shortName": "inventoryscanner",
-  "version": "4.8.0",
+  "version": "4.9.0",
   "author": "derStephan",
   "description": "Software and hardware inventory with an offline CVE scan (NVD), ratings per location and printable reports. Optional: winget app updates, Windows/Linux OS updates and repair, software deployment, per-device PC reset, license-key inventory - all opt-in.",
   "hasAdminPanel": true,

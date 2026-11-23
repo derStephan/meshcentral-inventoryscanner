@@ -69,7 +69,7 @@ without sending inventory data to anyone.
    Linux `wall`) without rebooting; *Restart* reboots after a short grace and puts the same message in the OS
    shutdown banner so the user can save their work. The second explicit reboot path: per-device, manual, device
    name typed to confirm, never automatic, never a batch or schedule. macOS / unknown-OS and busy devices are skipped.
-* **Software license keys in the inventory (Settings tab, v4.8.0)** - for asset management the **software-inventory CSV**
+* **Software license keys in the inventory (Software > License keys, v4.8.0; grouped under Software in v4.9.0)** - for asset management the **software-inventory CSV**
    can carry `License` + `License Source` columns. A configurable rule table (curated + your own, like the CPE mapping)
    maps each program to where its license lives - a Windows registry value, a file (regex / JSON field / line) or a WMI
    property - so it is **not limited to Microsoft software** (Microsoft keys come from the `SoftwareLicensingProduct`
@@ -107,8 +107,8 @@ without sending inventory data to anyone.
    ```
 3. **Enable it** in the plugin list, then obey the restart notice and restart once more.
 4. **Hard-reload the browser** (Ctrl+F5). The toolbar buttons above the device list appear by themselves, and the
-   first NVD download starts in the background (several GB - watch the tail of the download log in the Settings
-   tab, no shell needed).
+first NVD download starts in the background (several GB - watch the tail of the download log under Vulnerabilities >
+Reports, NVD & CPE table, no shell needed).
 
 Updates need no ceremony: push a new version here and every server offers **Upgrade** on the Plugins page. One
 click is enough: the plugin notices the new files and restarts the MeshCentral server by itself (an admin toast
@@ -126,9 +126,11 @@ than 24 h). On clients, an updater transcript may remain next to `meshagent.exe`
 button. Pick the locations you work on (floating *Locations* button, remembered per browser), then use one
 aggregated table of unique findings: sort by any column, filter by text/severity/status, rate a finding for all
 affected locations in one action, or mark it a false positive (with undo). Every CVE shows its first words under
-the id (the full description stays in the tooltip), so a rating rarely needs a trip to nvd.nist.gov. The
-**Updates** (winget), **OS Updates**, **Deploy** and **Settings** (with the CPE mapping table) tabs live on the
-same page - one feature per tab, settings last on the right.
+the id (the full description stays in the tooltip), so a rating rarely needs a trip to nvd.nist.gov. Since v4.9.0
+the panel uses **two-layer navigation**: four main sections **Devices** (software updates, OS updates & reboot,
+PC reset), **Software** (deployment, license keys), **Vulnerabilities** (assessment, reports / NVD update / CPE
+table) and **Settings**, each opening its own row of sub-tabs. It is the same functionality, just grouped by
+topic instead of one flat strip.
 
 **Opening the panel reads the stored result - it does not scan (v4.4.0).** The table appears immediately with the
 findings of the last scan (its date is shown, plus any location that has no stored result yet), and changing the
@@ -278,11 +280,13 @@ administrators can deploy, and nothing installs without a task an admin created.
 
 ## Settings
 
-Everything is configured in the **Settings tab** - no file editing, effective immediately without a restart. The
+Everything is configured from the panel - no file editing, effective immediately without a restart (the main
+form is the **Settings** section; since v4.9.0 the NVD update and the CPE and license mapping tables sit under
+their own topic - Vulnerabilities and Software - but write the same overlay file). The
 values are stored in the plugin's own folder and **override the same keys in `config.json`**, which the plugin
 only reads (it never writes it). Per field you can revert to the `config.json` value, and *Reset all* hands
-control of the Settings-tab values back to the file completely. The configuration of the Updates tab (winget
-switch, groups, ignore list, exclusions) is not touched by *Save Settings* or *Reset all*.
+control of those values back to the file completely. The configuration of the winget updater (switch, groups,
+ignore list, exclusions) is not touched by *Save Settings* or *Reset all*.
 
 File-based fallback keys (for unattended setups) are listed in [AGENTS.md](AGENTS.md) under
 *Configuration keys & precedence*. Group ids look like `mesh/<domain>/<name>` - in the default domain that is
@@ -295,8 +299,8 @@ The name-to-CPE table that drives matching is maintained in this repository as
 mapping reaches you **without a plugin update** (and a fresh install already ships the current copy). Rows can
 also mark a name as a driver or firmware component. Contributions are pull requests that touch only that file -
 the rules (including how to verify a CPE against the NVD, because guessing is not allowed) are in
-[CONTRIBUTING.md](CONTRIBUTING.md). Your own entries added in the CPE mapping section of the Settings tab always
-win, and that section states which table file is in force - the code holds no second copy of the table.
+[CONTRIBUTING.md](CONTRIBUTING.md). Your own entries added in the CPE mapping table (Vulnerabilities > Reports, NVD &
+CPE table) always win, and that section states which table file is in force - the code holds no second copy of the table.
 
 ## Privacy & security
 
@@ -319,8 +323,8 @@ win, and that section states which table file is in force - the code holds no se
 
 ## Troubleshooting
 
-* **"NVD database: not downloaded"** - the feed download failed (rate limit or proxy). Look at the download log in
-  the Settings tab, then restart the server to retry.
+* **"NVD database: not downloaded"** - the feed download failed (rate limit or proxy). Look at the download log under
+Vulnerabilities > Reports, NVD & CPE table, then restart the server to retry.
 * **401 on the panel** - you need full site-admin rights, and the plugin folder/shortName must stay
   `inventoryscanner` (letters and digits only).
 * **No toolbar buttons** - plugins are not enabled, the server was not restarted, or your browser cached the UI:

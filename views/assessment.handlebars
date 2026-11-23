@@ -55,14 +55,15 @@
         #msg, #cpeMsg, #wgMsg, #osMsg, #swMsg, #settingsMsg { margin-top: 12px; padding: 10px; border-radius: 4px; font-size: 13px; display: none; }
         #msg.error, #cpeMsg.error, #wgMsg.error, #osMsg.error, #swMsg.error, #settingsMsg.error { background: #f8d7da; color: #721c24; display: block; }
         #msg.success, #cpeMsg.success, #wgMsg.success, #osMsg.success, #swMsg.success, #settingsMsg.success { background: #d4edda; color: #155724; display: block; }
-        .topnav { display: flex; gap: 10px; margin-bottom: 20px; background: #0b3d6b; border-radius: 8px; padding: 10px 14px; flex-wrap: wrap; align-items: center; }
-        .topnav a { color: #d7e6f5; text-decoration: none; padding: 6px 12px; border-radius: 5px; font-size: 13px; font-weight: 600; }
-        .topnav a:hover { background: #154d80; color: #fff; }
-        .topnav a.active { background: #4a90d9; color: #fff; }
-        .topnav a.navtab:hover { background: #154d80; color: #fff; }
-        .topnav a.navtab.active { background: #4a90d9; color: #fff; }
-        .topnav .navsep { width: 1px; align-self: stretch; background: #1e5c94; margin: 2px 6px; }
-        .topnav .exportlabel { margin-left: auto; color: #9fc3e0; font-size: 12px; align-self: center; }
+        .topnav { display: block; margin-bottom: 20px; background: #0b3d6b; border-radius: 8px; padding: 10px 14px; }
+        .mainnav { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+        .mainnav a.maintab { color: #d7e6f5; text-decoration: none; padding: 6px 14px; border-radius: 5px; font-size: 14px; font-weight: 700; }
+        .mainnav a.maintab:hover { background: #154d80; color: #fff; }
+        .mainnav a.maintab.active { background: #4a90d9; color: #fff; }
+        .subnav { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; padding-top: 8px; border-top: 1px solid #1e5c94; }
+        .subnav a.subtab { color: #b9d4ee; text-decoration: none; padding: 4px 10px; border-radius: 4px; font-size: 12px; font-weight: 600; }
+        .subnav a.subtab:hover { background: #154d80; color: #fff; }
+        .subnav a.subtab.active { background: #2f6fa8; color: #fff; }
         .tab-content { display: none; }
         .tab-content.active { display: block; }
         .location-selector { position: fixed; top: 130px; right: 20px; z-index: 1000; background: #fff; border: 1px solid #d8e0ec; border-radius: 8px; padding: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); width: 320px; max-height: 60vh; overflow-y: auto; }
@@ -91,19 +92,13 @@
 </head>
 <body>
     <div class="topnav">
-        <a href="#" class="navtab active" data-tab="assessment">Assessment</a>
-        <a href="#" class="navtab" data-tab="updates">Updates</a>
-        <a href="#" class="navtab" data-tab="os">OS Updates</a>
-        <a href="#" class="navtab" data-tab="deploy">Deploy</a>
-        <a href="#" class="navtab" data-tab="reset">PC Reset</a>
-        <a href="#" class="navtab" data-tab="settings">Settings</a>
-        <span class="navsep"></span>
-        <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=report" target="_blank" rel="noopener">Vulnerability Report</a>
-        <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=deviceReport" target="_blank" rel="noopener">Device Report</a>
-        <span class="exportlabel">CSV export (all devices):</span>
-        <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=export&amp;type=hardware">Hardware</a>
-        <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=export&amp;type=software">Software</a>
-        <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=export&amp;type=vulns">Vulnerabilities</a>
+        <div class="mainnav" id="mainnav">
+            <a href="#" class="maintab" data-main="devices">Devices</a>
+            <a href="#" class="maintab" data-main="software">Software</a>
+            <a href="#" class="maintab active" data-main="vulns">Vulnerabilities</a>
+            <a href="#" class="maintab" data-main="settings">Settings</a>
+        </div>
+        <div class="subnav" id="subnav"></div>
     </div>
 
     <div class="container">
@@ -112,7 +107,7 @@
             <span id="statusMeta">NVD database: {{#if totalCves}}{{#if lastUpdate}}last updated {{lastUpdate}}{{else}}loaded{{/if}}{{else}}not downloaded yet{{/if}} &middot; Indexed CVEs: {{totalCves}} &middot;
             Scheduled scans: {{#if scanIntervalHours}}every {{scanIntervalHours}}h{{else}}disabled{{/if}}{{#if lastScan}} (last run {{lastScan}}){{/if}} &middot;</span> plugin v{{version}}
         </div>
-        <div class="tab-content active" id="tab-assessment">
+        <div class="tab-content active" id="tab-assessment" data-main="vulns" data-sub="assessment">
             <div class="info">
                 Select the <strong>locations</strong> to assess via the floating panel on the right. The table shows all findings of the
                 selected locations; a rating you save applies to <strong>every selected location</strong> in which the finding occurs
@@ -155,31 +150,21 @@
             <div class="table-container" id="results"></div>
         </div>
 
-        <div class="tab-content" id="tab-settings">
+        <div class="tab-content" id="tab-settings" data-main="settings" data-sub="general">
             <h3>Scheduled scanning &amp; collection</h3>
             <div class="info">
                 Values saved here go into <code>scanner-settings.json</code> inside the plugin's data folder and
                 <strong>override the same keys in the server's config.json</strong> - immediately and without a
                 restart. config.json is never written by the plugin and remains the fallback
                 ("from config.json" / "built-in default"). Use a field's <em>revert</em> option or the
-                <em>Reset all</em> button to hand control back to config.json. The Updates-tab configuration (winget)
-                is stored in the same file but is not changed by this tab.
+                <em>Reset all</em> button to hand control back to config.json. The configuration for vulnerability
+                data (NVD, CPE table) and for license keys lives under their own navigation items.
             </div>
             <div class="setgrid">
                 <label for="setInterval">Scan interval (hours)</label>
                 <div><input type="text" id="setInterval" class="num">
                     <select id="setIntervalSrc" class="srcsel"></select>
                     <div class="hint">Measured from the end of the last scan; restart-proof. 24 = daily, 168 = weekly, 720 = monthly, 0 = scheduled scans off.</div></div>
-
-                <label for="setUpdateHours">NVD feed refresh (hours)</label>
-                <div><input type="text" id="setUpdateHours" class="num">
-                    <select id="setUpdateHoursSrc" class="srcsel"></select></div>
-
-                <label>&nbsp;</label>
-                <div><button id="updateNvdNowBtn" class="green">Update NVD database now</button>
-                    <span id="updateNvdInfo" class="hint"></span>
-                    <div class="hint">Fetches missing years and refreshes the current year immediately (rate-limited, can
-                    take a while - progress appears in the download log below). The scheduled cycle continues unchanged.</div></div>
 
                 <label for="setAnyAge">Suppress version-less CVEs older than (years)</label>
                 <div><input type="text" id="setAnyAge" class="num">
@@ -200,17 +185,6 @@
                     <div class="hint">Programs without a table entry are matched against the CPE product names that actually exist in the
                     downloaded NVD data (name cleaned, publisher as vendor evidence, versions always re-checked). Offline, no configuration
                     needed; switch off to use only the curated + custom tables.</div></div>
-
-                <label for="setCpeTableEnabled">Update mapping table from repository</label>
-                <div><input type="checkbox" id="setCpeTableEnabled">
-                    <div class="hint">The curated table is maintained as <code>cpe-table.json</code> in this plugin's GitHub repository,
-                    shipped inside the plugin and re-downloaded with every NVD feed refresh. Off (or unreachable): only your custom
-                    entries below and the automatic matching remain - never a silent second copy in the code.</div></div>
-
-                <label for="setCpeTableUrl">Mapping table URL</label>
-                <div><input type="text" id="setCpeTableUrl" style="width:420px">
-                    <select id="setCpeTableUrlSrc" class="srcsel"></select>
-                    <div class="hint">https only. Only change this if you maintain your own table copy.</div></div>
 
                 <label for="setDistroManaged">Linux distribution packages: trust the distribution while the OS is supported</label>
                 <div><input type="checkbox" id="setDistroManaged">
@@ -252,30 +226,7 @@
                 <label for="setNotifyRepeat">Repeat unrated findings every scan</label>
                 <div><input type="checkbox" id="setNotifyRepeat">
                     <div class="hint">Notification becomes a to-do list: findings stay listed as "(severity, open)" until they are rated or flagged. New ones are always reported once as "(severity, new)".</div></div>
-
-                <label for="setLicCollect">Collect software license keys (opt-in)</label>
-                <div><input type="checkbox" id="setLicCollect">
-                    <div class="hint">Master switch for the License keys section below. Off by default; nothing reads licenses until you turn it on AND press Collect (there is no automatic license scan).</div></div>
-
-                <label for="setLicMsKeys">Include Microsoft product keys</label>
-                <div><input type="checkbox" id="setLicMsKeys">
-                    <div class="hint">Also read the Microsoft partial product key(s) from the WMI SoftwareLicensingProduct class on each Windows device.</div></div>
-
-                <label for="setLicTableEnabled">Update license mapping table from repository</label>
-                <div><input type="checkbox" id="setLicTableEnabled">
-                    <select id="setLicTableEnabledSrc" class="srcsel"></select>
-                    <div class="hint">Curated table shipped in <code>license-table.json</code> and refreshed from its URL with the NVD cycle. Off: only your custom rules apply.</div></div>
-
-                <label for="setLicTableUrl">License table URL</label>
-                <div><input type="text" id="setLicTableUrl" style="width:420px">
-                    <select id="setLicTableUrlSrc" class="srcsel"></select>
-                    <div class="hint">https only; the rule table that maps a program name to where its license is stored.</div></div>
             </div>
-
-            <h3>Plugin &amp; NVD feed log</h3>
-            <div><button id="refreshNvdLogBtn" class="small">Refresh log</button>
-                <span id="nvdLogInfo" class="hint"></span></div>
-            <pre id="nvdLog" style="max-height:260px;overflow:auto;background:#0f1720;color:#cfe3f5;padding:8px;border-radius:6px;font-size:11px;margin-top:6px;white-space:pre-wrap;">(not loaded yet)</pre>
 
             <h3>Device groups</h3>
             <div class="hint" style="margin-bottom:6px;">"Scan" unchecked for <b>all</b> groups = scan <b>all</b> groups (an empty selection means all).
@@ -292,25 +243,46 @@
                 <button id="resetSettingsBtn" class="red">Reset all to config.json</button>
             </div>
             <div id="settingsMsg"></div>
+        </div>
+
+        <div class="tab-content" id="tab-vulndata" data-main="vulns" data-sub="data">
+            <h3>Vulnerability reports &amp; CSV export</h3>
+            <div class="controls">
+                <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=report" target="_blank" rel="noopener">Vulnerability Report</a>
+                <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=deviceReport" target="_blank" rel="noopener">Device Report</a>
+            </div>
+            <div class="info">CSV export (all devices):
+                <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=export&amp;type=hardware" target="_blank" rel="noopener">Hardware</a>
+                &middot; <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=export&amp;type=software" target="_blank" rel="noopener">Software</a>
+                &middot; <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=export&amp;type=vulns" target="_blank" rel="noopener">Vulnerabilities</a>
+            </div>
+
+            <h3>NVD database</h3>
+            <div class="setgrid">
+                <label for="setUpdateHours">NVD feed refresh (hours)</label>
+                <div><input type="text" id="setUpdateHours" class="num">
+                    <select id="setUpdateHoursSrc" class="srcsel"></select></div>
+                <label>&nbsp;</label>
+                <div><button id="updateNvdNowBtn" class="green">Update NVD database now</button>
+                    <span id="updateNvdInfo" class="hint"></span>
+                    <div class="hint">Fetches missing years and refreshes the current year immediately (rate-limited, can
+                    take a while - progress appears in the download log below).</div></div>
+            </div>
+            <div><button id="refreshNvdLogBtn" class="small">Refresh log</button>
+                <span id="nvdLogInfo" class="hint"></span></div>
+            <pre id="nvdLog" style="max-height:260px;overflow:auto;background:#0f1720;color:#cfe3f5;padding:8px;border-radius:6px;font-size:11px;margin-top:6px;white-space:pre-wrap;">(not loaded yet)</pre>
 
             <h3>CPE mapping (installed program name &rarr; CVE codes)</h3>
-            <div class="info">
-                Every NVD CVE names the affected software with a technical code, a <strong>CPE</strong> like
-                <code>cpe:...:mozilla:firefox</code>. This table is the dictionary that tells the scanner which
-                code belongs to which program on your PCs:
-                <ul style="margin:6px 0 6px 18px;padding:0;">
-                    <li><strong>Regex</strong> is matched case-insensitively against the installed program name.</li>
-                    <li><strong>Vendor / Product</strong> is the CPE code that gets searched in the CVE database.</li>
-                </ul>
-                Rows labelled <em>Remote</em> come from the maintained table file <code>cpe-table.json</code>
-                (shipped with the plugin, refreshed from its repository URL); rows labelled <em>Custom</em> are
-                your own additions and are always checked first, so they win over any remote row. Programs that
-                match no row here are still checked automatically against the product names present in the NVD
-                data (the <em>Auto-map</em> switch above). Only software where even that proves nothing is listed
-                as <em>not assessable</em> - never as "clean".
-                <br><br>
-                <strong>Fix a wrong row:</strong> <em>Override</em> copies it as a custom entry you can edit,
-                <em>Delete</em> removes only your custom entries, never remote ones.
+            <div class="setgrid">
+                <label for="setCpeTableEnabled">Update mapping table from repository</label>
+                <div><input type="checkbox" id="setCpeTableEnabled">
+                    <div class="hint">The curated table is maintained as <code>cpe-table.json</code> in this plugin's GitHub repository,
+                    shipped inside the plugin and re-downloaded with every NVD feed refresh. Off (or unreachable): only your custom
+                    entries below and the automatic matching remain.</div></div>
+                <label for="setCpeTableUrl">Mapping table URL</label>
+                <div><input type="text" id="setCpeTableUrl" style="width:420px">
+                    <select id="setCpeTableUrlSrc" class="srcsel"></select>
+                    <div class="hint">https only. Only change this if you maintain your own table copy.</div></div>
             </div>
             <div class="hint" id="cpeTableSourceInfo"></div>
             <div class="filter-row">
@@ -338,25 +310,27 @@
                 <button id="addCpeBtn">Add</button>
             </div>
             <div id="cpeMsg"></div>
+            <div class="controls" style="margin-top:16px;"><button id="saveSettingsBtn2">Save NVD &amp; CPE settings</button></div>
+            <div id="vulnDataMsg"></div>
+        </div>
 
+        <div class="tab-content" id="tab-license" data-main="software" data-sub="license">
             <h3>License keys (installed program &rarr; where its license is stored)</h3>
-            <div class="info">
-                For asset management the software-inventory CSV can also carry a <strong>License</strong> and
-                <strong>License Source</strong> column. Like the CPE table, a rule table maps an installed program
-                name to one or more <strong>extraction rules</strong>: a Windows registry value, a file read (with an
-                optional regex whose group 1 is the key, a JSON field, or a line number), or a WMI class property.
-                Rows labelled <em>Table</em> come from the curated <code>license-table.json</code> (refreshed from its
-                URL); <em>Custom</em> rows are yours and win. Microsoft keys come from the <em>Include Microsoft
-                product keys</em> switch, not from a rule.<br>
-                Reading is <strong>on demand only</strong> (no background license scan), runs as SYSTEM, reads registry
-                values / files / WMI properties only, and stores the result on this server under the device's data
-                folder - nothing is sent anywhere. Turn on <em>Collect software license keys</em> above, then press
-                <em>Collect</em>. The CSV export (Software type) then includes the found keys.
-                <br><br>
-                <strong>Rules JSON</strong> example:
-                <code>[{"type":"registry","path":"HKLM:\\SOFTWARE\\Vendor\\App","value":"LicenseKey"}]</code>
-                &middot; file: <code>[{"type":"file","path":"C:\\ProgramData\\App\\lic.dat","regex":"KEY=([A-Z0-9-]+)"}]</code>
-                &middot; WMI: <code>[{"type":"wmi","class":"SoftwareLicensingProduct","property":"PartialProductKey","filter":"LicenseStatus=1"}]</code>
+            <div class="setgrid">
+                <label for="setLicCollect">Collect software license keys (opt-in)</label>
+                <div><input type="checkbox" id="setLicCollect">
+                    <div class="hint">Master switch. Off by default; nothing reads licenses until you turn it on AND press Collect (there is no automatic license scan).</div></div>
+                <label for="setLicMsKeys">Include Microsoft product keys</label>
+                <div><input type="checkbox" id="setLicMsKeys">
+                    <div class="hint">Also read the Microsoft partial product key(s) from the WMI SoftwareLicensingProduct class on each Windows device.</div></div>
+                <label for="setLicTableEnabled">Update license mapping table from repository</label>
+                <div><input type="checkbox" id="setLicTableEnabled">
+                    <select id="setLicTableEnabledSrc" class="srcsel"></select>
+                    <div class="hint">Curated table shipped in <code>license-table.json</code> and refreshed from its URL with the NVD cycle. Off: only your custom rules apply.</div></div>
+                <label for="setLicTableUrl">License table URL</label>
+                <div><input type="text" id="setLicTableUrl" style="width:420px">
+                    <select id="setLicTableUrlSrc" class="srcsel"></select>
+                    <div class="hint">https only; the rule table that maps a program name to where its license is stored.</div></div>
             </div>
             <div class="hint" id="licTableSourceInfo"></div>
             <div class="controls">
@@ -382,9 +356,11 @@
             <h4 style="font-size:13px;color:#0b3d6b;margin:14px 0 6px 0;">License collection log</h4>
             <div><button id="refreshLicLogBtn" class="small">Refresh log</button> <span id="licLogInfo" class="hint"></span></div>
             <pre id="licLog" style="max-height:200px;overflow:auto;background:#0f1720;color:#cfe3f5;padding:8px;border-radius:6px;font-size:11px;margin-top:6px;white-space:pre-wrap;">(not loaded yet)</pre>
+            <div class="controls" style="margin-top:16px;"><button id="saveSettingsBtn3">Save license settings</button></div>
+            <div id="licenseMsg"></div>
         </div>
 
-        <div class="tab-content" id="tab-updates">
+        <div class="tab-content" id="tab-updates" data-main="devices" data-sub="updates">
             <div class="info">
                 Automatic software updates via <code>winget</code> on Windows devices. Nothing runs automatically until you enable
                 it here <strong>and</strong> tick at least one device group; the manual buttons (Run Now, Dry run, per-device and
@@ -455,7 +431,7 @@
             <pre id="wgLog" style="max-height:260px;overflow:auto;background:#0f1720;color:#cfe3f5;padding:8px;border-radius:6px;font-size:11px;margin-top:6px;white-space:pre-wrap;">(not loaded yet)</pre>
         </div>
 
-        <div class="tab-content" id="tab-os">
+        <div class="tab-content" id="tab-os" data-main="devices" data-sub="os">
             <div class="info">
                 <strong>force OS updates</strong> runs on every non-excluded Windows and Linux device: on Windows, the built-in
                 Windows Update agent searches, downloads and installs all pending updates (feature upgrades excluded). On Linux,
@@ -506,7 +482,7 @@
             <pre id="osLog" style="max-height:260px;overflow:auto;background:#0f1720;color:#cfe3f5;padding:8px;border-radius:6px;font-size:11px;margin-top:6px;white-space:pre-wrap;">(not loaded yet)</pre>
         </div>
 
-        <div class="tab-content" id="tab-deploy">
+        <div class="tab-content" id="tab-deploy" data-main="software" data-sub="deploy">
             <div class="info">
                 Install an <strong>MSI / MSP / EXE / DEB / RPM / shell / BIN installer</strong> on selected devices. Upload a package from this PC
                 (it lands in the plugin's own library on the server), pick a file from <strong>MeshCentral's Server Files</strong>
@@ -569,7 +545,7 @@
             <pre id="swLog" style="max-height:260px;overflow:auto;background:#0f1720;color:#cfe3f5;padding:8px;border-radius:6px;font-size:11px;margin-top:6px;white-space:pre-wrap;">(not loaded yet)</pre>
         </div>
 
-        <div class="tab-content" id="tab-reset">
+        <div class="tab-content" id="tab-reset" data-main="devices" data-sub="reset">
             <div class="info">
                 <strong>This is the one feature that restarts a device.</strong> It resets a single
                 <strong>Windows</strong> PC with the built-in <code>systemreset</code> tool. A reset cannot run from inside
@@ -708,29 +684,66 @@
 
         // ---------- tabs ----------
 
-        var tabTitles = { assessment: 'Vulnerability Assessment', settings: 'Settings', updates: 'Software Updates (winget)', os: 'Operating System Updates', deploy: 'Deploy Software', reset: 'Reset a Windows PC' };
-        var tabs = document.querySelectorAll('.navtab');
-        for (var t = 0; t < tabs.length; t++) {
-            tabs[t].addEventListener('click', function (e) {
+        var navTree = {
+            devices: [ { key: 'updates', label: 'Software updates' }, { key: 'os', label: 'OS updates & reboot' }, { key: 'reset', label: 'PC reset' } ],
+            software: [ { key: 'deploy', label: 'Deployment' }, { key: 'license', label: 'License keys' } ],
+            vulns: [ { key: 'assessment', label: 'Assessment' }, { key: 'data', label: 'Reports, NVD & CPE table' } ],
+            settings: [ { key: 'general', label: 'General' } ]
+        };
+        var subTitles = {
+            updates: 'Software Updates (winget)', os: 'Operating System Updates', reset: 'Reset a Windows PC',
+            deploy: 'Deploy Software', license: 'Software License Keys',
+            assessment: 'Vulnerability Assessment', data: 'Vulnerability Data & Tables', settings: 'Settings'
+        };
+        var subLoaders = {
+            updates: function () { loadWgTab(); }, os: function () { loadOsStatus(); },
+            deploy: function () { loadSwTab(); }, reset: function () { loadDrStatus(); },
+            license: function () { loadLicenseSection(); },
+            data: function () { loadCpeTable(); loadNvdLog(); }
+        };
+        var currentMain = 'vulns', currentSub = 'assessment';
+
+        function renderSubnav(main, activeSub) {
+            var sn = document.getElementById('subnav');
+            if (!sn) { return; }
+            var subs = navTree[main] || [];
+            var html = '';
+            for (var k = 0; k < subs.length; k++) {
+                html += '<a href="#" class="subtab' + (subs[k].key === activeSub ? ' active' : '') + '" data-main="' + main + '" data-sub="' + subs[k].key + '">' + subs[k].label + '</a>';
+            }
+            sn.innerHTML = html;
+            var links = sn.querySelectorAll('.subtab');
+            for (var q = 0; q < links.length; q++) {
+                links[q].addEventListener('click', function (e) { e.preventDefault(); selectSub(this.getAttribute('data-main'), this.getAttribute('data-sub')); });
+            }
+        }
+
+        function selectSub(main, sub) {
+            currentMain = main; currentSub = sub;
+            var contents = document.querySelectorAll('.tab-content');
+            for (var i = 0; i < contents.length; i++) { contents[i].classList.remove('active'); }
+            var target = document.querySelector('.tab-content[data-main="' + main + '"][data-sub="' + sub + '"]');
+            if (target) { target.classList.add('active'); }
+            var mains = document.querySelectorAll('.maintab');
+            for (var m = 0; m < mains.length; m++) { mains[m].classList.toggle('active', mains[m].getAttribute('data-main') === main); }
+            renderSubnav(main, sub);
+            var lp = document.getElementById('locationPanel');
+            if (lp) { lp.classList.toggle('hidden', !(main === 'vulns' && sub === 'assessment')); }
+            var sm = document.getElementById('statusMeta');
+            if (sm) { sm.style.display = ((main === 'vulns' && sub === 'assessment') || main === 'settings') ? '' : 'none'; }
+            var pt = document.getElementById('pageTitle');
+            if (pt && subTitles[sub]) { pt.textContent = subTitles[sub]; }
+            var fn = subLoaders[sub];
+            if (fn) { try { fn(); } catch (e) { } }
+        }
+
+        var maintabs = document.querySelectorAll('.maintab');
+        for (var mi = 0; mi < maintabs.length; mi++) {
+            maintabs[mi].addEventListener('click', function (e) {
                 e.preventDefault();
-                var name = this.getAttribute('data-tab');
-                var lp = document.getElementById('locationPanel');
-                if (lp) { lp.classList.toggle('hidden', name !== 'assessment'); }
-                var all = document.querySelectorAll('.navtab');
-                for (var i = 0; i < all.length; i++) { all[i].classList.remove('active'); }
-                this.classList.add('active');
-                var contents = document.querySelectorAll('.tab-content');
-                for (var j = 0; j < contents.length; j++) { contents[j].classList.remove('active'); }
-                var target = document.getElementById('tab-' + name);
-                if (target) { target.classList.add('active'); }
-                if (name === 'updates') { loadWgTab(); }
-                if (name === 'os') { loadOsStatus(); }
-                if (name === 'deploy') { loadSwTab(); }
-                if (name === 'reset') { loadDrStatus(); }
-                var sm = document.getElementById('statusMeta');
-                if (sm) { sm.style.display = ((name === 'assessment') || (name === 'settings')) ? '' : 'none'; }
-                var pt = document.getElementById('pageTitle');
-                if (pt && tabTitles[name]) { pt.textContent = tabTitles[name]; }
+                var main = this.getAttribute('data-main');
+                var subs = navTree[main] || [];
+                selectSub(main, subs.length ? subs[0].key : '');
             });
         }
 
@@ -2228,7 +2241,7 @@
             }).catch(function () { done(); });
         }
 
-        $('saveSettingsBtn').addEventListener('click', function () {
+        function doSaveSettings(msgId) {
             var scanIds = [], notifyIds = [], notifySevs = [];
             var allScanCbs = document.querySelectorAll('.set-scan-cb');
             var allChecked = (allScanCbs.length > 0), anyChecked = false;
@@ -2266,11 +2279,14 @@
                 notifySeverities: notifySevs.join(',')
             };
             post('save_settings', body).then(function (d) {
-                if (d.error) { showMsg('settingsMsg', d.error, false); return; }
-                showMsg('settingsMsg', 'Settings saved to scanner-settings.json and applied immediately (they override config.json).', true);
+                if (d.error) { showMsg(msgId, d.error, false); return; }
+                showMsg(msgId, 'Settings saved to scanner-settings.json and applied immediately (they override config.json).', true);
                 loadSettings();
-            }).catch(function (e) { showMsg('settingsMsg', 'Save failed: ' + e.message, false); });
-        });
+            }).catch(function (e) { showMsg(msgId, 'Save failed: ' + e.message, false); });
+        }
+        $('saveSettingsBtn').addEventListener('click', function () { doSaveSettings('settingsMsg'); });
+        $('saveSettingsBtn2').addEventListener('click', function () { doSaveSettings('vulnDataMsg'); });
+        $('saveSettingsBtn3').addEventListener('click', function () { doSaveSettings('licenseMsg'); });
 
         function loadNvdLog() {
             post('get_nvdlog', {}).then(function (data) {
@@ -2287,7 +2303,7 @@
             post('update_nvd', {}).then(function (d) {
                 $('updateNvdInfo').textContent = d.alreadyRunning ? 'An update is already running - progress in the log below.' : 'Update started - progress in the log below.';
                 loadNvdLog();
-            }).catch(function (e) { showMsg('settingsMsg', 'Update request failed: ' + e.message, false); });
+            }).catch(function (e) { showMsg('vulnDataMsg', 'Update request failed: ' + e.message, false); });
         });
 
         $('resetSettingsBtn').addEventListener('click', function () {
@@ -2513,6 +2529,7 @@
         loadCached();
         loadCpeTable();
         loadSettings();
+        selectSub('vulns', 'assessment');   // v4.9.0: two-layer nav, land on the assessment table
     })();
     </script>
 </body>
