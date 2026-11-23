@@ -21,7 +21,7 @@
  * NVD feed is downloaded.
  *
  * @author derStephan
- * @version 4.5.0
+ * @version 4.6.0
  *
  * Transparency: This plugin was created with the assistance of Qwen 3.6 27B and Qwen 3.8 Flash Next.
  * Audits: 2026-11-06 (NVIDIA Nemotron 3 550B A55B), 2026-11-11 (Claude Opus 5.5, v3.0.1) and 2026-11-14 (Claude Opus 5.5, v4.3.0) via opencode - see AUDIT.md.
@@ -64,6 +64,8 @@ try { MODULE_CODE_VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, 'con
  *   lib/osupdate.js         OS update / OS release upgrade engine + its handlers
  *   lib/devreset.js         per-device Windows PC reset (systemreset) + its handlers - the ONLY
  *                           feature that reboots the device, by design (issue #4, v4.5.0)
+ *   lib/wutroubleshoot.js   per-device Windows Update troubleshooter (issue #3, v4.6.0): read-only
+ *                           diagnose + the WU-component-reset repairs, run directly, no reboot
  *   lib/swstore.js          deploy foundation: installer library, upload parts, task store,
  *                           staging in <filespath>/tmp, agentdownload cookie, name/arg quoting
  *   lib/swdeploy.js         deploy engine: install scripts, wget+runcommands dispatch,
@@ -86,7 +88,7 @@ try { MODULE_CODE_VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, 'con
  */
 const modules = [
     'lifecycle', 'settings', 'assessments', 'nvd', 'nvdindex', 'cpetable', 'matching', 'oslifecycle',
-    'osscan', 'inventory', 'collector', 'scheduling', 'winget', 'winget-handlers', 'osupdate', 'devreset',
+    'osscan', 'inventory', 'collector', 'scheduling', 'winget', 'winget-handlers', 'osupdate', 'devreset', 'wutroubleshoot',
     'swstore', 'swdeploy', 'swdeploy-handlers',
     'reports', 'csv', 'nodes', 'routes', 'browser'
 ];
@@ -189,6 +191,10 @@ module.exports.inventoryscanner = function (parent) {
     obj.devResultsPath = path.join(obj.meshServer.datapath, 'plugins', 'inventoryscanner', 'device-reset.json');
     /** @type {string} device-reset audit log (shown in the PC Reset tab, rotated at ~5 MB). */
     obj.devLogPath = path.join(obj.meshServer.datapath, 'plugins', 'inventoryscanner', 'device-reset.log');
+    /** @type {string} last diagnose/repair per Windows node (state file, lib/wutroubleshoot.js, v4.6.0). */
+    obj.wuResultsPath = path.join(obj.meshServer.datapath, 'plugins', 'inventoryscanner', 'wu-troubleshoot.json');
+    /** @type {string} Windows Update troubleshooter log (shown under the OS tab, rotated at ~5 MB). */
+    obj.wuLogPath = path.join(obj.meshServer.datapath, 'plugins', 'inventoryscanner', 'wu-troubleshoot.log');
 
     // ---- Feature modules (the list at the top of this file documents who does what) ----
     modules.forEach(function (name) {

@@ -91,14 +91,21 @@ Please report security vulnerabilities by opening an issue.
   An existing folder with another owner, or a reparse point, is refused; then the run continues without a
   transcript. User-writable locations (plain `%ProgramData%`, `%TEMP%`) are not used (since v3.0.1).
 - winget is resolved from HKLM App Paths, then the admin-only WindowsApps package folder, then PATH.
-- No reboot is ever triggered by the update/deploy engines (`--allow-reboot` is never used); the deploy scripts
-  likewise carry no reboot command (exit 3010/1641 is *reported* as "ok, reboot pending", asserted by the tests).
-  **The one documented exception (v4.5.0) is the PC Reset feature**: a Windows reset cannot run inside the booted
-  OS, so it restarts the machine on purpose - but ONLY through the built-in `systemreset` tool (never
-  `Restart-Computer`/`shutdown`, which the never-reboot token scan keeps asserting), ONLY per-device and manually
-  after a passing read-only Check and a correctly typed device-name confirmation, and a "Remove everything" reset
-  is hard-blocked while BitLocker protection is on/unknown until the recovery key is confirmed. Never scheduled,
-  never a fleet action.
+- **Reboot policy (since v4.6.0).** A reboot is no longer forbidden outright - it must be EXPLICIT and
+  ANNOUNCED. The winget / OS update / OS upgrade / deploy / Windows-Update-troubleshooter engines emit no
+  reboot command at all (`--allow-reboot` is never used; the per-script `!/Restart-Computer|shutdown/i`
+  assertions stay and now also cover the troubleshooter scripts), and a pending reboot is always *reported*
+  (exit 3010/1641 "ok, reboot pending"; WU troubleshooter Diagnose/Repair report whether a reboot is pending
+  and when Windows performs it automatically). The only feature that restarts a device is the per-device
+  **PC Reset**: a Windows reset cannot run inside the booted OS, so it restarts on purpose - ONLY through the
+  built-in `systemreset` tool, ONLY per-device and manually after a passing read-only Check and a typed
+  device-name confirmation, with "Remove everything" hard-blocked while BitLocker protection is on/unknown
+  until the recovery key is confirmed. Never scheduled, never a fleet action.
+- The **Windows Update troubleshooter repairs** (v4.6.0) are the deterministic, auditable form of the built-in
+  troubleshooter's "apply fixes" step (the `TroubleshootingPack` cmdlets were removed in Windows 10 1709): they
+  restart the WU services and reset `SoftwareDistribution\Download` + `catroot2`. They deliberately do NOT run
+  `netsh winsock reset` or `winhttp reset proxy` (invasive / would break managed devices - the proxy is only
+  reported) and trigger no reboot.
 - Deploy transcripts (Windows `invscanner-deploy.log`, Linux `/var/log/invscanner-deploy.log`) land only in the
   same protected/checked locations as the updater transcripts; the staged copy under `<filespath>/tmp` is deleted
   when the task closes, and stale copies are swept after 24 h. Server Files sources resolve strictly inside

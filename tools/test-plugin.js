@@ -2649,11 +2649,14 @@ steps.push(function (next) {
     var openersR = rc.split(String.fromCharCode(10)).filter(function (l) { return /[({]\s*$/.test(l); });
     check('devreset reset script: one statement per line', openersR.length === 0, openersR.slice(0, 2));
 
-    // The documented exception to the "never reboot" invariant: this feature reboots ONLY through a
-    // manual per-device systemreset - no batch, no scheduling, no other engine triggers it.
-    check('devreset invariant: the ONLY rebooting feature is manual per-device, there is no batch or scheduled reset',
+    // v4.6.0 reboot policy (replaces the old absolute "never reboot" invariant): the ONLY thing that
+    // restarts a device is the explicit, announced, per-device PC Reset - never a batch, never a
+    // schedule, never another engine. The troubleshooter repairs (v4.6.0) add no reboot path either.
+    check('reboot policy: only the manual per-device PC Reset restarts a device - no batch/scheduled reset, no troubleshooter reboot',
         typeof obj.devStartBatch === 'undefined' && typeof obj.scheduleDevReset === 'undefined' &&
-        typeof obj.devTargetNodes === 'undefined' && typeof obj.devPump === 'undefined');
+        typeof obj.devTargetNodes === 'undefined' && typeof obj.devPump === 'undefined' &&
+        typeof obj.wuStartBatch === 'undefined' && typeof obj.scheduleWuRepair === 'undefined' &&
+        typeof obj.wuPump === 'undefined' && !/Restart-Computer|shutdown/i.test(obj.wuBuildRepairScript()));
 
     // mode gating is a pure decision on a probe object + a clock.
     var now = Date.now();
@@ -2768,6 +2771,113 @@ steps.push(function (next) {
     oT.devResetTimeout(e2);
     check('dr timeout: reset + the device is still online and silent = no answer (the reset did not start)',
         oT.devLast['node//to1'] && oT.devLast['node//to1'].state === 'no-answer', oT.devLast['node//to1']);
+    next();
+});
+
+// ---- v4.6.0 Windows Update troubleshooter (issue #3): scripts + routes + reboot reporting ----
+steps.push(function (next) {
+    var dg = obj.wuBuildDiagnoseScript();
+    check('wu diagnose script: reads services, reboot state + when, download cache and WU-log errors, prints the marker, changes NOTHING',
+        dg.indexOf('Get-Service') >= 0 && dg.indexOf('Win32_Service') >= 0 &&
+        dg.indexOf("Auto Update\\RebootRequired") >= 0 && dg.indexOf('Component Based Servicing\\RebootPending') >= 0 &&
+        dg.indexOf('SoftwareDistribution\\Download') >= 0 && dg.indexOf('Microsoft-Windows-WindowsUpdateClient') >= 0 &&
+        dg.indexOf('winhttp show proxy') >= 0 && dg.indexOf(obj.WU_MARKER) >= 0 && dg.indexOf('invscanner-wutroubleshoot.log') >= 0 &&
+        dg.indexOf('Stop-Service') < 0 && dg.indexOf('Set-Service') < 0 && dg.indexOf('catroot2') < 0 && !/Restart-Computer|shutdown/i.test(dg));
+
+    var rp = obj.wuBuildRepairScript();
+    check('wu repair script: restarts the WU services and resets download + catroot2 with a per-step ok/fail harness, marker, no reboot, no invasive winsock/proxy reset',
+        rp.indexOf("function invWuStep") >= 0 && rp.indexOf('Stop-Service') >= 0 && rp.indexOf('Start-Service') >= 0 &&
+        rp.indexOf("SoftwareDistribution\\Download'") >= 0 && rp.indexOf('catroot2') >= 0 && rp.indexOf('Set-Service') >= 0 &&
+        rp.indexOf("-StartupType Automatic") >= 0 && rp.indexOf('$invWu.rebootTriggered = $false') >= 0 &&
+        rp.indexOf(obj.WU_MARKER) < rp.indexOf('Stop-Transcript') &&
+        !/Restart-Computer|shutdown/i.test(rp) && rp.indexOf('winsock') < 0 && rp.indexOf('reset proxy') < 0);
+    var openersDg = dg.split(String.fromCharCode(10)).filter(function (l) { return /[({]\s*$/.test(l); });
+    var openersRp = rp.split(String.fromCharCode(10)).filter(function (l) { return /[({]\s*$/.test(l); });
+    check('wu scripts: one statement per line (diagnose and repair)', openersDg.length === 0 && openersRp.length === 0, [openersDg.slice(0, 2), openersRp.slice(0, 2)]);
+    var dirw = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-wups-'));
+    var fw = path.join(dirw, 'r.ps1'); fs.writeFileSync(fw, rp);
+    var psrw = runPs(['-NoProfile', '-NonInteractive', '-Command', "$t=$null;$e=$null;[void][System.Management.Automation.Language.Parser]::ParseFile('" + fw + "',[ref]$t,[ref]$e);$e.Count"]);
+    if (psrw == null) { console.log('SKIP wu repair script: PowerShell parser (PowerShell not available)'); }
+    else { check('wu repair script: PowerShell parser reports no errors', !psrw.failed && psrw.text.trim() === '0', psrw.text.trim()); }
+
+    // pump mutual-exclusion wiring: every engine must skip a node with a wu session, and vice versa.
+    var src = pluginSrc();
+    check('wu wiring: the winget/OS/deploy/reset pumps and dispatches skip a node holding a troubleshooter session',
+        (src.match(/obj\.wuPending != null && obj\.wuPending\[nodeid\] != null/g) || []).length >= 2 &&
+        (src.match(/obj\.wuPending && obj\.wuPending\[job\.nodeid\] != null/g) || []).length >= 1 &&
+        src.indexOf('invscanner-wu-') >= 0 && /obj\.wuHandleResponse\(nodeid, command\)/.test(src));
+    next();
+});
+
+steps.push(function (next) {
+    var dpW = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-wu-'));
+    var wuNodes = [
+        { _id: 'node//wu1', meshid: 'mesh//grp1', rname: 'wu1', name: 'WinOne', osdesc: 'Microsoft Windows 11 Pro' },
+        { _id: 'node//wul', meshid: 'mesh//grp2', rname: 'wul', name: 'LinOne', osdesc: 'Ubuntu 24.04 LTS' },
+        { _id: 'node//wuoff', meshid: 'mesh//grp1', rname: 'wuoff', name: 'WinOff', osdesc: 'Microsoft Windows 10' }
+    ];
+    var dbW2 = { GetAllType: function (t, cb) { cb(null, t === 'node' ? wuNodes.slice() : meshes.slice()); }, Get: function (id, cb) { cb(null, wuNodes.filter(function (n) { return n._id === id; })); } };
+    var sentW = [];
+    var agentsW = { 'node//wu1': { send: function (m) { sentW.push(JSON.parse(m)); } }, 'node//wul': { send: function (m) { sentW.push(JSON.parse(m)); } } };
+    var oW = factory({ parent: { db: dbW2, datapath: dpW, debug: function () { }, config: { settings: {} }, webserver: { meshes: {}, wsagents: agentsW }, DispatchEvent: function () { } } });
+    var gunzW = function (cmd, re) { var mm = String(cmd).match(re); return mm ? require('zlib').gunzipSync(Buffer.from(mm[1], 'base64')).toString('utf8') : ''; };
+
+    oW.handleAdminPostReq({ headers: XHDR, body: { action: 'wu_diag', nodeId: 'node//wu1' } }, mockRes(function (d1) {
+        check('wu_diag: dispatches the read-only diagnose on an invscanner-wu- session (runcommands type 1)',
+            d1.started === true && sentW.length === 1 && sentW[0].action === 'runcommands' && sentW[0].type === 1 &&
+            String(sentW[0].sessionid).indexOf('invscanner-wu-') === 0 && oW.wuPending['node//wu1'] != null &&
+            gunzW(sentW[0].cmds, /FromBase64String\('([A-Za-z0-9+\/=]+)'\)/).indexOf('Get-Service') >= 0, sentW[0]);
+        oW.handleAdminPostReq({ headers: XHDR, body: { action: 'wu_diag', nodeId: 'node//wul' } }, mockRes(function (dL) {
+            check('wu_diag: a non-Windows device is refused', !!dL.error && /Windows/.test(dL.error), dL);
+            oW.onAgentResponse({ action: 'msg', type: 'runcommands', sessionid: sentW[0].sessionid, result: 'x' + oW.WU_MARKER +
+                '{"diag":true,"services":[{"name":"wuauserv","status":"Running","startup":"Auto"},{"name":"bits","status":"Stopped","startup":"Auto"}],"swExists":true,"swBytes":1024,"swFiles":3,"events":[{"time":"2026-11-01T00:00:00Z","id":20,"level":"Error","msg":"download failed"}],"winhttp":"Access.","rebootPending":true,"rebootSource":"Windows Update","rebootNote":"A reboot is already pending","error":""}' + String.fromCharCode(10) }, '', 'node//wu1');
+            var dg = oW.wuResults['node//wu1'];
+            check('wu_diag: the answer is consumed + stored (services, download cache, a PENDING reboot surfaced)',
+                dg && dg.kind === 'diag' && dg.state === 'ok' && dg.services.length === 2 && dg.swFiles === 3 &&
+                dg.rebootPending === true && dg.rebootSource === 'Windows Update' && oW.wuPending['node//wu1'] == null &&
+                fs.existsSync(oW.wuResultsPath), dg);
+            oW.wuPending['node//wu1'] = { nodeid: 'node//wu1' }; oW.osPending['node//wu1'] = { nodeid: 'node//wu1' };
+            oW.handleAdminPostReq({ headers: XHDR, body: { action: 'wu_repair', nodeId: 'node//wu1' } }, mockRes(function (busy) {
+                delete oW.osPending['node//wu1'];
+                check('wu_repair: a device holding another engine session is refused (one runcommands session per agent)', !!busy.error && /running/.test(busy.error), busy);
+                delete oW.wuPending['node//wu1'];
+                oW.handleAdminPostReq({ headers: XHDR, body: { action: 'wu_repair', nodeId: 'node//wuoff' } }, mockRes(function (off) {
+                    check('wu_repair: an offline device is refused', !!off.error && /offline/i.test(off.error), off);
+                    sentW.length = 0;
+                    oW.handleAdminPostReq({ headers: XHDR, body: { action: 'wu_repair', nodeId: 'node//wu1' } }, mockRes(function (d2) {
+                        check('wu_repair: a repair is dispatched on an invscanner-wu- session running the component reset',
+                            d2.started === true && sentW.length === 1 && String(sentW[0].sessionid).indexOf('invscanner-wu-') === 0 &&
+                            gunzW(sentW[0].cmds, /FromBase64String\('([A-Za-z0-9+\/=]+)'\)/).indexOf('invWuStep') >= 0, [d2, sentW.length]);
+                        var okc = oW.onAgentResponse({ action: 'msg', type: 'runcommands', sessionid: sentW[0].sessionid, result: oW.WU_MARKER +
+                            '{"repair":true,"state":"partial","steps":[{"name":"stop services","ok":true,"detail":""},{"name":"reset download folder","ok":false,"detail":"Access denied"},{"name":"reset catroot2","ok":true,"detail":""},{"name":"set start types","ok":true,"detail":""},{"name":"start services","ok":true,"detail":""}],"rebootTriggered":false,"rebootPending":false,"rebootSource":"","rebootNote":"The repair did NOT reboot the device and none is needed","error":""}' + String.fromCharCode(10) }, '', 'node//wu1');
+                        var rr = oW.wuResults['node//wu1'];
+                        check('wu_repair: a partial answer stores state partial + per-step detail, consumed; no reboot claimed',
+                            okc === true && rr.kind === 'repair' && rr.state === 'partial' && rr.steps.length === 5 &&
+                            rr.steps[1].ok === false && rr.rebootTriggered === false && oW.wuPending['node//wu1'] == null, rr);
+                        oW.handleAdminPostReq({ headers: XHDR, body: { action: 'os_status' } }, mockRes(function (st) {
+                            var w = st.devices.filter(function (x) { return x.id === 'node//wu1'; })[0];
+                            check('os_status: a Windows device carries its last troubleshooter result (wu)', w && w.wu && w.wu.kind === 'repair' && w.wu.state === 'partial', w && w.wu);
+                            oW.handleAdminPostReq({ headers: XHDR, body: { action: 'get_log', type: 'wu' } }, mockRes(function (lgr) {
+                                check('get_log wu: the troubleshooter log is reachable', Array.isArray(lgr.lines) && lgr.file === 'plugins/inventoryscanner/wu-troubleshoot.log', lgr);
+                                next();
+                            }), user);
+                        }), user);
+                    }), user);
+                }), user);
+            }), user);
+        }), user);
+    }), user);
+});
+
+steps.push(function (next) {
+    var dpT2 = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-wut-'));
+    var t2 = [{ _id: 'node//wt1', meshid: 'mesh//grp1', rname: 'wt1', name: 'T', osdesc: 'Microsoft Windows 11' }];
+    var dbT2 = { GetAllType: function (t, cb) { cb(null, t === 'node' ? t2.slice() : meshes.slice()); }, Get: function (id, cb) { cb(null, t2.filter(function (n) { return n._id === id; })); } };
+    var oT2 = factory({ parent: { db: dbT2, datapath: dpT2, debug: function () { }, config: { settings: {} }, webserver: { meshes: {}, wsagents: {} }, DispatchEvent: function () { } } });
+    var e = { nodeid: 'node//wt1', kind: 'diag', since: Date.now() };
+    oT2.wuPending['node//wt1'] = e; oT2.wuTimeout(e);
+    check('wu timeout: a diagnose that never answered is stored as timeout (no silent success)',
+        oT2.wuResults['node//wt1'] && oT2.wuResults['node//wt1'].state === 'timeout' && oT2.wuPending['node//wt1'] == null, oT2.wuResults['node//wt1']);
     next();
 });
 

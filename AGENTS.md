@@ -105,6 +105,7 @@ Consequences an agent must respect:
 | `lib/winget-handlers.js` | `wg_get_config`, `wg_save_config`, `wg_run`, `wg_status`, `wg_programs` handlers |
 | `lib/osupdate.js` | OS batch engine: `osBuildWindowsScript`, `osBuildLinuxScript`, `osLinuxTransport`, targeting/`osUpgradeInfo`/`osUrgency`, `os_run` + `os_status` handlers |
 | `lib/devreset.js` | per-device Windows PC reset (v4.5.0, the ONLY rebooting feature): `devBuildProbeScript`/`devBuildResetScript`, `devDispatch`, `devModeAllowed`/`devProbeFresh`/`devBitlockerState` gates, `devHandleResponse`/`devResetTimeout`, `dr_status`/`dr_probe`/`dr_reset` handlers, `device-reset.json` + `device-reset.log` |
+| `lib/wutroubleshoot.js` | per-device Windows Update troubleshooter (v4.6.0): `wuBuildDiagnoseScript`/`wuBuildRepairScript`/`wuHead`, `wuDispatch`, `wuHandleResponse`/`wuTimeout`, reboot-state reporting, `wu_diag`/`wu_repair` handlers, `wu-troubleshoot.json` + `wu-troubleshoot.log` |
 | `lib/swstore.js` | deploy foundation: installer library index/folders, resumable upload parts, task store load/save/prune, staging into `<filespath>/tmp`, `swDownloadCookie` (agentdownload), name/args/extension sanitizers, `swEnsureStaged` |
 | `lib/swdeploy.js` | deploy engine: `swBuildWindowsScript`/`swBuildLinuxScript`, `swWgetCommand`, queue/pump/`swDispatchNode`/`swHandleResponse`/watchdogs, `swOnNodeConnect`/`swSweepOnce`/`scheduleSwSweep`, `swTaskDoneCheck`, `swCreateTask`/`swTaskView` |
 | `lib/swdeploy-handlers.js` | `sw_files`, `sw_upload`, `sw_delete_file`, `sw_rescan_library`, `sw_serverfiles`, `sw_devices`, `sw_create_task`, `sw_status`, `sw_retry_task`, `sw_cancel_task` handlers |
@@ -149,6 +150,11 @@ sub-domain admins of a multi-tenant server are refused since v3.0.1):
    runs in Windows RE, not inside the booted OS), so it is strictly manual and per-device: a read-only Check must
    pass, the exact device name has to be typed to confirm, and "Remove everything" is blocked while BitLocker
    protection is on until the recovery key is confirmed. Never scheduled, never a fleet action.
+8. **Windows Update troubleshooter** (OS Updates tab, v4.6.0, issue #3): per-Windows-device *Diagnose*
+   (read-only: WU services, whether a reboot is pending and when Windows will restart, download-cache size,
+   last `WindowsUpdateClient` errors) and *Troubleshoot* (the repairs the built-in troubleshooter applies -
+   restart the update services, reset `SoftwareDistribution\Download` + `catroot2`, re-assert start types).
+   Runs as SYSTEM through the agent; **it never reboots** and reports any pending reboot instead.
 
 ## Verified API facts (do not guess)
 
@@ -273,7 +279,7 @@ POST body `action=`:
     failed packages additionally get one `FAILED` line per package in `winget-update.log`, and upgraded
      packages that match (exactly or as substring) an ignore entry raise a `WARNING` line there |
 | `wg_programs` | â€” | the PACKAGES view (v3.0.0): aggregates `wgResults` per package id -> `{packages:[{id,name,ready,ok,failed,skipped,devices:[{node,label,state,from,to,time,dry}]}],note}` (â‰¤400 packages, â‰¤200 devices each, sorted by ready+failed). `label` = admin given name first, then host name, then id; results of deleted devices are dropped; `not-installed` counts into `skipped` |
-| `get_log` | `type` = nvd\|winget\|os\|deploy\|reset | whitelisted log tail (last 300 lines) |
+| `get_log` | `type` = nvd\|winget\|os\|deploy\|reset\|wu | whitelisted log tail (last 300 lines) |
 | `sw_files` | â€” | installer library `{files:[{id,name,ext,size,sha256,time,by}], parts:[{uploadId,bytes}], limits:{chunkBytes,maxBytes,exts}, note}` |
 | `sw_upload` | `uploadId` (hex 8..40), `name`, `index`, `data` (base64url â‰¤ `chunkBytes` raw), `last` | chunked upload into `software/parts/<id>.part`; `{ok,next}`, order-error `{error,next,have}` or `{done,file}` (hash computed, committed as immutable `<newid>.<ext>`) |
 | `sw_delete_file` | `fileId` | removes an unused library entry + its file; refused (error) while a NOT-done task references it |
@@ -289,6 +295,8 @@ POST body `action=`:
 | `dr_status` | â€” | (v4.5.0) every Windows node `{devices:[{id,host,given,group,os,online,excluded,probe,hasProbe,modes:{clean,keepfiles},last,pending}], minBuild, pending:[nodeids]}` - cached probe + last reset, no agent command sent |
 | `dr_probe` | `nodeId` | (v4.5.0) dispatches the read-only probe on `invscanner-dr-<node>` (runcommands type 1); {started} or {error} (offline / non-Windows / a busy session). The answer arrives on the route hook |
 | `dr_reset` | `nodeId`, `mode` (`clean`\|`keepfiles`), `confirm` (typed device name), `bitlockerAck` (`true` for a clean reset past BitLocker) | (v4.5.0) the ONLY rebooting action: gated on a fresh passing probe + a correctly typed name + (clean) BitLocker ack, then dispatches `systemreset -cleanpc/-keepfiles -noUI`; {started,mode} or {error}. The device restarts into WinRE, so the reply is often replaced by the offline transition |
+| `wu_diag` | `nodeId` | (v4.6.0, issue #3) dispatches the read-only Windows Update diagnose on `invscanner-wu-<node>` (runcommands type 1): WU services + start types, whether a reboot is pending + when Windows will restart automatically, the download-cache size and the last `WindowsUpdateClient` errors. {started} or {error} (offline / non-Windows / busy). Changes nothing on the device |
+| `wu_repair` | `nodeId` | (v4.6.0) applies the troubleshooter's "fix" steps DIRECTLY (the `Get/Invoke-TroubleshootingPack` cmdlets are gone since Win10 1709): restart BITS/wuauserv/appidsvc/cryptsvc/msiserver, reset `SoftwareDistribution\Download` + `System32\catroot2`, re-assert Automatic start types. {started} or {error}. **Never reboots** - the answer reports `rebootTriggered=false` and any pending reboot with when Windows handles it; a locked file shows as a `partial` step |
 | `update_nvd` | â€” | starts `runNvdUpdate(true)` (background) and answers {started:true} / {alreadyRunning:true}; concurrent runs skip via the `nvdUpdateRunning` flag |
 | `get_nvdlog` | â€” | `{lines:[...last 200 of nvd-download.log], size, file}`; `note` if file missing |
 | `get_locations` | â€” | all non-deleted meshes `{locations:[{id,name}]}` (also feeds the Settings tab group table) |
@@ -662,12 +670,16 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   skipped (`APFAIL=1`), the non-zero exit stands and the note says "refreshed no repository at all". Used by BOTH
   modes (update before `apt-get upgrade`, upgrade before `dist-upgrade`/`do-release-upgrade`). A repository warning
   is never a failed device, and a device that only has stale lists is never reported ok.
-- Never any reboot (asserted by tests). **The one documented exception (v4.5.0):** the per-device
-  PC Reset feature restarts a machine on purpose, because a Windows reset cannot run from inside the
-  booted OS. It goes through the built-in `systemreset` tool ONLY - never `Restart-Computer`/`shutdown`
-  (the never-reboot token scan of every other script stays green) - and only on an explicit, typed,
-  per-device request that passed the Check and the name/BitLocker gates. No batch, no schedule, no
-  other engine ever triggers it. See the PC Reset engine below.
+- **Reboot policy (since v4.6.0, replaces the old absolute "never reboot" rule).** A reboot is no longer
+  forbidden outright - it must be EXPLICIT and ANNOUNCED. Concretely: the winget / OS update / OS upgrade /
+  deploy / Windows-Update-troubleshooter engines NEVER issue a reboot command themselves; when something
+  needs a restart they report it (per device, and in the result) together with when Windows will perform it
+  automatically (the automatic-restart deadline / outside active hours / next update install). The one
+  feature that intentionally restarts a device is the per-device **PC Reset** (v4.5.0), and it does so only
+  through `systemreset`, only on a typed per-device confirmation, never scheduled and never as a batch.
+  The per-script `!/Restart-Computer|shutdown/i` assertions stay (they prove those engines emit no reboot
+  command); the reboots that DO happen are always the announced PC Reset. See "PC Reset engine" and
+  "Windows Update troubleshooter" below.
 
 ## Software deploy engine (v4.0.0, verified contracts)
 
@@ -757,12 +769,12 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   `device-reset.json` (`devLoadResults`/`devSaveResults`); audit `device-reset.log` (`devLog`, ~5 MB
   rotate). No config section, **no automation**: a reset only happens because an admin typed the
   device name of a specific online device.
-- **The reboot exception**: every other engine never reboots; this one restarts the machine because a
-  Windows reset cannot run inside the booted OS. The ONLY reboot command is `systemreset
+- **The announced reboot**: under the v4.6.0 policy a PC Reset is the one place a device is restarted on
+  purpose (a Windows reset cannot run inside the booted OS). The ONLY reboot command is `systemreset
   -cleanpc|-keepfiles -noUI` (PowerShell `Start-Process`); the generated scripts never contain
-  `Restart-Computer`/`shutdown`, so the global never-reboot token assertions of the winget/OS/deploy
-  scripts stay valid and a dedicated test pins that `devStartBatch`/`scheduleDevReset`/`devPump` do
-  not exist (no fleet reset, no scheduled reset).
+  `Restart-Computer`/`shutdown`, so the per-engine "emits no reboot command" assertions of the
+  winget/OS/deploy/troubleshooter scripts stay valid, and a test pins that `devStartBatch`/
+  `scheduleDevReset`/`devPump` do not exist (no fleet reset, no scheduled reset).
 - **Two scripts**: `devBuildProbeScript()` (read-only: `systemreset.exe` present, `BuildNumber`
   (fallback registry `CurrentBuildNumber`), the `-cleanpc`/`-keepfiles` switches by parsing
   `systemreset /?` AND the documented build gate `DEV_MIN_BUILD = 17763`, `reagentc /info` -> WinRE,
@@ -790,6 +802,36 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   the device's own reason. Every outcome writes `devLast`, `device-reset.log` and a device event.
 - Routes: `dr_status` / `dr_probe` / `dr_reset` (all `isAuthorizedAdmin` + the origin header); the
   `get_log` whitelist gained `reset`.
+
+## Windows Update troubleshooter (v4.6.0, issue #3, verified contracts)
+
+- One module `wutroubleshoot.js`, surfaced as two per-Windows-device buttons **in the OS Updates tab**
+  (no new tab, it belongs to the Windows Update story). State: `obj.wuPending` (live `diag`/`repair`
+  sessions), `obj.wuResults` (last result per node, persisted to `wu-troubleshoot.json` via
+  `wuLoadResults`/`wuSaveResults`); audit `wu-troubleshoot.log` (`wuLog`, ~5 MB rotate). `os_status`
+  carries the cached `wu` record per device (no extra route).
+- **Repairs, not msdt**: the `Get/Invoke-TroubleshootingPack` cmdlets were REMOVED in Windows 10 1709 and
+  `msdt.exe /id WindowsUpdateDiagnostic` is an interactive wizard (invisible as SYSTEM, headless behaviour
+  version-dependent), so the deterministic, auditable choice is to run the repairs the troubleshooter's
+  "apply fixes" step performs. `wuBuildDiagnoseScript()` is read-only (services + start types, reboot
+  state, download-cache size, last `Microsoft-Windows-WindowsUpdateClient` errors, `winhttp show proxy`);
+  `wuBuildRepairScript()` restarts BITS/wuauserv/appidsvc/cryptsvc/msiserver, renames
+  `SoftwareDistribution\Download` and `System32\catroot2` (timestamped, recreated empty), re-asserts the
+  Automatic start types and starts the services - through an `invWuStep` harness so a partial run is honest.
+- **Deliberately NOT done**: no `netsh winsock reset` (invasive, LSP-wide, needs a reboot), no
+  `winhttp reset proxy` (would break managed devices - proxy is only reported), no SFC/DISM, and **no
+  reboot** (`$invWu.rebootTriggered = $false`). Every script wraps `psTranscriptLines('invscanner-wutroubleshoot.log')`,
+  answers one `@@INVWU@@{json}` line and emits no `Restart-Computer`/`shutdown`.
+- **Reboot is reported, not triggered** (the v4.6.0 policy): both scripts read
+  `WindowsUpdate\Auto Update\RebootRequired` + `Component Based Servicing\RebootPending` and write a plain
+  `rebootNote` saying whether a reboot is pending and when Windows will restart the device automatically
+  (automatic-restart deadline / outside active hours / next install); the repair additionally flags a locked
+  folder as `rebootNote` "reboot and run again".
+- Sessions/exclusion: `invscanner-wu-<node>` on the shared hook (consumed first in the runcommands branch,
+  `.cbuf` buffering in the console branch); `wuDispatch` reserves the node and refuses if
+  `wu/dev/wg/os/sw Pending` already holds it, and the four pumps skip a node with a `wuPending` entry.
+  Watchdog `WU_TIMEOUT_MS` 8 min (`wuTimeout` -> state `timeout`). Routes `wu_diag` / `wu_repair`
+  (`isAuthorizedAdmin` + origin header); the `get_log` whitelist gained `wu`.
 
 ## Design decisions (with reasons)
 
@@ -972,7 +1014,7 @@ MeshCentral install folder) and root `/*.txt` + `/*.csv` are gitignored as a gua
   contain none), JSON validity of config files, and view-nameâ†”render-name consistency over
   the WHOLE JS tree (the `res.render()` calls live in `lib/routes.js`/`lib/reports.js` since v3.5.1).
   Must run anywhere (no dependencies).
-- `tools/test-plugin.js`: 496 behavioral assertions (80 steps; on Windows with PowerShell AND a POSIX shell present) against the real module (mocked MeshCentral DB/webserver):
+- `tools/test-plugin.js`: 511 behavioral assertions (83 steps; on Windows with PowerShell AND a POSIX shell present) against the real module (mocked MeshCentral DB/webserver):
   the module wiring itself (every lib file attaches, a fresh instance exposes the same function surface, no
   module-level locals in `lib/`), locations grouping & counting, manual-rating severity override, FP exclusion, host-name preference, coverage
   numbers, multi-mesh scan/`mixed` logic, all POST handlers incl. validation/rejections, routes, admin gating
@@ -1177,7 +1219,7 @@ v4.4.0: the panel stops scanning on every page open, and nothing blocks the serv
 - Tests: +15 assertions, +2 steps (467 / 77): cached read never calls scanMeshCves, current ratings applied to a
   stored snapshot, missing locations reported, one pass answering two panels, snapshot stored, pacedEach yields
   to the event loop and never exceeds SCAN_PARALLEL, both CSV orderings.
-v4.5.0 (this release): issue #4 - reset a Windows PC. New module `lib/devreset.js`, new "PC Reset"
+v4.5.0: issue #4 - reset a Windows PC. New module `lib/devreset.js`, new "PC Reset"
 tab, new routes `dr_status` / `dr_probe` / `dr_reset`, new state `device-reset.json` + audit log
 `device-reset.log`. It resets ONE online Windows device with the built-in `systemreset` tool, "Keep my
 files" or "Remove everything". **This is the documented exception to the "never reboot" invariant** - a
@@ -1192,3 +1234,25 @@ Tests: +26 assertions, +3 steps (496 / 80, i.e. 493 PASS + 3 sh -n SKIP on Windo
 the never-reboot token scan with the systemreset-only exception, every mode gate (BitLocker on/unknown,
 stale/missing probe, WinRE off, unsupported build), the typed-name + ack + busy + offline route paths,
 the console-channel probe answer, and both timeout verdicts.
+v4.6.0 (this release): issue #3 - Windows Update troubleshooter, and the "never reboot" rule becomes a
+"reboot is explicit + announced" policy.
+- New module `lib/wutroubleshoot.js`, surfaced as **Diagnose** / **Troubleshoot** buttons on every Windows
+  row of the OS Updates tab (no new tab). Because the `Get/Invoke-TroubleshootingPack` cmdlets were removed
+  in Win10 1709 and `msdt.exe /id WindowsUpdateDiagnostic` is an interactive wizard, the troubleshooter is
+  implemented as the REPAIRS IT APPLIES: Diagnose reads the WU services + start types, whether a reboot is
+  pending (and when Windows restarts automatically), the download-cache size and the last
+  `WindowsUpdateClient` errors (read-only); Troubleshoot restarts BITS/wuauserv/appidsvc/cryptsvc/msiserver,
+  resets `SoftwareDistribution\Download` + `System32\catroot2` and re-asserts Automatic - through a per-step
+  ok/fail harness so a partial run stays honest. No winsock/proxy reset, no SFC/DISM, and **no reboot**.
+- Policy change: a reboot is no longer forbidden outright, it must be explicit and announced. The update /
+  deploy / troubleshoot engines emit no reboot command (the `!/Restart-Computer|shutdown/i` assertions stay
+  and now also cover the troubleshooter) and always report a pending reboot with when Windows handles it;
+  the only feature that restarts a device is still the manual per-device PC Reset. The reworded test now
+  pins "only PC Reset reboots, the troubleshooter adds no reboot path, no batch/scheduled repair".
+- Wiring: `invscanner-wu-` sessions on the shared hook (runcommands + console buffering); `wuPending` added
+  to the mutual-exclusion of the winget/OS/deploy/reset pumps and dispatches; `os_status` carries each
+  device's last `wu` record; `get_log` accepts `wu`; state in `wu-troubleshoot.json`, log `wu-troubleshoot.log`.
+- Tests: +15 assertions, +3 steps (511 / 83, 508 PASS + 3 sh -n SKIP on Windows): diagnose read-only shape,
+  repair step-harness shape + no reboot/winsock/proxy, PS parser, the busy/offline/non-Windows route gates,
+  diagnose + partial-repair answers consumed and stored with the reboot note surfaced, os_status carries it,
+  the get_log route, the pump-exclusion wiring and the timeout. Version 4.5.0 -> 4.6.0.

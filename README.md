@@ -43,12 +43,20 @@ without sending inventory data to anyone.
 * **OS updates and OS upgrades on demand** - *force OS updates* installs pending Windows updates (built-in Windows
   Update agent) or runs the Linux package manager upgrade; *force OS Upgrade* brings outdated releases (e.g.
   Windows 11 23H2, Ubuntu 22.04) to the current one, marked *urgent* when the installed release runs out of support.
-  Never reboots a device.
+  This never reboots the device itself - a pending reboot is reported, with when Windows restarts automatically.
+* **Windows Update troubleshooter (per device in the OS Updates tab)** - *Diagnose* reads the Windows Update
+  services, whether a reboot is pending (and when Windows will restart), the download-cache size and the last
+  `WindowsUpdateClient` errors, changing nothing; *Troubleshoot* applies the repairs the built-in troubleshooter
+  performs - restart BITS/Windows Update/Cryptographic/msiserver, reset the `SoftwareDistribution\Download` and
+  `catroot2` folders and re-assert the Automatic start types. It runs as SYSTEM and **does not reboot** (it reports
+  any pending reboot instead). Implemented as direct repairs because the old `TroubleshootingPack` cmdlets were
+  removed in Windows 10 1709 and the msdt wizard is not headless.
 * **Software deployment (Deploy tab)** - install an **MSI / MSP / EXE / DEB / RPM / shell installer** on the devices
   you pick (single machines or whole locations): upload the package from your PC into the plugin's library, take it
   from MeshCentral's Server Files, or place it in the plugin's server folder. Optional command-line parameters,
   **offline devices install automatically as soon as they reconnect**, every transfer is **SHA-256 verified on the
-   device before anything runs**, and no device is ever rebooted. Per device you get state + exit code + the
+   device before anything runs**, and the install itself never reboots the device (exit 3010/1641 is reported
+   as "ok, reboot pending"). Per device you get state + exit code + the
    installer's own message.
 * **Reset a Windows PC (PC Reset tab)** - reset one chosen Windows machine with the built-in `systemreset` tool,
    *Keep my files* or *Remove everything*. This is **the one feature that restarts a device** (a reset runs in
@@ -201,7 +209,8 @@ plus *OS updates* / *OS Upgrade* per device row:
 * Windows Server and distributions other than Ubuntu have no newer-release check: they show *Upgrade urgent* when
   their own support has ended or ends within the window, otherwise *unknown*, and are never upgraded automatically.
 
-No device is ever rebooted; a pending reboot is shown per device. Results go to the device table, the device's event
+These OS runs never reboot the device themselves; a pending reboot is shown per device (and Windows handles it
+at its automatic-restart deadline). Results go to the device table, the device's event
 list and `os-update.log`; the clients log to `invscanner-osupdate.log` (Windows: next to `meshagent.exe` or in
 `C:\ProgramData\InventoryScanner`, Linux: `/var/log/`). OS and winget batches never run at the same time, and the
 winget exclusion list applies to both.

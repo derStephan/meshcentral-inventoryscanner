@@ -409,8 +409,17 @@
                 documented TargetReleaseVersion policy and installs it; the previous policy is restored afterwards. On Ubuntu,
                 <code>apt-get dist-upgrade</code> runs, followed by <code>do-release-upgrade</code>, which moves one release per run.
                 Other distributions and Windows Server are shown but never upgraded automatically.<br>
-                Devices are <strong>never rebooted</strong>: a pending reboot is reported per device and has to be done by you.
-                The winget exclusion list applies here too, and an OS batch never runs at the same time as a winget batch.
+                <strong>Reboot policy:</strong> these OS runs never reboot the device themselves - if the updates
+                need a reboot, that is reported per device and Windows performs it at its own
+                automatic-restart deadline / outside the active hours, or you reboot it yourself.<br>
+                <strong>Windows Update troubleshooter (per Windows device):</strong> <em>Diagnose</em> reads the WU
+                services, whether a reboot is pending (and when Windows will restart automatically), the download
+                cache size and the last <code>WindowsUpdateClient</code> errors - it changes nothing.
+                <em>Troubleshoot</em> applies the repairs the built-in troubleshooter would: it restarts
+                BITS/wuauserv/appidsvc/cryptsvc/msiserver, resets <code>SoftwareDistribution\Download</code> and
+                <code>catroot2</code> and re-asserts the Automatic start types. It does not reboot - any pending
+                reboot is reported with when it will happen. The winget exclusion list applies here too, and an OS
+                batch never runs at the same time as a winget batch or a troubleshooter run on that device.
             </div>
             <div class="controls">
                 <button id="osUpdBtn" class="green">force OS updates</button>
@@ -421,7 +430,7 @@
             </div>
             <div id="osMsg"></div>
             <div class="table-container"><table>
-                <thead><tr><th>Device</th><th>Group</th><th style="width:220px;">OS</th><th style="width:70px;">Online</th><th style="width:150px;">Release state</th><th style="width:300px;">Last OS run</th><th style="width:190px;">Actions</th></tr></thead>
+                <thead><tr><th>Device</th><th>Group</th><th style="width:220px;">OS</th><th style="width:70px;">Online</th><th style="width:150px;">Release state</th><th style="width:340px;">Last OS run</th><th style="width:230px;">Actions</th></tr></thead>
                 <tbody id="osDevBody"><tr><td colspan="7" style="color:#888">Loading...</td></tr></tbody>
             </table></div>
             <h3>OS update log</h3>
@@ -1003,6 +1012,19 @@
             return t;
         }
 
+        function osWuText(d) {
+            if (d.wuPending) { return '<div style="font-size:11px;color:#8a6d3b">Windows Update troubleshooter: ' + esc(d.wuPending.kind === 'repair' ? 'repairing' : 'diagnosing') + '…</div>'; }
+            var w = d.wu;
+            if (!w) { return ''; }
+            var col = w.state === 'ok' ? '#1d7a3a' : (w.state === 'partial' ? '#8a6d3b' : (w.state === 'timeout' ? '#a33' : '#888'));
+            var t = '<div style="font-size:11px;margin-top:2px;border-top:1px solid #eee;padding-top:2px"><b>WU ' + esc(w.kind === 'repair' ? 'repair' : 'check') + ':</b> <span style="color:' + col + '">' + esc(w.state || '') + '</span>';
+            if (w.kind === 'diag' && Array.isArray(w.services)) { var st = w.services.filter(function (x) { return x.status && x.status !== 'Running'; }); if (st.length) { t += ' (' + st.length + ' service(s) not running)'; } if (Array.isArray(w.events) && w.events.length) { t += ' (' + w.events.length + ' recent error(s) in the WU log)'; } }
+            else if (w.kind === 'repair' && Array.isArray(w.steps)) { var okn = w.steps.filter(function (x) { return x.ok; }).length; t += ' (' + okn + '/' + w.steps.length + ' steps ok)'; }
+            if (w.rebootPending) { t += ' <b style="color:#c80">reboot pending</b>'; }
+            if (w.rebootNote) { t += '<div style="color:#556">' + esc(w.rebootNote) + '</div>'; }
+            return t + '</div>';
+        }
+
         function renderOsDevices() {
             var s = osApp.status;
             if (!s) { return; }
@@ -1029,9 +1051,13 @@
                 else { rel = '<span style="color:#1d7a3a">current</span>' + (d.note ? '<div style="font-size:11px;color:#556">' + esc(d.note) + '</div>' : ''); }
                 html += '<tr><td>' + esc(d.given || d.host) + '</td><td>' + esc(d.group) + '</td><td style="font-size:11px">' + esc(d.os) + '</td>';
                 html += '<td>' + (d.online ? 'yes' : '<span style="color:#a33">offline</span>') + '</td><td style="font-size:11px">' + rel + (d.excluded ? '<div class="hint">excluded</div>' : '') + '</td>';
-                html += '<td style="font-size:11px">' + osLastText(d) + '</td><td style="white-space:nowrap">';
+                html += '<td style="font-size:11px">' + osLastText(d) + (d.platform === 'windows' ? osWuText(d) : '') + '</td><td style="white-space:nowrap">';
                 html += '<button class="small green" data-osact="upd" data-osid="' + esc(d.id) + '">OS updates</button> ';
                 if (d.upgradable) { html += '<button class="small purple" data-osact="upg" data-osid="' + esc(d.id) + '">OS Upgrade</button>'; }
+                if (d.platform === 'windows') {
+                    html += '<br><button class="small" data-osact="wud" data-osid="' + esc(d.id) + '" ' + (d.online ? '' : 'disabled ') + 'title="Read the Windows Update state (services, pending reboot, download cache, last errors) - changes nothing.">Diagnose</button> ';
+                    html += '<button class="small red" data-osact="wur" data-osid="' + esc(d.id) + '" ' + (d.online ? '' : 'disabled ') + 'title="Apply the Windows Update troubleshooter repairs (restart the WU services, reset the download + catroot2 folders). No reboot is triggered.">Troubleshoot</button>';
+                }
                 html += '</td></tr>';
                 var l = d.last;
                 if (l && !d.pending && ((Array.isArray(l.updates) && l.updates.length > 0) || l.log)) {
@@ -1060,7 +1086,9 @@
                 var was = osApp.status && osApp.status.running;
                 osApp.status = s; renderOsDevices(); loadOsLog();
                 if (osPollTimer != null) { clearTimeout(osPollTimer); osPollTimer = null; }
+                var anyWu = (s.devices || []).some(function (x) { return x.wuPending; });
                 if (s.running) { osPollTimer = setTimeout(loadOsStatus, 15000); }
+                else if (anyWu) { osPollTimer = setTimeout(loadOsStatus, 5000); }
                 else if (was) { showMsg('osMsg', 'OS batch finished - see the table and the log.', true); }
             }).catch(function (ex) { showMsg('osMsg', 'Failed to load OS state: ' + ex.message, false); });
         }
@@ -1083,6 +1111,22 @@
             }).catch(function (ex) { showMsg('osMsg', 'Run failed: ' + ex.message, false); });
         }
 
+        function wuDiag(nodeId) {
+            post('wu_diag', { nodeId: nodeId }).then(function (d) {
+                if (d.error) { showMsg('osMsg', d.error, false); return; }
+                floatMsg('Windows Update diagnose started for ' + osDevLabel(nodeId) + ' - the result appears in the table (changes nothing).', true);
+                setTimeout(loadOsStatus, 2000);
+            }).catch(function (ex) { showMsg('osMsg', 'Diagnose failed: ' + ex.message, false); });
+        }
+
+        function wuRepair(nodeId) {
+            post('wu_repair', { nodeId: nodeId }).then(function (d) {
+                if (d.error) { showMsg('osMsg', d.error, false); return; }
+                floatMsg('Windows Update repairs started for ' + osDevLabel(nodeId) + ' - no reboot is triggered; a pending reboot (if any) is reported.', true);
+                setTimeout(loadOsStatus, 2500);
+            }).catch(function (ex) { showMsg('osMsg', 'Repair failed: ' + ex.message, false); });
+        }
+
         function osUpgradeFleet(scope) {
             var devsAll = (osApp.status && osApp.status.devices) || [];
             var n = devsAll.filter(function (x) { return x.upgradable && !x.excluded && (scope === 'all' || x.releaseState === 'urgent'); }).length;
@@ -1090,12 +1134,12 @@
             var avail = devsAll.filter(function (x) { return x.upgradable && !x.excluded && x.releaseState === 'available'; }).length;
             var skipped = (unk ? '\n' + unk + ' device(s) with an UNKNOWN release state are skipped.' : '') + ((scope === 'urgent' && avail) ? '\n' + avail + ' device(s) with "Upgrade available" are not part of this batch.' : '');
             if (n === 0) { showMsg('osMsg', (scope === 'urgent' ? 'No device needs an urgent upgrade.' : 'No device is provably outdated.') + skipped.split('\n').join(' '), false); return; }
-            if (!window.confirm('force OS Upgrade (' + scope + ') on ' + n + ' device(s) now?' + skipped + '\nWindows installs the current feature release, Ubuntu upgrades to the next release. This can take hours and changes the OS release. No device is rebooted - you have to do that yourself.')) { return; }
+            if (!window.confirm('force OS Upgrade (' + scope + ') on ' + n + ' device(s) now?' + skipped + '\nWindows installs the current feature release, Ubuntu upgrades to the next release. This can take hours and changes the OS release. This run does not reboot a device - Windows reboots at its own automatic-restart deadline when the new release needs one.')) { return; }
             osRun('upgrade', null, scope);
         }
 
         $('osUpdBtn').addEventListener('click', function () {
-            if (!window.confirm('force OS updates on ALL non-excluded Windows and Linux devices now?\nWindows installs every pending Windows update, Linux runs the package manager upgrade. No device is rebooted.')) { return; }
+            if (!window.confirm('force OS updates on ALL non-excluded Windows and Linux devices now?\nWindows installs every pending Windows update, Linux runs the package manager upgrade. This run does not reboot - a pending reboot is reported per device and Windows handles it at its automatic-restart deadline.')) { return; }
             osRun('update');
         });
         $('osUpgUrgentBtn').addEventListener('click', function () { osUpgradeFleet('urgent'); });
@@ -1108,8 +1152,10 @@
             if (!b || b === this) { return; }
             var act = b.getAttribute('data-osact'), id = b.getAttribute('data-osid');
             if (act === 'tgl') { osApp.open[id] = !osApp.open[id]; renderOsDevices(); return; }
-            if (act === 'upd' && window.confirm('Run OS updates on this ONE device now? No reboot is triggered.')) { osRun('update', id); }
-            if (act === 'upg' && window.confirm('Upgrade the OS release of this ONE device now? This can take hours. No reboot is triggered.')) { osRun('upgrade', id); }
+            if (act === 'upd' && window.confirm('Run OS updates on this ONE device now?\nThis run does NOT reboot - if the updates need one, Windows applies it at its automatic-restart deadline / outside active hours, or you reboot it yourself.')) { osRun('update', id); }
+            if (act === 'upg' && window.confirm('Upgrade the OS release of this ONE device now? This can take hours. This run does not reboot the device itself.')) { osRun('upgrade', id); }
+            if (act === 'wud') { wuDiag(id); }
+            if (act === 'wur' && window.confirm('Apply the Windows Update troubleshooter repairs on this ONE device?\nThe WU services are restarted and the download + catroot2 folders are reset. This run does NOT reboot - a pending reboot (if any) is reported with when Windows will do it automatically.')) { wuRepair(id); }
         });
 
         // ---------- software deploy (v4.0.0) ----------
