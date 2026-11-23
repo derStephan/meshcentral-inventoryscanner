@@ -419,7 +419,13 @@
                 BITS/wuauserv/appidsvc/cryptsvc/msiserver, resets <code>SoftwareDistribution\Download</code> and
                 <code>catroot2</code> and re-asserts the Automatic start types. It does not reboot - any pending
                 reboot is reported with when it will happen. The winget exclusion list applies here too, and an OS
-                batch never runs at the same time as a winget batch or a troubleshooter run on that device.
+                batch never runs at the same time as a winget batch or a troubleshooter run on that device.<br>
+                <strong>Restart / Notify user (per Windows or Linux device, v4.7.0):</strong> <em>Notify user</em>
+                shows a message to the logged-on user (Windows <code>msg</code>, Linux <code>wall</code>) without
+                rebooting. <em>Restart</em> reboots the device on purpose after a short grace, sending that same
+                message through the OS shutdown banner - this and the PC Reset tab are the ONLY two places this
+                plugin ever restarts a machine, and both are explicit, per-device and need the device name typed
+                (never automatic, never a batch, never scheduled). Use it to reboot before or after an upgrade.
             </div>
             <div class="controls">
                 <button id="osUpdBtn" class="green">force OS updates</button>
@@ -1025,6 +1031,19 @@
             return t + '</div>';
         }
 
+        function rbText(d) {
+            if (d.rbPending) { return '<div style="font-size:11px;color:#8a6d3b">restart/notice ' + esc(d.rbPending.kind) + ' running…</div>'; }
+            var rb = d.rb;
+            if (!rb || (!rb.state && !rb.kind)) { return ''; }
+            var col = rb.state === 'scheduled' || rb.state === 'sent' || rb.state === 'rebooted' ? '#1d7a3a' : (rb.state === 'not-delivered' ? '#8a6d3b' : '#a33');
+            var lbl = (rb.kind === 'notify') ? 'notice' : 'restart';
+            var t = '<div style="font-size:11px;margin-top:2px;border-top:1px solid #eee;padding-top:2px"><b>' + esc(lbl) + ':</b> <span style="color:' + col + '">' + esc(rb.state) + '</span> ' + esc(fmtLocal(rb.time));
+            if (rb.kind === 'reboot' && rb.secs != null && rb.state === 'scheduled') { t += ' (in ' + esc(rb.secs) + 's, abort: ' + esc(rb.abort || '') + ')'; }
+            if (rb.users) { t += ' <span style="color:#556">user: ' + esc(rb.users) + '</span>'; }
+            if (rb.pendingReboot) { t += ' <b style="color:#c80">reboot was already pending (' + esc(rb.source || '') + ')</b>'; }
+            return t + '</div>';
+        }
+
         function renderOsDevices() {
             var s = osApp.status;
             if (!s) { return; }
@@ -1051,12 +1070,16 @@
                 else { rel = '<span style="color:#1d7a3a">current</span>' + (d.note ? '<div style="font-size:11px;color:#556">' + esc(d.note) + '</div>' : ''); }
                 html += '<tr><td>' + esc(d.given || d.host) + '</td><td>' + esc(d.group) + '</td><td style="font-size:11px">' + esc(d.os) + '</td>';
                 html += '<td>' + (d.online ? 'yes' : '<span style="color:#a33">offline</span>') + '</td><td style="font-size:11px">' + rel + (d.excluded ? '<div class="hint">excluded</div>' : '') + '</td>';
-                html += '<td style="font-size:11px">' + osLastText(d) + (d.platform === 'windows' ? osWuText(d) : '') + '</td><td style="white-space:nowrap">';
+                html += '<td style="font-size:11px">' + osLastText(d) + (d.platform === 'windows' ? osWuText(d) : '') + rbText(d) + '</td><td style="white-space:nowrap">';
                 html += '<button class="small green" data-osact="upd" data-osid="' + esc(d.id) + '">OS updates</button> ';
                 if (d.upgradable) { html += '<button class="small purple" data-osact="upg" data-osid="' + esc(d.id) + '">OS Upgrade</button>'; }
                 if (d.platform === 'windows') {
                     html += '<br><button class="small" data-osact="wud" data-osid="' + esc(d.id) + '" ' + (d.online ? '' : 'disabled ') + 'title="Read the Windows Update state (services, pending reboot, download cache, last errors) - changes nothing.">Diagnose</button> ';
                     html += '<button class="small red" data-osact="wur" data-osid="' + esc(d.id) + '" ' + (d.online ? '' : 'disabled ') + 'title="Apply the Windows Update troubleshooter repairs (restart the WU services, reset the download + catroot2 folders). No reboot is triggered.">Troubleshoot</button>';
+                }
+                if (d.platform === 'windows' || d.platform === 'linux') {
+                    html += '<br><button class="small" data-osact="rbn" data-osid="' + esc(d.id) + '" ' + (d.online ? '' : 'disabled ') + 'title="Send a message to the logged-on user of this device - does NOT reboot.">Notify user</button> ';
+                    html += '<button class="small red" data-osact="rbr" data-osid="' + esc(d.id) + '" ' + (d.online ? '' : 'disabled ') + 'title="Force a restart of this device after a short grace, with a message to the user. Explicit, announced, needs the device name typed. Never automatic.">Restart</button>';
                 }
                 html += '</td></tr>';
                 var l = d.last;
@@ -1086,7 +1109,7 @@
                 var was = osApp.status && osApp.status.running;
                 osApp.status = s; renderOsDevices(); loadOsLog();
                 if (osPollTimer != null) { clearTimeout(osPollTimer); osPollTimer = null; }
-                var anyWu = (s.devices || []).some(function (x) { return x.wuPending; });
+                var anyWu = (s.devices || []).some(function (x) { return x.wuPending || x.rbPending; });
                 if (s.running) { osPollTimer = setTimeout(loadOsStatus, 15000); }
                 else if (anyWu) { osPollTimer = setTimeout(loadOsStatus, 5000); }
                 else if (was) { showMsg('osMsg', 'OS batch finished - see the table and the log.', true); }
@@ -1127,6 +1150,28 @@
             }).catch(function (ex) { showMsg('osMsg', 'Repair failed: ' + ex.message, false); });
         }
 
+        function rbRestart(nodeId) {
+            var m = window.prompt('Message to show the logged-on user (a 60s restart countdown is started; save-your-work notice). Cancel to abort.', 'A maintenance restart was triggered by the administrator - please save your work.');
+            if (m === null) { return; }
+            var name = window.prompt('Type the device name exactly to confirm the restart of ' + osDevLabel(nodeId) + ':', '');
+            if (name === null) { return; }
+            post('reboot_now', { nodeId: nodeId, secs: 60, message: m, confirm: name }).then(function (d) {
+                if (d.error) { showMsg('osMsg', d.error, false); return; }
+                floatMsg('Restart scheduled on ' + osDevLabel(nodeId) + ' (' + d.secs + 's) - the user got the message.', true);
+                setTimeout(loadOsStatus, 2500);
+            }).catch(function (ex) { showMsg('osMsg', 'Restart failed: ' + ex.message, false); });
+        }
+
+        function rbNotify(nodeId) {
+            var m = window.prompt('Message to the logged-on user of ' + osDevLabel(nodeId) + ' (no reboot):', 'The administrator sent a maintenance notice for this device.');
+            if (m === null) { return; }
+            post('reboot_notify', { nodeId: nodeId, message: m }).then(function (d) {
+                if (d.error) { showMsg('osMsg', d.error, false); return; }
+                floatMsg('Notice sent to ' + osDevLabel(nodeId) + ' (device user informed if the platform supports it; no reboot).', true);
+                setTimeout(loadOsStatus, 2000);
+            }).catch(function (ex) { showMsg('osMsg', 'Notice failed: ' + ex.message, false); });
+        }
+
         function osUpgradeFleet(scope) {
             var devsAll = (osApp.status && osApp.status.devices) || [];
             var n = devsAll.filter(function (x) { return x.upgradable && !x.excluded && (scope === 'all' || x.releaseState === 'urgent'); }).length;
@@ -1156,6 +1201,8 @@
             if (act === 'upg' && window.confirm('Upgrade the OS release of this ONE device now? This can take hours. This run does not reboot the device itself.')) { osRun('upgrade', id); }
             if (act === 'wud') { wuDiag(id); }
             if (act === 'wur' && window.confirm('Apply the Windows Update troubleshooter repairs on this ONE device?\nThe WU services are restarted and the download + catroot2 folders are reset. This run does NOT reboot - a pending reboot (if any) is reported with when Windows will do it automatically.')) { wuRepair(id); }
+            if (act === 'rbn') { rbNotify(id); }
+            if (act === 'rbr') { rbRestart(id); }
         });
 
         // ---------- software deploy (v4.0.0) ----------

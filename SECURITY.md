@@ -91,16 +91,20 @@ Please report security vulnerabilities by opening an issue.
   An existing folder with another owner, or a reparse point, is refused; then the run continues without a
   transcript. User-writable locations (plain `%ProgramData%`, `%TEMP%`) are not used (since v3.0.1).
 - winget is resolved from HKLM App Paths, then the admin-only WindowsApps package folder, then PATH.
-- **Reboot policy (since v4.6.0).** A reboot is no longer forbidden outright - it must be EXPLICIT and
-  ANNOUNCED. The winget / OS update / OS upgrade / deploy / Windows-Update-troubleshooter engines emit no
-  reboot command at all (`--allow-reboot` is never used; the per-script `!/Restart-Computer|shutdown/i`
-  assertions stay and now also cover the troubleshooter scripts), and a pending reboot is always *reported*
-  (exit 3010/1641 "ok, reboot pending"; WU troubleshooter Diagnose/Repair report whether a reboot is pending
-  and when Windows performs it automatically). The only feature that restarts a device is the per-device
-  **PC Reset**: a Windows reset cannot run inside the booted OS, so it restarts on purpose - ONLY through the
-  built-in `systemreset` tool, ONLY per-device and manually after a passing read-only Check and a typed
-  device-name confirmation, with "Remove everything" hard-blocked while BitLocker protection is on/unknown
-  until the recovery key is confirmed. Never scheduled, never a fleet action.
+- **Reboot policy (since v4.6.0, two paths since v4.7.0).** A reboot is no longer forbidden outright - it must
+  be EXPLICIT and ANNOUNCED. The winget / OS update / OS upgrade / deploy / Windows-Update-troubleshooter
+  engines emit no reboot command at all (`--allow-reboot` is never used; the per-script
+  `!/Restart-Computer|shutdown/i` assertions stay and also cover the troubleshooter scripts), and a pending
+  reboot is always *reported* (exit 3010/1641 "ok, reboot pending"; WU troubleshooter Diagnose/Repair report
+  whether a reboot is pending and when Windows performs it automatically). Only TWO features restart a device,
+  both per-device, manual and typed-name confirmed, never a batch, never scheduled, never automatic: the
+  **PC Reset** (via the built-in `systemreset`; "Remove everything" hard-blocked while BitLocker protection is
+  on/unknown until the recovery key is confirmed) and the **Force Restart** (via the OS `shutdown`, with a
+  grace period).
+- The **Force restart / user notice** message is sanitized (control chars and the shell/PowerShell quoting
+  chars `` ` $ " \ `` removed, length-capped) and travels base64, decoded on the device and used ONLY as a
+  single quoted argument to `msg`/`wall`/`shutdown` - a crafted message can never inject a command. It is
+  gated on a full site admin + the request-origin header; `reboot_now` also needs the device name typed.
 - The **Windows Update troubleshooter repairs** (v4.6.0) are the deterministic, auditable form of the built-in
   troubleshooter's "apply fixes" step (the `TroubleshootingPack` cmdlets were removed in Windows 10 1709): they
   restart the WU services and reset `SoftwareDistribution\Download` + `catroot2`. They deliberately do NOT run

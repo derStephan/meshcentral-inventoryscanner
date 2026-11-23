@@ -2649,14 +2649,16 @@ steps.push(function (next) {
     var openersR = rc.split(String.fromCharCode(10)).filter(function (l) { return /[({]\s*$/.test(l); });
     check('devreset reset script: one statement per line', openersR.length === 0, openersR.slice(0, 2));
 
-    // v4.6.0 reboot policy (replaces the old absolute "never reboot" invariant): the ONLY thing that
-    // restarts a device is the explicit, announced, per-device PC Reset - never a batch, never a
-    // schedule, never another engine. The troubleshooter repairs (v4.6.0) add no reboot path either.
-    check('reboot policy: only the manual per-device PC Reset restarts a device - no batch/scheduled reset, no troubleshooter reboot',
+    // v4.7.0 reboot policy: a reboot must be EXPLICIT and ANNOUNCED. The two things that restart a
+    // device are the per-device PC Reset (systemreset) and the per-device Force Restart (shutdown),
+    // both manual + typed-name confirmed; never a batch, never a schedule, never automatic, and no other
+    // engine emits a reboot (the troubleshooter repairs reboot nothing and run no shutdown command).
+    check('reboot policy: only PC Reset and Force Restart reboot, both manual per-device + confirmed - no batch/scheduled restart, no troubleshooter reboot',
         typeof obj.devStartBatch === 'undefined' && typeof obj.scheduleDevReset === 'undefined' &&
         typeof obj.devTargetNodes === 'undefined' && typeof obj.devPump === 'undefined' &&
-        typeof obj.wuStartBatch === 'undefined' && typeof obj.scheduleWuRepair === 'undefined' &&
-        typeof obj.wuPump === 'undefined' && !/Restart-Computer|shutdown/i.test(obj.wuBuildRepairScript()));
+        typeof obj.wuStartBatch === 'undefined' && typeof obj.scheduleWuRepair === 'undefined' && typeof obj.wuPump === 'undefined' &&
+        typeof obj.rbStartBatch === 'undefined' && typeof obj.scheduleReboot === 'undefined' && typeof obj.rbPump === 'undefined' &&
+        typeof obj.rbTargetNodes === 'undefined' && !/Restart-Computer|shutdown/i.test(obj.wuBuildRepairScript()));
 
     // mode gating is a pure decision on a probe object + a clock.
     var now = Date.now();
@@ -2878,6 +2880,140 @@ steps.push(function (next) {
     oT2.wuPending['node//wt1'] = e; oT2.wuTimeout(e);
     check('wu timeout: a diagnose that never answered is stored as timeout (no silent success)',
         oT2.wuResults['node//wt1'] && oT2.wuResults['node//wt1'].state === 'timeout' && oT2.wuPending['node//wt1'] == null, oT2.wuResults['node//wt1']);
+    next();
+});
+
+// ---- v4.7.0 force restart + user notice (issue #6) ----
+steps.push(function (next) {
+    // message sanitizer: control chars + PowerShell/shell quoting chars are removed, length capped.
+    var evil = obj.rbCleanMessage('save your work   $(reboot) `calc` "x" \\ y\n\tEND', 'DEFAULT');
+    check('rbCleanMessage: strips $ ` " \\ and control chars, collapses spaces, caps length',
+        evil.indexOf('$') < 0 && evil.indexOf('`') < 0 && evil.indexOf('"') < 0 && evil.indexOf('\\') < 0 && evil.indexOf('\n') < 0 &&
+        /\s\s/.test(evil) === false && evil.indexOf('END') >= 0 && evil.length <= obj.RB_MAX_MESSAGE, evil);
+    check('rbCleanMessage: empty input falls back to the default', obj.rbCleanMessage('', 'the default msg') === 'the default msg');
+
+    var wn = obj.rbBuildNotifyWindowsScript('Maintenance');
+    var wr = obj.rbBuildRebootWindowsScript('Maintenance restart', 60);
+    var lr = obj.rbBuildRebootLinuxScript('Maintenance restart', 120);
+    check('rb notify win script: msg.exe popup, reports pending reboot + users, NO shutdown command',
+        wn.indexOf("msg '*'") >= 0 && wn.indexOf('Auto Update\\RebootRequired') >= 0 && wn.indexOf('Win32_ComputerSystem') >= 0 &&
+        wn.indexOf(obj.RB_MARKER) >= 0 && wn.indexOf('shutdown /r') < 0);
+    check('rb restart win script: msg + shutdown /r /t <secs> carrying the message, state scheduled, abort hint',
+        wr.indexOf("msg '*'") >= 0 && wr.indexOf('shutdown /r /t $invSecs /c "$invMsg"') >= 0 && wr.indexOf('$invSecs = 60') >= 0 &&
+        wr.indexOf("'shutdown /a'") >= 0 && wr.indexOf(obj.RB_MARKER) >= 0);
+    check('rb restart linux script: wall + shutdown -r with a minute grace (ceil), state from exit code',
+        lr.indexOf('wall "$M"') >= 0 && lr.indexOf('shutdown -r $T') >= 0 && lr.indexOf('/var/run/reboot-required') >= 0 &&
+        lr.indexOf('who') >= 0 && lr.indexOf(obj.RB_MARKER) >= 0);
+    check('rb scripts: the message never reaches the script as a literal (travels base64 only)',
+        wr.indexOf('Maintenance restart') < 0 && lr.indexOf('Maintenance restart') < 0);
+
+    // PowerShell parser on the two Windows scripts.
+    var dir = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-rbps-'));
+    var fp = path.join(dir, 'r.ps1'); fs.writeFileSync(fp, wr);
+    var psr = runPs(['-NoProfile', '-NonInteractive', '-Command', "$t=$null;$e=$null;[void][System.Management.Automation.Language.Parser]::ParseFile('" + fp + "',[ref]$t,[ref]$e);$e.Count"]);
+    if (psr == null) { console.log('SKIP rb scripts: PowerShell parser (PowerShell not available)'); }
+    else { check('rb restart win script: PowerShell parser reports no errors', !psr.failed && psr.text.trim() === '0', psr.text.trim()); }
+
+    var src = pluginSrc();
+    check('rb wiring: every engine pump/dispatch skips a node holding a restart session (one runcommands per agent)',
+        (src.match(/obj\.rbPending != null && obj\.rbPending\[nodeid\] != null/g) || []).length >= 2 &&
+        (src.match(/obj\.rbPending && obj\.rbPending\[job\.nodeid\] != null/g) || []).length >= 1 &&
+        src.indexOf('invscanner-rb-') >= 0 && /obj\.rbHandleResponse\(nodeid, command\)/.test(src));
+    next();
+});
+
+steps.push(function (next) {
+    var dpR = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-rb-'));
+    var rbNodes = [
+        { _id: 'node//rw', meshid: 'mesh//grp1', rname: 'rw', name: 'WinBox', osdesc: 'Microsoft Windows 11 Pro' },
+        { _id: 'node//rl', meshid: 'mesh//grp2', rname: 'rl', name: 'LinBox', osdesc: 'Ubuntu 24.04 LTS' },
+        { _id: 'node//rmac', meshid: 'mesh//grp1', rname: 'rmac', name: 'MacBox', osdesc: 'macOS 15' },
+        { _id: 'node//roff', meshid: 'mesh//grp1', rname: 'roff', name: 'OffBox', osdesc: 'Microsoft Windows 10' }
+    ];
+    var dbR = { GetAllType: function (t, cb) { cb(null, t === 'node' ? rbNodes.slice() : meshes.slice()); }, Get: function (id, cb) { cb(null, rbNodes.filter(function (n) { return n._id === id; })); } };
+    var sentR = [];
+    var agentsR = { 'node//rw': { send: function (m) { sentR.push(JSON.parse(m)); } }, 'node//rl': { send: function (m) { sentR.push(JSON.parse(m)); } }, 'node//rmac': { send: function (m) { sentR.push(JSON.parse(m)); } } };
+    var oR = factory({ parent: { db: dbR, datapath: dpR, debug: function () { }, config: { settings: {} }, webserver: { meshes: {}, wsagents: agentsR }, DispatchEvent: function () { } } });
+    var gunzR = function (cmd) {
+        var m = String(cmd).match(/FromBase64String\('([A-Za-z0-9+\/=]+)'\)/) || String(cmd).match(/echo '([A-Za-z0-9+\/=]+)' \| base64 -d \| gzip/);
+        return m ? require('zlib').gunzipSync(Buffer.from(m[1], 'base64')).toString('utf8') : '';
+    };
+
+    // notify: windows (type 1) - no reboot, no typed name needed.
+    oR.handleAdminPostReq({ headers: XHDR, body: { action: 'reboot_notify', nodeId: 'node//rw', message: 'heads up' } }, mockRes(function (n1) {
+        check('reboot_notify win: dispatches msg.exe notice on an invscanner-rb- session, runcommands type 1, no shutdown',
+            n1.started === true && n1.platform === 'windows' && sentR.length === 1 && sentR[0].type === 1 &&
+            String(sentR[0].sessionid).indexOf('invscanner-rb-') === 0 && gunzR(sentR[0].cmds).indexOf('msg') >= 0 &&
+            gunzR(sentR[0].cmds).indexOf('shutdown /r') < 0, sentR[0]);
+        oR.onAgentResponse({ action: 'msg', type: 'runcommands', sessionid: sentR[0].sessionid, result: 'x' + oR.RB_MARKER +
+            '{"notify":true,"platform":"windows","state":"sent","pendingReboot":true,"source":"Windows Update","users":"alice","msg":"heads up","error":""}' + String.fromCharCode(10) }, '', 'node//rw');
+        var nr = oR.rbResults['node//rw'];
+        check('reboot_notify: answer consumed + stored (sent) and a PENDING reboot + user surfaced',
+            nr && nr.kind === 'notify' && nr.state === 'sent' && nr.pendingReboot === true && nr.users === 'alice' && oR.rbPending['node//rw'] == null, nr);
+
+        // linux reboot: type 3 + minute grace.
+        sentR.length = 0;
+        oR.handleAdminPostReq({ headers: XHDR, body: { action: 'reboot_now', nodeId: 'node//rl', secs: 120, message: 'reboot for upgrade', confirm: 'LinBox' } }, mockRes(function (n2) {
+            check('reboot_now linux: runcommands type 3, sh transport, wall + shutdown -r, 2-minute grace (ceil at runtime)',
+                n2.started === true && n2.platform === 'linux' && n2.secs === 120 && sentR.length === 1 && sentR[0].type === 3 &&
+                gunzR(sentR[0].cmds).indexOf('shutdown -r') >= 0 && gunzR(sentR[0].cmds).indexOf('(120 + 59) / 60') >= 0, sentR[0]);
+
+            // mac / no-platform refused.
+            oR.handleAdminPostReq({ headers: XHDR, body: { action: 'reboot_now', nodeId: 'node//rmac', confirm: 'MacBox' } }, mockRes(function (nM) {
+                check('reboot_now: macOS / unreported-OS device is refused (restart is Windows + Linux only)', !!nM.error && /Windows and Linux/.test(nM.error), nM);
+
+                // wrong typed name.
+                oR.handleAdminPostReq({ headers: XHDR, body: { action: 'reboot_now', nodeId: 'node//rw', secs: 30, confirm: 'Wrong' } }, mockRes(function (nW) {
+                    check('reboot_now: a mistyped device name is refused (the typed confirmation guard)', !!nW.error && /device name/.test(nW.error), nW);
+                    sentR.length = 0;
+                    oR.handleAdminPostReq({ headers: XHDR, body: { action: 'reboot_now', nodeId: 'node//rw', secs: 0, confirm: 'winbox', message: 'now' } }, mockRes(function (n3) {
+                        check('reboot_now win: name typed (case-insensitive) -> dispatches shutdown /r /t 0 (immediate)',
+                            n3.started === true && n3.secs === 0 && sentR.length === 1 && gunzR(sentR[0].cmds).indexOf('$invSecs = 0') >= 0, [n3, sentR.length]);
+                        // reply with state scheduled (grace 0 -> but here we still got a reply)
+                        oR.onAgentResponse({ action: 'msg', type: 'runcommands', sessionid: sentR[0].sessionid, result: oR.RB_MARKER +
+                            '{"reboot":true,"platform":"windows","state":"scheduled","secs":0,"abort":"shutdown /a","pendingReboot":false,"source":"","users":"","msg":"now","error":""}' }, '', 'node//rw');
+                        check('reboot_now: scheduled answer consumed + stored, no browser leak',
+                            oR.rbResults['node//rw'].kind === 'reboot' && oR.rbResults['node//rw'].state === 'scheduled' && oR.rbPending['node//rw'] == null, oR.rbResults['node//rw']);
+
+                        // busy: another engine holds the session.
+                        oR.osPending['node//rw'] = { nodeid: 'node//rw' };
+                        oR.handleAdminPostReq({ headers: XHDR, body: { action: 'reboot_notify', nodeId: 'node//rw', message: 'hi' } }, mockRes(function (bus) {
+                            check('reboot_notify: a device holding an OS/winget/deploy/reset/wu session is refused', !!bus.error && /running/.test(bus.error), bus);
+                            delete oR.osPending['node//rw'];
+                            oR.handleAdminPostReq({ headers: XHDR, body: { action: 'reboot_now', nodeId: 'node//roff', confirm: 'OffBox' } }, mockRes(function (off) {
+                                check('reboot_now: an offline device is refused', !!off.error && /offline/i.test(off.error), off);
+                                oR.handleAdminPostReq({ headers: XHDR, body: { action: 'get_log', type: 'reboot' } }, mockRes(function (lgr) {
+                                    check('get_log reboot: the restart audit log is reachable', Array.isArray(lgr.lines) && lgr.file === 'plugins/inventoryscanner/device-reboot.log', lgr);
+                                    // os_status carries the restart record now.
+                                    oR.handleAdminPostReq({ headers: XHDR, body: { action: 'os_status' } }, mockRes(function (st) {
+                                        var w = st.devices.filter(function (x) { return x.id === 'node//rw'; })[0];
+                                        check('os_status: carries the last restart/notice record per device', w && w.rb && w.rb.kind === 'reboot' && w.rb.state === 'scheduled', w && w.rb);
+                                        next();
+                                    }), user);
+                                }), user);
+                            }), user);
+                        }), user);
+                    }), user);
+                }), user);
+            }), user);
+        }), user);
+    }), user);
+});
+
+steps.push(function (next) {
+    var dpT3 = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-rbt-'));
+    var t3 = [{ _id: 'node//rt1', meshid: 'mesh//grp1', rname: 'rt1', name: 'RT1', osdesc: 'Microsoft Windows 11' }];
+    var dbT3 = { GetAllType: function (t, cb) { cb(null, t === 'node' ? t3.slice() : meshes.slice()); }, Get: function (id, cb) { cb(null, t3.filter(function (n) { return n._id === id; })); } };
+    var agentsT3 = {};
+    var oT3 = factory({ parent: { db: dbT3, datapath: dpT3, debug: function () { }, config: { settings: {} }, webserver: { meshes: {}, wsagents: agentsT3 }, DispatchEvent: function () { } } });
+    var e = { nodeid: 'node//rt1', kind: 'reboot', platform: 'windows', since: Date.now() };
+    oT3.rbPending['node//rt1'] = e; oT3.rbTimeout(e);
+    check('rb timeout: restart + device offline (it is rebooting) = rebooted, not a failure',
+        oT3.rbResults['node//rt1'] && oT3.rbResults['node//rt1'].state === 'rebooted' && oT3.rbPending['node//rt1'] == null, oT3.rbResults['node//rt1']);
+    agentsT3['node//rt1'] = { send: function () { } };
+    var e2 = { nodeid: 'node//rt1', kind: 'reboot', platform: 'windows', since: Date.now() };
+    oT3.rbPending['node//rt1'] = e2; oT3.rbTimeout(e2);
+    check('rb timeout: restart + still online and silent = no-answer', oT3.rbResults['node//rt1'] && oT3.rbResults['node//rt1'].state === 'no-answer', oT3.rbResults['node//rt1']);
     next();
 });
 

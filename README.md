@@ -59,11 +59,16 @@ without sending inventory data to anyone.
    as "ok, reboot pending"). Per device you get state + exit code + the
    installer's own message.
 * **Reset a Windows PC (PC Reset tab)** - reset one chosen Windows machine with the built-in `systemreset` tool,
-   *Keep my files* or *Remove everything*. This is **the one feature that restarts a device** (a reset runs in
+   *Keep my files* or *Remove everything*. One of the two features that restart a device (a reset runs in
    Windows RE, not inside the booted OS), so it is deliberately manual and per-device: you press *Check* first
    (reads `systemreset`, the build, WinRE, BitLocker, …), you must **type the device name** to confirm, and
    *Remove everything* stays **blocked while BitLocker protection is on** until you confirm the recovery key.
    Never automatic, never a fleet action.
+* **Force restart + user notice (per device in the OS Updates tab, v4.7.0)** - reboot one Windows or Linux
+   device before or after an upgrade. *Notify user* shows a message to whoever is logged on (Windows `msg`,
+   Linux `wall`) without rebooting; *Restart* reboots after a short grace and puts the same message in the OS
+   shutdown banner so the user can save their work. The second explicit reboot path: per-device, manual, device
+   name typed to confirm, never automatic, never a batch or schedule. macOS / unknown-OS and busy devices are skipped.
 
 
 ## Requirements

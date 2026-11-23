@@ -106,6 +106,7 @@ Consequences an agent must respect:
 | `lib/osupdate.js` | OS batch engine: `osBuildWindowsScript`, `osBuildLinuxScript`, `osLinuxTransport`, targeting/`osUpgradeInfo`/`osUrgency`, `os_run` + `os_status` handlers |
 | `lib/devreset.js` | per-device Windows PC reset (v4.5.0, the ONLY rebooting feature): `devBuildProbeScript`/`devBuildResetScript`, `devDispatch`, `devModeAllowed`/`devProbeFresh`/`devBitlockerState` gates, `devHandleResponse`/`devResetTimeout`, `dr_status`/`dr_probe`/`dr_reset` handlers, `device-reset.json` + `device-reset.log` |
 | `lib/wutroubleshoot.js` | per-device Windows Update troubleshooter (v4.6.0): `wuBuildDiagnoseScript`/`wuBuildRepairScript`/`wuHead`, `wuDispatch`, `wuHandleResponse`/`wuTimeout`, reboot-state reporting, `wu_diag`/`wu_repair` handlers, `wu-troubleshoot.json` + `wu-troubleshoot.log` |
+| `lib/devreboot.js` | per-device force restart + user notice (v4.7.0): `rbBuild*Script`/`rbBuildScript`/`rbProbeLines`/`rbCleanMessage`/`rbB64`, `rbDispatch`, `rbHandleResponse`/`rbTimeout`, `reboot_now`/`reboot_notify` handlers, `device-reboot.json` + `device-reboot.log` |
 | `lib/swstore.js` | deploy foundation: installer library index/folders, resumable upload parts, task store load/save/prune, staging into `<filespath>/tmp`, `swDownloadCookie` (agentdownload), name/args/extension sanitizers, `swEnsureStaged` |
 | `lib/swdeploy.js` | deploy engine: `swBuildWindowsScript`/`swBuildLinuxScript`, `swWgetCommand`, queue/pump/`swDispatchNode`/`swHandleResponse`/watchdogs, `swOnNodeConnect`/`swSweepOnce`/`scheduleSwSweep`, `swTaskDoneCheck`, `swCreateTask`/`swTaskView` |
 | `lib/swdeploy-handlers.js` | `sw_files`, `sw_upload`, `sw_delete_file`, `sw_rescan_library`, `sw_serverfiles`, `sw_devices`, `sw_create_task`, `sw_status`, `sw_retry_task`, `sw_cancel_task` handlers |
@@ -145,16 +146,20 @@ sub-domain admins of a multi-tenant server are refused since v3.0.1):
    the plugin's server folder; optional command-line arguments; offline devices are QUEUED and install on reconnect;
     every delivery is SHA-256 verified on the device before it runs; results per device (state + exit code) plus
     toast/event-log feedback. Nothing ever installs on its own - a task exists only because an admin created it.
-7. **Windows PC reset** (PC Reset tab, v4.5.0, issue #4): reset ONE chosen Windows device with the built-in
-   `systemreset` tool, "Keep my files" or "Remove everything". The only feature that reboots a device (a reset
-   runs in Windows RE, not inside the booted OS), so it is strictly manual and per-device: a read-only Check must
-   pass, the exact device name has to be typed to confirm, and "Remove everything" is blocked while BitLocker
-   protection is on until the recovery key is confirmed. Never scheduled, never a fleet action.
-8. **Windows Update troubleshooter** (OS Updates tab, v4.6.0, issue #3): per-Windows-device *Diagnose*
-   (read-only: WU services, whether a reboot is pending and when Windows will restart, download-cache size,
-   last `WindowsUpdateClient` errors) and *Troubleshoot* (the repairs the built-in troubleshooter applies -
-   restart the update services, reset `SoftwareDistribution\Download` + `catroot2`, re-assert start types).
-   Runs as SYSTEM through the agent; **it never reboots** and reports any pending reboot instead.
+ 7. **Windows PC reset** (PC Reset tab, v4.5.0, issue #4): reset ONE chosen Windows device with the built-in
+    `systemreset` tool, "Keep my files" or "Remove everything". One of the two features that reboot a device (a reset
+    runs in Windows RE, not inside the booted OS), so it is strictly manual and per-device: a read-only Check must
+    pass, the exact device name has to be typed to confirm, and "Remove everything" is blocked while BitLocker
+    protection is on until the recovery key is confirmed. Never scheduled, never a fleet action.
+ 8. **Windows Update troubleshooter** (OS Updates tab, v4.6.0, issue #3): per-Windows-device *Diagnose*
+    (read-only: WU services, whether a reboot is pending and when Windows will restart, download-cache size,
+    last `WindowsUpdateClient` errors) and *Troubleshoot* (the repairs the built-in troubleshooter applies -
+    restart the update services, reset `SoftwareDistribution\Download` + `catroot2`, re-assert start types).
+    Runs as SYSTEM through the agent; **it never reboots** and reports any pending reboot instead.
+ 9. **Force restart + user notice** (OS Updates tab, v4.7.0, issue #6): per-Windows/Linux *Notify user*
+    (send a message to the logged-on user via `msg`/`wall`, no reboot) and *Restart* (reboot after a grace,
+    messaging the user through the OS shutdown banner) - for before/after an upgrade. The second explicit
+    reboot path: per-device, manual, device name typed, never automatic, never a batch or schedule.
 
 ## Verified API facts (do not guess)
 
@@ -279,7 +284,7 @@ POST body `action=`:
     failed packages additionally get one `FAILED` line per package in `winget-update.log`, and upgraded
      packages that match (exactly or as substring) an ignore entry raise a `WARNING` line there |
 | `wg_programs` | â€” | the PACKAGES view (v3.0.0): aggregates `wgResults` per package id -> `{packages:[{id,name,ready,ok,failed,skipped,devices:[{node,label,state,from,to,time,dry}]}],note}` (â‰¤400 packages, â‰¤200 devices each, sorted by ready+failed). `label` = admin given name first, then host name, then id; results of deleted devices are dropped; `not-installed` counts into `skipped` |
-| `get_log` | `type` = nvd\|winget\|os\|deploy\|reset\|wu | whitelisted log tail (last 300 lines) |
+| `get_log` | `type` = nvd\|winget\|os\|deploy\|reset\|wu\|reboot | whitelisted log tail (last 300 lines) |
 | `sw_files` | â€” | installer library `{files:[{id,name,ext,size,sha256,time,by}], parts:[{uploadId,bytes}], limits:{chunkBytes,maxBytes,exts}, note}` |
 | `sw_upload` | `uploadId` (hex 8..40), `name`, `index`, `data` (base64url â‰¤ `chunkBytes` raw), `last` | chunked upload into `software/parts/<id>.part`; `{ok,next}`, order-error `{error,next,have}` or `{done,file}` (hash computed, committed as immutable `<newid>.<ext>`) |
 | `sw_delete_file` | `fileId` | removes an unused library entry + its file; refused (error) while a NOT-done task references it |
@@ -297,6 +302,8 @@ POST body `action=`:
 | `dr_reset` | `nodeId`, `mode` (`clean`\|`keepfiles`), `confirm` (typed device name), `bitlockerAck` (`true` for a clean reset past BitLocker) | (v4.5.0) the ONLY rebooting action: gated on a fresh passing probe + a correctly typed name + (clean) BitLocker ack, then dispatches `systemreset -cleanpc/-keepfiles -noUI`; {started,mode} or {error}. The device restarts into WinRE, so the reply is often replaced by the offline transition |
 | `wu_diag` | `nodeId` | (v4.6.0, issue #3) dispatches the read-only Windows Update diagnose on `invscanner-wu-<node>` (runcommands type 1): WU services + start types, whether a reboot is pending + when Windows will restart automatically, the download-cache size and the last `WindowsUpdateClient` errors. {started} or {error} (offline / non-Windows / busy). Changes nothing on the device |
 | `wu_repair` | `nodeId` | (v4.6.0) applies the troubleshooter's "fix" steps DIRECTLY (the `Get/Invoke-TroubleshootingPack` cmdlets are gone since Win10 1709): restart BITS/wuauserv/appidsvc/cryptsvc/msiserver, reset `SoftwareDistribution\Download` + `System32\catroot2`, re-assert Automatic start types. {started} or {error}. **Never reboots** - the answer reports `rebootTriggered=false` and any pending reboot with when Windows handles it; a locked file shows as a `partial` step |
+| `reboot_notify` | `nodeId`, `message` | (v4.7.0, issue #6) sends a message to the logged-on user of a Windows/Linux device WITHOUT rebooting (Windows `msg *`, Linux `wall`); also reports whether a reboot is already pending and who is logged on. {started} or {error} (offline / macOS or no reported OS / busy). Message is sanitized (control chars + quoting chars stripped, ≤200) and travels base64 |
+| `reboot_now` | `nodeId`, `secs` (0..3600, default 60 grace), `message`, `confirm` (typed device name) | (v4.7.0) the SECOND explicit reboot path: after a typed-name confirm, restarts one Windows/Linux device with a grace period, messaging the user through the OS shutdown banner (`shutdown /r /t` / `shutdown -r +m`, plus a `msg`/`wall` heads-up). {started,platform,secs} or {error}. Never batched/scheduled; abort within the grace with `shutdown /a` (Win) / `shutdown -c` (Linux) is noted in the result |
 | `update_nvd` | â€” | starts `runNvdUpdate(true)` (background) and answers {started:true} / {alreadyRunning:true}; concurrent runs skip via the `nvdUpdateRunning` flag |
 | `get_nvdlog` | â€” | `{lines:[...last 200 of nvd-download.log], size, file}`; `note` if file missing |
 | `get_locations` | â€” | all non-deleted meshes `{locations:[{id,name}]}` (also feeds the Settings tab group table) |
@@ -674,12 +681,13 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   forbidden outright - it must be EXPLICIT and ANNOUNCED. Concretely: the winget / OS update / OS upgrade /
   deploy / Windows-Update-troubleshooter engines NEVER issue a reboot command themselves; when something
   needs a restart they report it (per device, and in the result) together with when Windows will perform it
-  automatically (the automatic-restart deadline / outside active hours / next update install). The one
-  feature that intentionally restarts a device is the per-device **PC Reset** (v4.5.0), and it does so only
-  through `systemreset`, only on a typed per-device confirmation, never scheduled and never as a batch.
-  The per-script `!/Restart-Computer|shutdown/i` assertions stay (they prove those engines emit no reboot
-  command); the reboots that DO happen are always the announced PC Reset. See "PC Reset engine" and
-  "Windows Update troubleshooter" below.
+  automatically (the automatic-restart deadline / outside active hours / next update install). TWO features
+  restart a device on purpose, both per-device, manual and typed-name confirmed: the **PC Reset** (v4.5.0,
+  via `systemreset`) and the **Force Restart** (v4.7.0, via the OS `shutdown`, which also messages the
+  logged-on user first). The per-script `!/Restart-Computer|shutdown/i` assertions stay on the winget / OS /
+  deploy / troubleshooter scripts (they prove those emit no reboot command); the only reboots are those two
+  announced paths, never a batch, never a schedule, never automatic. See "PC Reset engine", "Windows Update
+  troubleshooter" and "Force restart engine" below.
 
 ## Software deploy engine (v4.0.0, verified contracts)
 
@@ -769,8 +777,9 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   `device-reset.json` (`devLoadResults`/`devSaveResults`); audit `device-reset.log` (`devLog`, ~5 MB
   rotate). No config section, **no automation**: a reset only happens because an admin typed the
   device name of a specific online device.
-- **The announced reboot**: under the v4.6.0 policy a PC Reset is the one place a device is restarted on
-  purpose (a Windows reset cannot run inside the booted OS). The ONLY reboot command is `systemreset
+- **The announced reboot**: under the reboot policy a PC Reset is one of the two explicit restart paths
+  (the other is the Force Restart, v4.7.0) - it restarts because a Windows reset cannot run inside the
+  booted OS. Its reboot command is `systemreset
   -cleanpc|-keepfiles -noUI` (PowerShell `Start-Process`); the generated scripts never contain
   `Restart-Computer`/`shutdown`, so the per-engine "emits no reboot command" assertions of the
   winget/OS/deploy/troubleshooter scripts stay valid, and a test pins that `devStartBatch`/
@@ -832,6 +841,33 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   `wu/dev/wg/os/sw Pending` already holds it, and the four pumps skip a node with a `wuPending` entry.
   Watchdog `WU_TIMEOUT_MS` 8 min (`wuTimeout` -> state `timeout`). Routes `wu_diag` / `wu_repair`
   (`isAuthorizedAdmin` + origin header); the `get_log` whitelist gained `wu`.
+
+## Force restart engine (v4.7.0, issue #6, verified contracts)
+
+- One module `devreboot.js`, surfaced as **Notify user** + **Restart** buttons on every Windows AND Linux row
+  of the OS Updates tab. State: `obj.rbPending` (live `reboot`/`notify` sessions), `obj.rbResults` (last
+  restart/notice per node, `device-reboot.json` via `rbLoadResults`/`rbSaveResults`); audit
+  `device-reboot.log` (`rbLog`). The SECOND explicit reboot path (after PC Reset) and the feature that can
+  warn a user before a reboot.
+- **User messaging** (the issue's "inform if possible"): the admin message is sanitized (`rbCleanMessage` -
+  control chars and the `` ` $ " \ `` quoting chars removed, collapsed, ≤200) and travels base64 (`rbB64`) so
+  it can never inject - decoded on the device and used ONLY as a single quoted argument. Windows: `msg '*' $m`
+  pops a box for the interactive user (Pro/Enterprise; on Home it fails and is reported `not-delivered`).
+  Linux: `wall "$m"` (reaches terminal users; GUI desktops may not see it - stated honestly). Both also
+  surface `pendingReboot`/`source` and the logged-on `users` (Windows `Win32_ComputerSystem.UserName`,
+  Linux `who` + `/var/run/reboot-required`).
+- **Restart** = `shutdown` with a grace (`secs`, default 60, 0..3600) and the message in the OS banner:
+  Windows `shutdown /r /t <secs> /c "$m"` (abort `shutdown /a`), Linux `shutdown -r +<ceil(secs/60)> "$m"`
+  or `now` (abort `shutdown -c`). It runs `msg`/`wall` first, then `shutdown`. The reply arrives during the
+  grace; with `secs:0` the machine may go down before it, so `rbTimeout` reads presence - offline =
+  `rebooted` (coming back), still-online = `no-answer`.
+- **Guard**: per-device, manual, `reboot_now` needs the device name typed (same confirm rule as PC Reset);
+  `reboot_notify` does not (it changes nothing). Platform via `osPlatformOf` (windows/linux only - macOS and
+  unknown OS refused). Online + idle only - `rbDispatch` reserves the node and refuses on any
+  `rb/wu/dev/wg/os/sw` pending session, and all five pumps skip a node with an `rbPending` entry. No batch,
+  no schedule (a test pins `rbStartBatch`/`scheduleReboot`/`rbPump`/`rbTargetNodes` absent).
+- Routes `reboot_now` / `reboot_notify` (`isAuthorizedAdmin` + origin header); `os_status` carries each
+  device's `rb` record + `rbPending`; the `get_log` whitelist gained `reboot`.
 
 ## Design decisions (with reasons)
 
@@ -1014,7 +1050,7 @@ MeshCentral install folder) and root `/*.txt` + `/*.csv` are gitignored as a gua
   contain none), JSON validity of config files, and view-nameâ†”render-name consistency over
   the WHOLE JS tree (the `res.render()` calls live in `lib/routes.js`/`lib/reports.js` since v3.5.1).
   Must run anywhere (no dependencies).
-- `tools/test-plugin.js`: 511 behavioral assertions (83 steps; on Windows with PowerShell AND a POSIX shell present) against the real module (mocked MeshCentral DB/webserver):
+- `tools/test-plugin.js`: 532 behavioral assertions (86 steps; on Windows with PowerShell AND a POSIX shell present) against the real module (mocked MeshCentral DB/webserver):
   the module wiring itself (every lib file attaches, a fresh instance exposes the same function surface, no
   module-level locals in `lib/`), locations grouping & counting, manual-rating severity override, FP exclusion, host-name preference, coverage
   numbers, multi-mesh scan/`mixed` logic, all POST handlers incl. validation/rejections, routes, admin gating
@@ -1234,7 +1270,7 @@ Tests: +26 assertions, +3 steps (496 / 80, i.e. 493 PASS + 3 sh -n SKIP on Windo
 the never-reboot token scan with the systemreset-only exception, every mode gate (BitLocker on/unknown,
 stale/missing probe, WinRE off, unsupported build), the typed-name + ack + busy + offline route paths,
 the console-channel probe answer, and both timeout verdicts.
-v4.6.0 (this release): issue #3 - Windows Update troubleshooter, and the "never reboot" rule becomes a
+v4.6.0: issue #3 - Windows Update troubleshooter, and the "never reboot" rule becomes a
 "reboot is explicit + announced" policy.
 - New module `lib/wutroubleshoot.js`, surfaced as **Diagnose** / **Troubleshoot** buttons on every Windows
   row of the OS Updates tab (no new tab). Because the `Get/Invoke-TroubleshootingPack` cmdlets were removed
@@ -1256,3 +1292,25 @@ v4.6.0 (this release): issue #3 - Windows Update troubleshooter, and the "never 
   repair step-harness shape + no reboot/winsock/proxy, PS parser, the busy/offline/non-Windows route gates,
   diagnose + partial-repair answers consumed and stored with the reboot note surfaced, os_status carries it,
   the get_log route, the pump-exclusion wiring and the timeout. Version 4.5.0 -> 4.6.0.
+v4.7.0 (this release): issue #6 - force restart a device + inform its user, and the reboot policy now names
+its two explicit paths.
+- New module `lib/devreboot.js`, surfaced as **Notify user** + **Restart** on every Windows AND Linux row of
+  the OS Updates tab. Useful before/after an upgrade.
+- **Notify user** sends the admin's message to the logged-on user WITHOUT rebooting (Windows `msg`, Linux
+  `wall`) and reports whether a reboot is already pending and who is logged on. **Restart** reboots after a
+  grace (default 60s, 0..3600) carrying the same message in the OS shutdown banner (`shutdown /r /t` on
+  Windows with a `shutdown /a` abort hint, `shutdown -r +m` on Linux). The message is sanitized and base64
+  -wrapped so it can never inject; it is only ever used as a quoted argument.
+- Reboot policy wording: PC Reset (v4.5.0) and Force Restart (v4.7.0) are the ONLY two things that restart a
+  device; both are manual, per-device and typed-name confirmed, never a batch, never scheduled, never
+  automatic. The troubleshooter and the update/deploy engines still emit no reboot command.
+- Wiring: `invscanner-rb-` sessions (runcommands type 1 Windows / type 3 Linux) on the shared hook; `rbPending`
+  added to the mutual exclusion of all five pumps and the dispatches; `os_status` carries each device's `rb`
+  record; `get_log` accepts `reboot`; state in `device-reboot.json`, audit in `device-reboot.log`. macOS /
+  unknown-OS and offline/busy devices are refused. Routes `reboot_now` (typed-name confirm) / `reboot_notify`.
+- Tests: +21 assertions, +3 steps (532 / 86, 529 PASS + 3 sh -n SKIP on Windows): the sanitizer strips shell /
+  PowerShell metachars + caps, the four scripts' shapes (msg/wall/shutdown/grace, marker, no literal message),
+  PS parser, windows(type 1)+linux(type 3) dispatch, the typed-name/offline/busy/unsupported-OS gates, a
+  scheduled answer with a pending reboot + user surfaced, os_status carrying `rb`, the get_log route, both
+  timeout verdicts and the "only PC Reset + Force Restart reboot, no batch/schedule" policy test.
+  Version 4.6.0 -> 4.7.0 (config.json + package.json + @version); plugin description unchanged.
