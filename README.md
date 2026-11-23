@@ -69,6 +69,12 @@ without sending inventory data to anyone.
    Linux `wall`) without rebooting; *Restart* reboots after a short grace and puts the same message in the OS
    shutdown banner so the user can save their work. The second explicit reboot path: per-device, manual, device
    name typed to confirm, never automatic, never a batch or schedule. macOS / unknown-OS and busy devices are skipped.
+* **Software license keys in the inventory (Settings tab, v4.8.0)** - for asset management the **software-inventory CSV**
+   can carry `License` + `License Source` columns. A configurable rule table (curated + your own, like the CPE mapping)
+   maps each program to where its license lives - a Windows registry value, a file (regex / JSON field / line) or a WMI
+   property - so it is **not limited to Microsoft software** (Microsoft keys come from the `SoftwareLicensingProduct`
+   class behind a switch). Reading is **opt-in and on demand only** (no background scan), **read-only** as SYSTEM, and the
+   keys stay **on this server** (`data/<node>/license.json`) - never sent anywhere, never in a log.
 
 
 ## Requirements

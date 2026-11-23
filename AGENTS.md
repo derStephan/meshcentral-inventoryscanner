@@ -107,6 +107,7 @@ Consequences an agent must respect:
 | `lib/devreset.js` | per-device Windows PC reset (v4.5.0, the ONLY rebooting feature): `devBuildProbeScript`/`devBuildResetScript`, `devDispatch`, `devModeAllowed`/`devProbeFresh`/`devBitlockerState` gates, `devHandleResponse`/`devResetTimeout`, `dr_status`/`dr_probe`/`dr_reset` handlers, `device-reset.json` + `device-reset.log` |
 | `lib/wutroubleshoot.js` | per-device Windows Update troubleshooter (v4.6.0): `wuBuildDiagnoseScript`/`wuBuildRepairScript`/`wuHead`, `wuDispatch`, `wuHandleResponse`/`wuTimeout`, reboot-state reporting, `wu_diag`/`wu_repair` handlers, `wu-troubleshoot.json` + `wu-troubleshoot.log` |
 | `lib/devreboot.js` | per-device force restart + user notice (v4.7.0): `rbBuild*Script`/`rbBuildScript`/`rbProbeLines`/`rbCleanMessage`/`rbB64`, `rbDispatch`, `rbHandleResponse`/`rbTimeout`, `reboot_now`/`reboot_notify` handlers, `device-reboot.json` + `device-reboot.log` |
+| `lib/license.js` | license keys/info in the software CSV (v4.8.0): curated `license-table.json` + remote fetch + custom rules (`applyLicenseTableText`/`sanitizeLicenseRules`/`licenseRulesForApp`), read-only `licenseBuildScript`, `licDispatch`/`licHandleResponse`/`licTimeout`, per-node `data/<node>/license.json`, `lic_status`/`lic_collect`/`get_license_table`/`add_license`/`remove_license`, `license-collection.log` |
 | `lib/swstore.js` | deploy foundation: installer library index/folders, resumable upload parts, task store load/save/prune, staging into `<filespath>/tmp`, `swDownloadCookie` (agentdownload), name/args/extension sanitizers, `swEnsureStaged` |
 | `lib/swdeploy.js` | deploy engine: `swBuildWindowsScript`/`swBuildLinuxScript`, `swWgetCommand`, queue/pump/`swDispatchNode`/`swHandleResponse`/watchdogs, `swOnNodeConnect`/`swSweepOnce`/`scheduleSwSweep`, `swTaskDoneCheck`, `swCreateTask`/`swTaskView` |
 | `lib/swdeploy-handlers.js` | `sw_files`, `sw_upload`, `sw_delete_file`, `sw_rescan_library`, `sw_serverfiles`, `sw_devices`, `sw_create_task`, `sw_status`, `sw_retry_task`, `sw_cancel_task` handlers |
@@ -156,10 +157,15 @@ sub-domain admins of a multi-tenant server are refused since v3.0.1):
     last `WindowsUpdateClient` errors) and *Troubleshoot* (the repairs the built-in troubleshooter applies -
     restart the update services, reset `SoftwareDistribution\Download` + `catroot2`, re-assert start types).
     Runs as SYSTEM through the agent; **it never reboots** and reports any pending reboot instead.
- 9. **Force restart + user notice** (OS Updates tab, v4.7.0, issue #6): per-Windows/Linux *Notify user*
-    (send a message to the logged-on user via `msg`/`wall`, no reboot) and *Restart* (reboot after a grace,
-    messaging the user through the OS shutdown banner) - for before/after an upgrade. The second explicit
-    reboot path: per-device, manual, device name typed, never automatic, never a batch or schedule.
+9. **Force restart + user notice** (OS Updates tab, v4.7.0, issue #6): per-Windows/Linux *Notify user*
+   (send a message to the logged-on user via `msg`/`wall`, no reboot) and *Restart* (reboot after a grace,
+   messaging the user through the OS shutdown banner) - for before/after an upgrade. The second explicit
+   reboot path: per-device, manual, device name typed, never automatic, never a batch or schedule.
+10. **License keys in the software CSV** (Settings tab "License keys", v4.8.0, issue #7): a curated + remote +
+   custom rule table maps a program name to where its license lives (registry value / file regex/JSON/line /
+   WMI property); an OPT-IN, on-demand read-only collection per Windows device adds License + License Source
+   columns to the software-inventory CSV for asset management. Microsoft keys via the SoftwareLicensingProduct
+   WMI class. Nothing is sent off-server; there is deliberately no background license scan.
 
 ## Verified API facts (do not guess)
 
@@ -284,7 +290,7 @@ POST body `action=`:
     failed packages additionally get one `FAILED` line per package in `winget-update.log`, and upgraded
      packages that match (exactly or as substring) an ignore entry raise a `WARNING` line there |
 | `wg_programs` | â€” | the PACKAGES view (v3.0.0): aggregates `wgResults` per package id -> `{packages:[{id,name,ready,ok,failed,skipped,devices:[{node,label,state,from,to,time,dry}]}],note}` (â‰¤400 packages, â‰¤200 devices each, sorted by ready+failed). `label` = admin given name first, then host name, then id; results of deleted devices are dropped; `not-installed` counts into `skipped` |
-| `get_log` | `type` = nvd\|winget\|os\|deploy\|reset\|wu\|reboot | whitelisted log tail (last 300 lines) |
+| `get_log` | `type` = nvd\|winget\|os\|deploy\|reset\|wu\|reboot\|license | whitelisted log tail (last 300 lines) |
 | `sw_files` | â€” | installer library `{files:[{id,name,ext,size,sha256,time,by}], parts:[{uploadId,bytes}], limits:{chunkBytes,maxBytes,exts}, note}` |
 | `sw_upload` | `uploadId` (hex 8..40), `name`, `index`, `data` (base64url â‰¤ `chunkBytes` raw), `last` | chunked upload into `software/parts/<id>.part`; `{ok,next}`, order-error `{error,next,have}` or `{done,file}` (hash computed, committed as immutable `<newid>.<ext>`) |
 | `sw_delete_file` | `fileId` | removes an unused library entry + its file; refused (error) while a NOT-done task references it |
@@ -304,6 +310,10 @@ POST body `action=`:
 | `wu_repair` | `nodeId` | (v4.6.0) applies the troubleshooter's "fix" steps DIRECTLY (the `Get/Invoke-TroubleshootingPack` cmdlets are gone since Win10 1709): restart BITS/wuauserv/appidsvc/cryptsvc/msiserver, reset `SoftwareDistribution\Download` + `System32\catroot2`, re-assert Automatic start types. {started} or {error}. **Never reboots** - the answer reports `rebootTriggered=false` and any pending reboot with when Windows handles it; a locked file shows as a `partial` step |
 | `reboot_notify` | `nodeId`, `message` | (v4.7.0, issue #6) sends a message to the logged-on user of a Windows/Linux device WITHOUT rebooting (Windows `msg *`, Linux `wall`); also reports whether a reboot is already pending and who is logged on. {started} or {error} (offline / macOS or no reported OS / busy). Message is sanitized (control chars + quoting chars stripped, ≤200) and travels base64 |
 | `reboot_now` | `nodeId`, `secs` (0..3600, default 60 grace), `message`, `confirm` (typed device name) | (v4.7.0) the SECOND explicit reboot path: after a typed-name confirm, restarts one Windows/Linux device with a grace period, messaging the user through the OS shutdown banner (`shutdown /r /t` / `shutdown -r +m`, plus a `msg`/`wall` heads-up). {started,platform,secs} or {error}. Never batched/scheduled; abort within the grace with `shutdown /a` (Win) / `shutdown -c` (Linux) is noted in the result |
+| `lic_status` | â€” | (v4.8.0, issue #7) Windows devices `{devices:[{id,host,given,group,os,online,collected:{time,found,ms,apps,error}|null,pending}], enabled, running}` - collected license summary per device, no command sent |
+| `lic_collect` | `nodeId` OR `all:'true'` | (v4.8.0) runs the READ-ONLY license extraction (registry value / file regex-jsonfield-line / WMI property) built from the curated+custom rule table on one (or all online) Windows device(s). Refused while `licenseCollectionEnabled` is off (default). {started} / {started,devices} or {error}; the marker answer is stored in `data/<node>/license.json` |
+| `get_license_table` | â€” | (v4.8.0) the full license rule table `{entries:[{match,label,rules,source:'table'|'custom'}], licenseTable:{source,origin,updated,url,tableEnabled,entries,custom}}` |
+| `add_license` / `remove_license` | match, label, rules (JSON array) / index | (v4.8.0) custom rule editor; every field validated (`isSafeTableRegex`, type ∈ registry/file/wmi, lengths, ≤8 rules) before storing to `license-custom.json`; custom wins over the table |
 | `update_nvd` | â€” | starts `runNvdUpdate(true)` (background) and answers {started:true} / {alreadyRunning:true}; concurrent runs skip via the `nvdUpdateRunning` flag |
 | `get_nvdlog` | â€” | `{lines:[...last 200 of nvd-download.log], size, file}`; `note` if file missing |
 | `get_locations` | â€” | all non-deleted meshes `{locations:[{id,name}]}` (also feeds the Settings tab group table) |
@@ -869,6 +879,31 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
 - Routes `reboot_now` / `reboot_notify` (`isAuthorizedAdmin` + origin header); `os_status` carries each
   device's `rb` record + `rbPending`; the `get_log` whitelist gained `reboot`.
 
+## License collection engine (v4.8.0, issue #7, verified contracts)
+
+- One module `license.js`, a section in the Settings tab. The asset-management counterpart of the CPE table:
+  a rule maps an installed-software NAME to WHERE its license is stored. Three rule types only, each with data
+  fields and NO command: `{type:'registry', path, value}` (read with `Get-Item .GetValue`), `{type:'file', path,
+  regex|jsonfield|line}` (read the file and extract), `{type:'wmi', class, property, filter}` (read one CIM
+  property). Microsoft keys come separately from the `SoftwareLicensingProduct` WMI class (`PartialProductKey`).
+- **Sources, custom wins** (mirrors cpe-table): curated `license-table.json` shipped in the repo + re-downloaded
+  from `licenseTableUrl` (`fetchLicenseTable`/`licenseHttpGet`, https-only, size-capped), cached under the
+  datapath, plus admin `license-custom.json` edited in the UI (`add_license`/`remove_license`). Every `match`
+  and every file `regex` passes `obj.isSafeTableRegex`; fields length-capped; ≤8 rules/app, ≤60 apps/run
+  (`sanitizeLicenseRules`, `licenseAppRules`).
+- **Opt-in, on-demand, read-only, never sent anywhere**: `licenseCollectionEnabled` defaults OFF and there is
+  deliberately no scheduler - `lic_collect` refuses while it is off. The script only reads (GetValue /
+  Get-Content / Get-CimInstance) and emits no write or reboot command (a test asserts this). The collected
+  values are secrets: they are stored ONLY on this server under `data/<node>/license.json` (never in a log,
+  never exported anywhere but the admin's own software CSV). `licenseLog` records counts, not the keys.
+- **Transport + exclusion**: `invscanner-lic-<node>` runcommands type 1 on the shared hook (`.cbuf` console
+  buffering); `licDispatch` reserves the node and refuses if any `lic/rb/wu/dev/wg/os/sw` session holds it,
+  and all pumps skip a node with a `licPending` entry. Watchdog `LIC_TIMEOUT_MS` 6 min.
+- **CSV**: the `software` export gains two columns, `License` and `License Source` (`obj.licenseMapForNode`
+  joins the collected value to each app by lower-cased name); the toolbar export and `action=export&type=software`
+  both use the same builder. Routes `lic_status`/`lic_collect`/`get_license_table`/`add_license`/`remove_license`;
+  `get_log` accepts `license`.
+
 ## Design decisions (with reasons)
 
 1. **Two-stage matching (Dependency-Check style, fully offline):** custom entries + the curated `cpe-table.json`
@@ -1050,7 +1085,7 @@ MeshCentral install folder) and root `/*.txt` + `/*.csv` are gitignored as a gua
   contain none), JSON validity of config files, and view-nameâ†”render-name consistency over
   the WHOLE JS tree (the `res.render()` calls live in `lib/routes.js`/`lib/reports.js` since v3.5.1).
   Must run anywhere (no dependencies).
-- `tools/test-plugin.js`: 532 behavioral assertions (86 steps; on Windows with PowerShell AND a POSIX shell present) against the real module (mocked MeshCentral DB/webserver):
+- `tools/test-plugin.js`: 555 behavioral assertions (88 steps; on Windows with PowerShell AND a POSIX shell present) against the real module (mocked MeshCentral DB/webserver):
   the module wiring itself (every lib file attaches, a fresh instance exposes the same function surface, no
   module-level locals in `lib/`), locations grouping & counting, manual-rating severity override, FP exclusion, host-name preference, coverage
   numbers, multi-mesh scan/`mixed` logic, all POST handlers incl. validation/rejections, routes, admin gating
@@ -1292,7 +1327,7 @@ v4.6.0: issue #3 - Windows Update troubleshooter, and the "never reboot" rule be
   repair step-harness shape + no reboot/winsock/proxy, PS parser, the busy/offline/non-Windows route gates,
   diagnose + partial-repair answers consumed and stored with the reboot note surfaced, os_status carries it,
   the get_log route, the pump-exclusion wiring and the timeout. Version 4.5.0 -> 4.6.0.
-v4.7.0 (this release): issue #6 - force restart a device + inform its user, and the reboot policy now names
+v4.7.0: issue #6 - force restart a device + inform its user, and the reboot policy now names
 its two explicit paths.
 - New module `lib/devreboot.js`, surfaced as **Notify user** + **Restart** on every Windows AND Linux row of
   the OS Updates tab. Useful before/after an upgrade.
@@ -1314,3 +1349,22 @@ its two explicit paths.
   scheduled answer with a pending reboot + user surfaced, os_status carrying `rb`, the get_log route, both
   timeout verdicts and the "only PC Reset + Force Restart reboot, no batch/schedule" policy test.
   Version 4.6.0 -> 4.7.0 (config.json + package.json + @version); plugin description unchanged.
+v4.8.0 (this release): issue #7 - software license keys / info in the inventory CSV (asset management).
+- New module `lib/license.js` + a "License keys" section in the Settings tab. Like the CPE table, a curated
+  `license-table.json` (shipped, re-downloaded from its URL, cached) + admin custom rules map an installed
+  program name to WHERE its license is stored, via three data-only rule types: a registry value, a file
+  (regex group 1 / JSON field / line number / raw), or a WMI class property - no command rule, so the table
+  can never run code. Microsoft keys come from the SoftwareLicensingProduct class behind a switch.
+- OPT-IN and on-demand: `licenseCollectionEnabled` defaults OFF, there is no scheduler, and the script is
+  READ-ONLY (GetValue / Get-Content / Get-CimInstance; a test asserts no write and no reboot). The collected
+  keys are secrets kept ONLY on this server (`data/<node>/license.json`), logged as counts not values, and
+  added to the software CSV as the `License` + `License Source` columns (toolbar and export use the same
+  builder). `lic_status` / `lic_collect` (one device or all online Windows) + the custom-rule editor routes.
+- Wiring: `invscanner-lic-` sessions on the shared hook; `licPending` added to the mutual exclusion of all
+  five pumps and every dispatch busy check; `get_log` accepts `license`. Rules/regexes pass isSafeTableRegex.
+- Tests: +23 assertions, +2 steps (555 / 88, 552 PASS + 3 sh -n SKIP on Windows): opt-in default-off + no
+  scheduler, table apply + regex-safety + rule-type/field sanitization, custom-wins resolution, the read-only
+  script shape (base64 rules, no literal path, no write/reboot) + PS parser, collect refused off/non-Windows/
+  offline/busy, dispatch consumed + stored + `licenseMapForNode` + `data/<node>/license.json`, add_license /
+  remove_license / a rejected unknown type, lic_status summary, get_log, the pump-exclusion wiring, and the
+  two new License columns actually appearing in the software CSV. Version 4.7.0 -> 4.8.0.

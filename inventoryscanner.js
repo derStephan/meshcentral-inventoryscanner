@@ -21,7 +21,7 @@
  * NVD feed is downloaded.
  *
  * @author derStephan
- * @version 4.7.0
+ * @version 4.8.0
  *
  * Transparency: This plugin was created with the assistance of Qwen 3.6 27B and Qwen 3.8 Flash Next.
  * Audits: 2026-11-06 (NVIDIA Nemotron 3 550B A55B), 2026-11-11 (Claude Opus 5.5, v3.0.1) and 2026-11-14 (Claude Opus 5.5, v4.3.0) via opencode - see AUDIT.md.
@@ -68,6 +68,9 @@ try { MODULE_CODE_VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, 'con
  *                           diagnose + the WU-component-reset repairs, run directly, no reboot
  *   lib/devreboot.js        per-device force restart + user notice (issue #6, v4.7.0): the second
  *                           EXPLICIT reboot path (grace + message), Windows and Linux
+ *   lib/license.js          license keys/info in the software CSV (issue #7, v4.8.0): a curated + remote +
+ *                           custom rule table (name -> registry/file/WMI extraction), on-demand read-only
+ *                           collection per Windows device, stored locally and added to the software CSV
  *   lib/swstore.js          deploy foundation: installer library, upload parts, task store,
  *                           staging in <filespath>/tmp, agentdownload cookie, name/arg quoting
  *   lib/swdeploy.js         deploy engine: install scripts, wget+runcommands dispatch,
@@ -90,7 +93,7 @@ try { MODULE_CODE_VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, 'con
  */
 const modules = [
     'lifecycle', 'settings', 'assessments', 'nvd', 'nvdindex', 'cpetable', 'matching', 'oslifecycle',
-    'osscan', 'inventory', 'collector', 'scheduling', 'winget', 'winget-handlers', 'osupdate', 'devreset', 'wutroubleshoot', 'devreboot',
+    'osscan', 'inventory', 'collector', 'scheduling', 'winget', 'winget-handlers', 'osupdate', 'devreset', 'wutroubleshoot', 'devreboot', 'license',
     'swstore', 'swdeploy', 'swdeploy-handlers',
     'reports', 'csv', 'nodes', 'routes', 'browser'
 ];
@@ -201,6 +204,12 @@ module.exports.inventoryscanner = function (parent) {
     obj.rbResultsPath = path.join(obj.meshServer.datapath, 'plugins', 'inventoryscanner', 'device-reboot.json');
     /** @type {string} forced-restart / user-notice audit log (rotated at ~5 MB). */
     obj.rbLogPath = path.join(obj.meshServer.datapath, 'plugins', 'inventoryscanner', 'device-reboot.log');
+    /** @type {string} on-disk cache of the remotely maintained license-extraction table (lib/license.js, v4.8.0). */
+    obj.licenseCachePath = path.join(obj.meshServer.datapath, 'plugins', 'inventoryscanner', 'license-table.json');
+    /** @type {string} admin-edited license rules (plugins/inventoryscanner/license-custom.json). */
+    obj.customLicensePath = path.join(obj.meshServer.datapath, 'plugins', 'inventoryscanner', 'license-custom.json');
+    /** @type {string} license collection audit log (the values themselves go to data/<node>/license.json). */
+    obj.licenseLogPath = path.join(obj.meshServer.datapath, 'plugins', 'inventoryscanner', 'license-collection.log');
 
     // ---- Feature modules (the list at the top of this file documents who does what) ----
     modules.forEach(function (name) {

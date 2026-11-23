@@ -124,6 +124,12 @@ Please report security vulnerabilities by opening an issue.
   queried at runtime.
 - Ratings, comments and mappings are stored locally under `<datapath>/nvd/` and
   `<datapath>/plugins/inventoryscanner/`; comments are stored raw and escaped on output.
+- **License keys (v4.8.0)** are treated as sensitive: collection is **opt-in (default off)**, runs **only on
+  demand** (no background scheduler), and the extraction script is **read-only** (registry GetValue / file read /
+  CIM property - the rule table has no "run command" type, so a tampered table cannot execute). The values are
+  written **only** to `<datapath>/plugins/inventoryscanner/data/<node>/license.json` on this server, never sent
+  off-server and never written to a log (the log records counts, not keys); they appear only in the admin's own
+  software-CSV export. Remote/custom rules pass the same regex-safety and field-validation gate as the CPE table.
 
 ### Input validation
 - Severity values whitelisted (CRITICAL, HIGH, MEDIUM, LOW, UNKNOWN); numeric settings range-checked

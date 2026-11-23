@@ -3017,6 +3017,128 @@ steps.push(function (next) {
     next();
 });
 
+// ---- v4.8.0 license keys in the software CSV (issue #7) ----
+steps.push(function (next) {
+    check('license opt-in: collection is OFF by default and never scheduled',
+        obj.licenseConfig().collectEnabled === false && typeof obj.scheduleLicenseCollection === 'undefined' && typeof obj.licPump === 'undefined' && typeof obj.licStartBatch === 'undefined');
+
+    // table apply + safety + rule sanitization
+    var good = JSON.stringify({ entries: [{ match: 'adobe', label: 'Adobe Acrobat', rules: [{ type: 'registry', path: 'HKLM:\\SOFTWARE\\Adobe', value: 'Serial' }] }] });
+    var rGood = obj.applyLicenseTableText(good);
+    check('license table: valid {match,label,rules[registry]} applies', rGood.ok === true && rGood.applied === 1, rGood);
+    var badType = obj.applyLicenseTableText(JSON.stringify({ entries: [{ match: 'x', label: 'X', rules: [{ type: 'command', cmd: 'calc' }] }] }));
+    check('license table: a rule of a type other than registry/file/wmi is rejected (no command rule exists)', badType.applied === 0, badType);
+    var bomb = obj.applyLicenseTableText(JSON.stringify({ entries: [{ match: '(a+)+', label: 'X', rules: [{ type: 'file', path: 'C:\\a' }] }] }));
+    check('license table: a catastrophic-backtracking match regex is skipped (same gate as the CPE table)', bomb.applied === 0, bomb);
+    check('license sanitize: registry needs path+value, wmi needs class+property, file needs path, max 8 rules',
+        obj.sanitizeLicenseRules([{ type: 'registry', path: 'p' }]) === null &&
+        obj.sanitizeLicenseRules([{ type: 'wmi', class: 'c' }]) === null &&
+        obj.sanitizeLicenseRules([{ type: 'file', path: 'p', regex: '(b+)+' }]) === null &&
+        obj.sanitizeLicenseRules(Array(9).fill({ type: 'file', path: 'p' })) === null &&
+        (function () { var s = obj.sanitizeLicenseRules([{ type: 'file', path: 'C:\\a', regex: 'K=([0-9A-Z]+)' }]); return s && s[0].regex === 'K=([0-9A-Z]+)'; })());
+
+    // resolution order: custom beats curated table
+    obj.customLicenseEntries = []; obj.remoteLicenseEntries = null;
+    obj.applyLicenseTableText(JSON.stringify({ entries: [{ match: 'office', label: 'Office(table)', rules: [{ type: 'registry', path: 'HKLM:\\a', value: 'v' }] }] }));
+    obj.customLicenseEntries = [{ match: 'office', label: 'Office(custom)', rules: [{ type: 'file', path: 'C:\\c.lic', line: 1 }] }];
+    check('license resolve: custom rules are consulted before the curated table', obj.licenseRulesForApp('Microsoft Office 2019').label === 'Office(custom)');
+    check('license resolve: a name with no rule yields null', obj.licenseRulesForApp('Notepad') === null);
+    obj.customLicenseEntries = [];
+
+    // script shape: read-only, base64-embedded rules, marker; no reboot / no write commands
+    var scr = obj.licenseBuildScript([{ name: 'Adobe Acrobat', label: 'Adobe Acrobat', rules: [{ type: 'registry', path: 'HKLM:\\SOFTWARE\\Adobe', value: 'Serial' }, { type: 'file', path: 'C:\\lic.dat', regex: 'KEY=([A-Z-]+)' }, { type: 'wmi', class: 'SoftwareLicensingProduct', property: 'PartialProductKey' }] }], true);
+    check('license script: reads via GetValue/Get-Content/Get-CimInstance, emits the marker, never writes or reboots',
+        scr.indexOf('.GetValue(') >= 0 && scr.indexOf('Get-Content') >= 0 && scr.indexOf('SoftwareLicensingProduct') >= 0 && scr.indexOf(obj.LIC_MARKER) >= 0 &&
+        !/Set-|New-Item|Remove-Item|shutdown|Restart-Computer/i.test(scr));
+    check('license script: the rule strings are base64, never a literal path in the script body', scr.indexOf('FromBase64String') >= 0 && scr.indexOf('HKLM:\\SOFTWARE\\Adobe') < 0);
+    var openersL = scr.split(String.fromCharCode(10)).filter(function (l) { return /[({]\s*$/.test(l); });
+    check('license script: one statement per line', openersL.length === 0, openersL.slice(0, 2));
+    var dir = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-licps-'));
+    var fp = path.join(dir, 'l.ps1'); fs.writeFileSync(fp, scr);
+    var psr = runPs(['-NoProfile', '-NonInteractive', '-Command', "$t=$null;$e=$null;[void][System.Management.Automation.Language.Parser]::ParseFile('" + fp + "',[ref]$t,[ref]$e);$e.Count"]);
+    if (psr == null) { console.log('SKIP license script: PowerShell parser (PowerShell not available)'); }
+    else { check('license script: PowerShell parser reports no errors', !psr.failed && psr.text.trim() === '0', psr.text.trim()); }
+
+    var src = pluginSrc();
+    check('license wiring: collector routes invscanner-lic- sessions and every pump/dispatch skips a license run',
+        src.indexOf('invscanner-lic-') >= 0 && /obj\.licHandleResponse\(nodeid, command\)/.test(src) &&
+        (src.match(/obj\.licPending != null && obj\.licPending\[nodeid\] != null/g) || []).length >= 2 &&
+        (src.match(/obj\.licPending && obj\.licPending\[job\.nodeid\] != null/g) || []).length >= 1 &&
+        /action === 'lic_collect'/.test(src) && /action === 'lic_status'/.test(src));
+    next();
+});
+
+steps.push(function (next) {
+    var dpL = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-lic-'));
+    var lNodes = [
+        { _id: 'node//lc1', meshid: 'mesh//grp1', rname: 'lc1', name: 'LicWin', osdesc: 'Microsoft Windows 11 Pro' },
+        { _id: 'node//lmac', meshid: 'mesh//grp1', rname: 'lmac', name: 'LicMac', osdesc: 'macOS 15' },
+        { _id: 'node//loff', meshid: 'mesh//grp1', rname: 'loff', name: 'LicOff', osdesc: 'Microsoft Windows 10' }
+    ];
+    var dbL = { GetAllType: function (t, cb) { cb(null, t === 'node' ? lNodes.slice() : meshes.slice()); }, Get: function (id, cb) { cb(null, lNodes.filter(function (n) { return n._id === id; })); } };
+    var sentL = [];
+    var agentsL = { 'node//lc1': { send: function (m) { sentL.push(JSON.parse(m)); } }, 'node//lmac': { send: function (m) { sentL.push(JSON.parse(m)); } } };
+    var oL = factory({ parent: { db: dbL, datapath: dpL, debug: function () { }, config: { settings: {} }, webserver: { meshes: {}, wsagents: agentsL }, DispatchEvent: function () { } } });
+    var gunzL = function (cmd) { var m = String(cmd).match(/FromBase64String\('([A-Za-z0-9+\/=]+)'\)/); return m ? require('zlib').gunzipSync(Buffer.from(m[1], 'base64')).toString('utf8') : ''; };
+    // seed software on lc1 + a custom rule so the script has something to read
+    oL.softwareInventory = { lc1: { time: new Date().toISOString(), apps: [{ name: 'Adobe Acrobat Pro', version: '11' }] } };
+    oL.customLicenseEntries = [{ match: 'acrobat', label: 'Adobe Acrobat', rules: [{ type: 'registry', path: 'HKLM:\\SOFTWARE\\Adobe', value: 'Serial' }] }];
+
+    // off first: collect refused
+    oL.handleAdminPostReq({ headers: XHDR, body: { action: 'lic_collect', nodeId: 'node//lc1' } }, mockRes(function (off) {
+        check('lic_collect: refused while collection is off (opt-in)', !!off.error && /off/i.test(off.error), off);
+        oL.pluginSettings = { inventoryScanner: { licenseCollectionEnabled: true, licenseMsKeys: true } };
+        oL.handleAdminPostReq({ headers: XHDR, body: { action: 'lic_collect', nodeId: 'node//lmac' } }, mockRes(function (mac) {
+            check('lic_collect: macOS device is refused (license extraction is Windows)', !!mac.error && /Windows/.test(mac.error), mac);
+            oL.handleAdminPostReq({ headers: XHDR, body: { action: 'lic_collect', nodeId: 'node//loff' } }, mockRes(function (o2) {
+                check('lic_collect: offline device refused', !!o2.error && /offline/i.test(o2.error), o2);
+                sentL.length = 0;
+                oL.handleAdminPostReq({ headers: XHDR, body: { action: 'lic_collect', nodeId: 'node//lc1' } }, mockRes(function (d1) {
+                    check('lic_collect: dispatches a read-only rule script on invscanner-lic- (type 1) and reserves the node',
+                        d1.started === true && sentL.length === 1 && sentL[0].type === 1 && String(sentL[0].sessionid).indexOf('invscanner-lic-') === 0 &&
+                        oL.licPending['node//lc1'] != null && gunzL(sentL[0].cmds).indexOf('.GetValue(') >= 0, sentL[0]);
+                    var consumed = oL.onAgentResponse({ action: 'msg', type: 'runcommands', sessionid: sentL[0].sessionid, result: 'x' + oL.LIC_MARKER +
+                        '{"collect":true,"items":[{"name":"Adobe Acrobat Pro","label":"Adobe Acrobat","source":"registry","license":"AA-BB-CC","ok":true}],"ms":[{"name":"Windows","key":"*****-WXYZ"}],"error":""}' + String.fromCharCode(10) }, '', 'node//lc1');
+                    var inv = oL.licenseInventory['lc1'];
+                    check('lic_collect: answer consumed + stored per node + a license map by name',
+                        consumed === true && inv && inv.items[0].license === 'AA-BB-CC' && oL.licPending['node//lc1'] == null &&
+                        fs.existsSync(path.join(oL.inventoryDataPath, 'lc1', 'license.json')) &&
+                        oL.licenseMapForNode('node//lc1')['adobe acrobat pro'].license === 'AA-BB-CC', inv);
+
+                    // busy: another engine holds the session
+                    oL.osPending['node//lc1'] = { nodeid: 'node//lc1' };
+                    oL.handleAdminPostReq({ headers: XHDR, body: { action: 'lic_collect', nodeId: 'node//lc1' } }, mockRes(function (bs) {
+                        check('lic_collect: a device with another engine session is refused (one runcommands session per agent)', !!bs.error && /running/i.test(bs.error), bs);
+                        delete oL.osPending['node//lc1'];
+                        // custom add/remove round trip
+                        oL.handleAdminPostReq({ headers: XHDR, body: { action: 'add_license', match: '^Zoom', label: 'Zoom', rules: JSON.stringify([{ type: 'file', path: 'C:\\z.json', jsonfield: 'license' }]) } }, mockRes(function (ad) {
+                            check('add_license: valid custom rule stored + retrievable via get_license_table', ad.success === true && oL.customLicenseEntries.length === 2, ad);
+                            oL.handleAdminPostReq({ headers: XHDR, body: { action: 'add_license', match: 'x', label: 'X', rules: JSON.stringify([{ type: 'command', cmd: 'calc' }]) } }, mockRes(function (badAdd) {
+                                check('add_license: a rule of an unknown type is rejected', !!badAdd.error && /registry|file|wmi/i.test(badAdd.error), badAdd);
+                                oL.handleAdminPostReq({ headers: XHDR, body: { action: 'lic_status' } }, mockRes(function (st) {
+                                    var w = st.devices.filter(function (x) { return x.id === 'node//lc1'; })[0];
+                                    check('lic_status: Windows devices only + collected summary', st.devices.length === 2 && w && w.collected && w.collected.found === 1 && w.collected.ms === 1, st.devices);
+                                    oL.handleAdminPostReq({ headers: XHDR, body: { action: 'get_log', type: 'license' } }, mockRes(function (lg) {
+                                        check('get_log license: the collection log is reachable', Array.isArray(lg.lines) && lg.file === 'plugins/inventoryscanner/license-collection.log', lg);
+                                        // license columns reach the software CSV via the shared obj
+                                        obj.licenseInventory = { d1: { time: new Date().toISOString(), items: [{ name: 'Firefox', source: 'registry', license: 'FIRE-KEY', ok: true }], ms: [] } };
+                                        obj.buildCsvForNodes([nodes[0]], 'software', function (cerr, csv) {
+                                            check('CSV software: gains License + License Source columns with the collected value',
+                                                /License Source/.test(csv) && /FIRE-KEY/.test(csv), (csv || '').split('\r\n').slice(0, 2));
+                                            obj.licenseInventory = {};
+                                            next();
+                                        });
+                                    }), user);
+                                }), user);
+                            }), user);
+                        }), user);
+                    }), user);
+                }), user);
+            }), user);
+        }), user);
+    }), user);
+});
+
 // The runner MUST stay the last statement: every steps.push() above has to be registered before
 // step 0 starts (pre-3.0.1 it sat mid-file and the trailing steps only ran because an earlier
 // step happened to be asynchronous). New steps go ABOVE this block.
