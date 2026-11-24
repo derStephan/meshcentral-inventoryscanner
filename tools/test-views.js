@@ -106,6 +106,9 @@ try {
     console.log(((a.indexOf("key: 'devicelist'") >= 0 && a.indexOf("key: 'softwarelist'") >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v4.9.5: the two new sub-tabs are in the nav tree');
     console.log(((a.indexOf('function loadDeviceList') >= 0 && a.indexOf('function loadSwFleet') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v4.9.5: both views have loaders');
     console.log(((a.indexOf("post('sw_fleet'") >= 0 && a.indexOf("post('os_status'") >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v4.9.5: views reuse existing routes (no invented endpoint)');
+    // v4.9.6: the CPE + License help text that the v4.9.0 move had dropped must be back (guards the regression).
+    console.log(((a.indexOf('Fix a wrong row') >= 0 && a.indexOf('dictionary that tells the scanner') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v4.9.6: CPE mapping help text present again');
+    console.log(((a.indexOf('For asset management the software-inventory CSV') >= 0 && a.indexOf('no background license scan') >= 0 && a.indexOf('SoftwareLicensingProduct') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v4.9.6: License keys help text present again');
 } catch (e) { failed++; console.log('FAIL nav checks: ' + e.message); }
 
 console.log(failed === 0 ? '\ntest-views: ALL PASSED' : '\ntest-views: ' + failed + ' FAILURE(S)');

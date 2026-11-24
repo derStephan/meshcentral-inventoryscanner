@@ -273,6 +273,24 @@
             <pre id="nvdLog" style="max-height:260px;overflow:auto;background:#0f1720;color:#cfe3f5;padding:8px;border-radius:6px;font-size:11px;margin-top:6px;white-space:pre-wrap;">(not loaded yet)</pre>
 
             <h3>CPE mapping (installed program name &rarr; CVE codes)</h3>
+            <div class="info">
+                Every NVD CVE names the affected software with a technical code, a <strong>CPE</strong> like
+                <code>cpe:...:mozilla:firefox</code>. This table is the dictionary that tells the scanner which
+                code belongs to which program on your PCs:
+                <ul style="margin:6px 0 6px 18px;padding:0;">
+                    <li><strong>Regex</strong> is matched case-insensitively against the installed program name.</li>
+                    <li><strong>Vendor / Product</strong> is the CPE code that gets searched in the CVE database.</li>
+                </ul>
+                Rows labelled <em>Remote</em> come from the maintained table file <code>cpe-table.json</code>
+                (shipped with the plugin, refreshed from its repository URL); rows labelled <em>Custom</em> are
+                your own additions and are always checked first, so they win over any remote row. Programs that
+                match no row here are still checked automatically against the product names present in the NVD
+                data (the <em>Auto-map</em> switch under Settings). Only software where even that proves nothing
+                is listed as <em>not assessable</em> - never as "clean".
+                <br><br>
+                <strong>Fix a wrong row:</strong> <em>Override</em> copies it as a custom entry you can edit,
+                <em>Delete</em> removes only your custom entries, never remote ones.
+            </div>
             <div class="setgrid">
                 <label for="setCpeTableEnabled">Update mapping table from repository</label>
                 <div><input type="checkbox" id="setCpeTableEnabled">
@@ -319,7 +337,7 @@
             <div class="setgrid">
                 <label for="setLicCollect">Collect software license keys (opt-in)</label>
                 <div><input type="checkbox" id="setLicCollect">
-                    <div class="hint">Master switch. Off by default; nothing reads licenses until you turn it on AND press Collect (there is no automatic license scan).</div></div>
+                    <div class="hint">Master switch for the License keys section below. Off by default; nothing reads licenses until you turn it on AND press Collect (there is no automatic license scan).</div></div>
                 <label for="setLicMsKeys">Include Microsoft product keys</label>
                 <div><input type="checkbox" id="setLicMsKeys">
                     <div class="hint">Also read the Microsoft partial product key(s) from the WMI SoftwareLicensingProduct class on each Windows device.</div></div>
@@ -331,6 +349,24 @@
                 <div><input type="text" id="setLicTableUrl" style="width:420px">
                     <select id="setLicTableUrlSrc" class="srcsel"></select>
                     <div class="hint">https only; the rule table that maps a program name to where its license is stored.</div></div>
+            </div>
+            <div class="info">
+                For asset management the software-inventory CSV can also carry a <strong>License</strong> and
+                <strong>License Source</strong> column. Like the CPE table, a rule table maps an installed program
+                name to one or more <strong>extraction rules</strong>: a Windows registry value, a file read (with an
+                optional regex whose group 1 is the key, a JSON field, or a line number), or a WMI class property.
+                Rows labelled <em>Table</em> come from the curated <code>license-table.json</code> (refreshed from its
+                URL); <em>Custom</em> rows are yours and win. Microsoft keys come from the <em>Include Microsoft
+                product keys</em> switch above, not from a rule.<br>
+                Reading is <strong>on demand only</strong> (no background license scan), runs as SYSTEM, reads registry
+                values / files / WMI properties only, and stores the result on this server under the device's data
+                folder - nothing is sent anywhere. Turn on <em>Collect software license keys</em> above, then press
+                <em>Collect</em>. The CSV export (Software type) then includes the found keys.
+                <br><br>
+                <strong>Rules JSON</strong> example:
+                <code>[{"type":"registry","path":"HKLM:\\SOFTWARE\\Vendor\\App","value":"LicenseKey"}]</code>
+                &middot; file: <code>[{"type":"file","path":"C:\\ProgramData\\App\\lic.dat","regex":"KEY=([A-Z0-9-]+)"}]</code>
+                &middot; WMI: <code>[{"type":"wmi","class":"SoftwareLicensingProduct","property":"PartialProductKey","filter":"LicenseStatus=1"}]</code>
             </div>
             <div class="hint" id="licTableSourceInfo"></div>
             <div class="controls">

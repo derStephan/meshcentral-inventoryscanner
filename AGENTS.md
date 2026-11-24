@@ -1410,7 +1410,7 @@ v4.9.0: issue #8 - two-layer navigation, panels regrouped by topic.
   gone, the two new panels exist once, the extracted blocks carry main+sub tags, the moved config ids appear
   exactly once - no collision, and the shared save path). check.js still node --check's the inline script.
   test-plugin unchanged (552 PASS + 3 SKIP / 88 steps, no server-logic change). Version 4.8.0 -> 4.9.0.
-v4.9.5 (this release): issue #8 (second half) - the two unified views.
+v4.9.5: issue #8 (second half) - the two unified views.
 - `lib/fleetindex.js` (new): a READ-ONLY `sw_fleet` route + `buildFleetIndex`. It walks every node and joins
   data that is already on the server (the collector's stored software, the same `scanNodeSoftware` matcher the
   CSV export and the printable reports use, the last `wgResults` for "update available", and the locally
@@ -1435,3 +1435,17 @@ v4.9.5 (this release): issue #8 (second half) - the two unified views.
   no-command policy guard). +5 render assertions in tools/test-views.js (the two new sub-tabs + panels and the
   two loaders). Suite: 563 PASS + 3 SKIP / 89 steps. check.js still node --check's the inline script.
   Version 4.9.0 -> 4.9.5.
+v4.9.6 (this release): completeness audit of the v4.9.x issue-#8 UI work - restore help text the move dropped.
+- Checked the v4.9.0 regroup and the v4.9.5 unified views against the last pre-refactor state (v4.8.0, commit
+  343df129). Every control survived: 0 element ids removed, 0 JS id-references broken, 0 ids that used to be
+  wired now unwired, 0 duplicate static ids, the five engine panels (assessment/updates/os/deploy/reset) are
+  byte-identical in content, and the report + CSV-export links all still resolve. Nothing functional was lost.
+- The audit did find that moving the CPE table and the License keys section OUT of the Settings tab had also
+  dropped their long explanatory `<div class="info">` help blocks (id-less prose an id-diff cannot see): the
+  "what is a CPE / Regex / Vendor / Remote vs Custom / Fix a wrong row" text and the "asset management CSV
+  columns / extraction-rule types / read-only + nothing sent / Rules JSON examples" text. Both are restored
+  into their new panels (CPE under Vulnerabilities > Reports, NVD & CPE table; License under Software > License
+  keys), with their cross-references corrected for the new layout (the Auto-map switch now reads "under
+  Settings", the license switches "above" - which is true inside the moved panel).
+- Tests: +2 render assertions in tools/test-views.js pin the restored CPE + License help text so a future
+  regroup cannot silently drop them. Suite unchanged otherwise. Version 4.9.5 -> 4.9.6.
