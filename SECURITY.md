@@ -146,12 +146,18 @@ Please report security vulnerabilities by opening an issue.
   from ever being replayed to another host.
 - Ratings, comments and mappings are stored locally under `<datapath>/nvd/` and
   `<datapath>/plugins/inventoryscanner/`; comments are stored raw and escaped on output.
-- **License keys (v4.8.0)** are treated as sensitive: collection is **opt-in (default off)**, runs **only on
-  demand** (no background scheduler), and the extraction script is **read-only** (registry GetValue / file read /
+- **License keys (v4.8.0)** are treated as sensitive: collection is **opt-in (default off)** and the extraction
+  script is **read-only** (registry GetValue / file read /
   CIM property - the rule table has no "run command" type, so a tampered table cannot execute). The values are
   written **only** to `<datapath>/plugins/inventoryscanner/data/<node>/license.json` on this server, never sent
   off-server and never written to a log (the log records counts, not keys); they appear only in the admin's own
   software-CSV export. Remote/custom rules pass the same regex-safety and field-validation gate as the CPE table.
+  **Trigger (v5.2.0):** by default the collection runs **only on demand** (an admin presses *Collect*). An
+  automatic schedule can be enabled in the Settings (`licenseCollectIntervalHours`, default **0 = off**) and needs
+  the master switch as well; it runs the identical read-only script on every **online Windows** device, skips
+  devices that hold another agent session (the one-session-per-agent rule is unchanged), never writes to a device
+  and never reboots one. The schedule does not widen what leaves the server: the keys still stay local - the only
+  off-server path remains the separately opt-in asset-management connector.
 
 ### Input validation
 - Severity values whitelisted (CRITICAL, HIGH, MEDIUM, LOW, UNKNOWN); numeric settings range-checked

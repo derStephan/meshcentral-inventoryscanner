@@ -102,10 +102,10 @@ Consequences an agent must respect:
 
 | File | Owns (functions/state of that area) |
 |---|---|
-| `lib/lifecycle.js` | `server_startup` (incl. the code hot-swap), `fixOwnPluginUrl`, NVD timer self-heal + stale notification |
-| `lib/settings.js` | `effectiveSectionConfig`, the `scanner-settings.json` overlay, `rescheduleAll`, `get/save/revert_setting` handlers |
+| `lib/lifecycle.js` | `server_startup` (incl. the code hot-swap), `fixOwnPluginUrl`, `checkAndRepairNvdTimer` (v5.2.0: REPORTS a stale feed + notifies admins, arms no timer itself - the due-aware `scheduleUpdate()` from `server_startup` does that once) |
+| `lib/settings.js` | `effectiveSectionConfig`, the `scanner-settings.json` overlay, `rescheduleAll` (v5.2.0: also re-arms the NVD feed timer and the license schedule - the generation bump invalidates them), `get/save/revert_setting` handlers |
 | `lib/assessments.js` | `assessments` store, `getMeshAssessment`, `save_assessment` / `flag_false_positive` / `unflag_false_positive` handlers, `isFindingId` |
-| `lib/nvd.js` | feed download + `.meta` check, `runNvdUpdate`, `ensureNvdData`, `scheduleUpdate`, feed loading, `nvdLog`, NVD log tailing |
+| `lib/nvd.js` | feed download + `.meta` check, `runNvdUpdate` (`nvdUpdateRunning` guard), `ensureNvdData`, `scheduleUpdate` (**due-aware since v5.2.0**: the delay is measured from `lastUpdate`, a stale/missing feed runs after `NVD_MIN_DELAY_MS` (60 s) and a FAILED run retries after `NVD_RETRY_MS` (6 h) - never a tight loop against the rate-limited NVD), feed loading, `nvdLog`, NVD log tailing |
 | `lib/nvdindex.js` | `processNvdData`, `productIndex`/`cpeProductTokens`/`cpeVendorTokens`/`allCves`, `compareCpeVersions`, `normalizeCveVersion`, `defMatches`, `searchCves*`, the `anyCveMaxAgeYears` age rule |
 | `lib/cpetable.js` | maintained table apply/fetch/cache (`cpe-table.json` - the ONLY curated copy since v4.2.0, the old in-code seed is gone), custom UI entries, `isSafeTableRegex`, the CPE handlers |
 | `lib/matching.js` | `classifySoftware`, `matchTableEntry`, `guessDriverFirmware`, `cpeTokenize`, `autoMatchProductTokens`, publisherâ†’vendor evidence, `scanDeviceSoftware` |
@@ -120,7 +120,7 @@ Consequences an agent must respect:
 | `lib/devreset.js` | per-device Windows PC reset (v4.5.0, the ONLY rebooting feature): `devBuildProbeScript`/`devBuildResetScript`, `devDispatch`, `devModeAllowed`/`devProbeFresh`/`devBitlockerState` gates, `devHandleResponse`/`devResetTimeout`, `dr_status`/`dr_probe`/`dr_reset` handlers, `device-reset.json` + `device-reset.log` |
 | `lib/wutroubleshoot.js` | per-device Windows Update troubleshooter (v4.6.0): `wuBuildDiagnoseScript`/`wuBuildRepairScript`/`wuHead`, `wuDispatch`, `wuHandleResponse`/`wuTimeout`, reboot-state reporting, `wu_diag`/`wu_repair` handlers, `wu-troubleshoot.json` + `wu-troubleshoot.log` |
 | `lib/devreboot.js` | per-device force restart + user notice (v4.7.0): `rbBuild*Script`/`rbBuildScript`/`rbProbeLines`/`rbCleanMessage`/`rbB64`, `rbDispatch`, `rbHandleResponse`/`rbTimeout`, `reboot_now`/`reboot_notify` handlers, `device-reboot.json` + `device-reboot.log` |
-| `lib/license.js` | license keys/info in the software CSV (v4.8.0): curated `license-table.json` + remote fetch + custom rules (`applyLicenseTableText`/`sanitizeLicenseRules`/`licenseRulesForApp`), read-only `licenseBuildScript`, `licenseAppRules(rows)` (since v5.1.0 fed by `obj.fetchNodeSoftware`, so a program that only exists in the sysinfo doc is matched too - it used to see fewer programs than the CSV listed), `licDispatch`/`licHandleResponse`/`licTimeout`, per-node `data/<node>/license.json`, `lic_status`/`lic_collect`/`get_license_table`/`add_license`/`remove_license`, `license-collection.log` |
+| `lib/license.js` | license keys/info in the software CSV (v4.8.0): curated `license-table.json` + remote fetch + custom rules (`applyLicenseTableText`/`sanitizeLicenseRules`/`licenseRulesForApp`), read-only `licenseBuildScript`, `licenseAppRules(rows)` (since v5.1.0 fed by `obj.fetchNodeSoftware`, so a program that only exists in the sysinfo doc is matched too - it used to see fewer programs than the CSV listed), `licDispatch`/`licHandleResponse`/`licTimeout`, `licSweepOnce` (one pass over all online Windows devices - used by BOTH the `all=true` route and the scheduler, v5.2.0), `scheduleLicenseCollection` (only when the master switch is on AND `licenseCollectIntervalHours` > 0; default 0 = on demand only), per-node `data/<node>/license.json`, `lic_status`/`lic_collect`/`get_license_table`/`add_license`/`remove_license`, `license-collection.log` |
 | `lib/fleetindex.js` | READ-ONLY fleet index for the two unified views (v4.9.5, issue #8): `buildFleetIndex` walks `obj.collectNodeInventory` (v5.1.0 - before that it read `getStoredSoftware(node,{})` without the sysinfo doc and counted only software CVEs, so the browser disagreed with the CSV) and joins `wgResults` (updatable) + `licenseMapForNode`; `swFleetHandler` (POST `sw_fleet`, 60 s in-memory cache, `?refresh=1`). Per-software CVE attribution uses the software findings only (OS-level findings belong to the device, not to a program); the device badge counts `uniqueFindingIds` = the same distinct ids the CSV/report show. No agent command, no outbound request. |
 | `lib/assetmgmt.js` | OPTIONAL outbound asset-management connector (v5.0.0, issue #5): `assetConfig`, `asBuildRequests` (generic JSON body template with `{{placeholders}}` + Jira and Snipe-IT presets, create-or-update via a stored external id), `asExternalId`, `assetHttp` (https-only, injectable), `asCollectDeviceRecord` (since v5.1.0 a thin shaping of `obj.collectNodeInventory` - the push therefore carries the SAME findings/hardware/software as the CSV: `vulnerabilities` = every finding with an id, `coverage` = the blind-spot rows), `asSendDevice`/`asPushHandler`/`asTestHandler`, `asStatusHandler`, `asGetConfigHandler`/`asSaveConfigHandler` (own `assetManagement` settings section, secrets masked + blank-keeps + `__AS_CLEAR__`), `asLog` (status only, never a payload/secret), `scheduleAssetSync` (off unless enabled AND interval > 0), `asset-sync.json` + `asset-sync.log` |
 | `lib/swstore.js` | deploy foundation: installer library index/folders, resumable upload parts, task store load/save/prune, staging into `<filespath>/tmp`, `swDownloadCookie` (agentdownload), name/args/extension sanitizers, `swEnsureStaged` |
@@ -180,7 +180,8 @@ sub-domain admins of a multi-tenant server are refused since v3.0.1):
    custom rule table maps a program name to where its license lives (registry value / file regex/JSON/line /
    WMI property); an OPT-IN, on-demand read-only collection per Windows device adds License + License Source
    columns to the software-inventory CSV for asset management. Microsoft keys via the SoftwareLicensingProduct
-    WMI class. Nothing is sent off-server; there is deliberately no background license scan.
+    WMI class. Nothing is sent off-server. On demand by default; since v5.2.0 an automatic schedule can be
+    enabled (`licenseCollectIntervalHours`, default 0 = off) - same read-only script, online Windows devices only.
 11. **Two-layer navigation** (v4.9.0, issue #8): the panel is reorganised under four main sections -
     Devices, Software, Vulnerabilities, Settings - each with its own row of sub-tabs, replacing the old flat
     tab strip so related functionality is grouped instead of grown side by side. This is presentation only:
@@ -1551,7 +1552,7 @@ v5.0.1: full source review of the #5 connector - six real defects found and fixe
   the result map; `as_status` no longer ships the internal per-CVE id map to the browser (a count instead).
 - Tests: +3 steps / +21 assertions (619 PASS + 3 SKIP / 94 steps) pinning every fix above, including the
   background-answer + watchdog-unlock behaviour and the raw-rows contract. Version 5.0.0 -> 5.0.1.
-v5.1.0 (this release): refactor - ONE canonical inventory collection, so browser, CSV, reports and push agree 1:1.
+v5.1.0: refactor - ONE canonical inventory collection, so browser, CSV, reports and push agree 1:1.
 - User-visible problem: the same device could show different information depending on where you looked. The
   reason was that "collect a device" had been implemented FIVE times: `reports.js` twice, `csv.js` once,
   `fleetindex.js` once and `assetmgmt.js` once. The copies had drifted:
@@ -1589,3 +1590,41 @@ v5.1.0 (this release): refactor - ONE canonical inventory collection, so browser
   report count; that CSV/push/fleet-index list the same programs; that the hardware serial + CPU are identical
   in the hardware CSV and the push; and that a sysinfo-only program reaches both the software CSV and the
   license run. These assertions fail on any future drift between the views. Version 5.0.1 -> 5.1.0.
+v5.2.0 (this release): optional license collection schedule + the NVD feed timer actually runs.
+- **License collection can now run automatically** (requested): a new `licenseCollectIntervalHours` setting
+  (0..8760, **default 0 = off**, on demand only as before) in the `inventoryScanner` section, editable in
+  Software > License keys with the usual source select + revert. It needs the existing master switch
+  (`licenseCollectionEnabled`) as well, so nothing changes for anyone who does not turn it on. The run is the
+  IDENTICAL read-only script (registry GetValue / file read / CIM property - no write, no reboot), on **online
+  Windows** devices only, skipping devices that hold another agent session (the one-session-per-agent rule is
+  untouched); the keys stay on this server and are never logged. `licSweepOnce(by, cb)` is the ONE
+  implementation of that pass - the `all=true` route and the scheduler both call it (no copy, per the v5.1.0
+  lesson). `scheduleLicenseCollection` follows the standard timerGen + longTimeout pattern and is armed from
+  `server_startup` and `rescheduleAll`. The field is OPTIONAL in `save_settings`: an absent/empty value keeps
+  the stored one instead of failing the whole save, so an older cached panel page cannot be locked out.
+  SECURITY.md/README/the panel text no longer claim "no background scheduler" - they state the default and the
+  opt-in schedule honestly.
+- **NVD feed updates never ran on a restarting server (a real outage, found from the user's log).** Two bugs:
+  (1) `scheduleUpdate()` always waited a FULL interval regardless of how old the feeds were, so the self-heal -
+  which correctly detected "lastUpdate is 285h old (max 168h)" - merely postponed the run by another 168h. A
+  server that restarts more often than the interval therefore reset the clock every time and NEVER updated
+  (exactly the reported 285h -> 309h with no update). (2) `rescheduleAll()` bumps `timerGen`, which invalidates
+  the armed NVD timer, but it never re-armed it - so any settings save (Settings, winget or asset config)
+  silently stopped the feed updates until the next server start.
+  Fixed: `scheduleUpdate(opts)` is now DUE-AWARE - the delay is `interval - age(lastUpdate)`, a missing or
+  unparseable `lastUpdate` (never downloaded) is due immediately, and everything is floored at
+  `NVD_MIN_DELAY_MS` (60 s) so a multi-GB download does not start in the middle of the boot. A FAILED run is
+  retried after `NVD_RETRY_MS` (6 h) instead of immediately, because nvd.nist.gov is rate-limited - no retry
+  storm. `rescheduleAll()` re-arms the feed timer. `checkAndRepairNvdTimer()` now only REPORTS staleness (log +
+  admin notification) and returns the flag; it no longer arms a second timer next to the one from
+  `server_startup`, and its log line says the run is due instead of the misleading "scheduling update".
+- Tests: +2 steps / +19 assertions (656 PASS + 3 SKIP / 98 steps): the 285h-stale case is fetched within a
+  minute and NOT postponed 168h, a fresh feed waits the remaining interval, a missing lastUpdate is due
+  immediately, a failed run retries after 6h (no tight loop), a successful run returns to the normal cycle,
+  rescheduleAll re-arms the feed timer, the self-heal reports but arms nothing; the license scheduler arms
+  nothing while the master switch is off or the interval is 0 and exactly one cycle when both are set, the
+  sweep sends only to the online Windows device (not offline, not Linux, not a device busy with another
+  engine) with the same read-only script and a redacted log line, and the settings round trip stores/keeps/
+  validates/reverts the new interval. Plus 2 render assertions for the new field and its honest description.
+  The old "license is never scheduled" assertion was deliberately replaced (the invariant changed by request).
+  Version 5.1.0 -> 5.2.0.

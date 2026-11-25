@@ -3027,8 +3027,9 @@ steps.push(function (next) {
 
 // ---- v4.8.0 license keys in the software CSV (issue #7) ----
 steps.push(function (next) {
-    check('license opt-in: collection is OFF by default and never scheduled',
-        obj.licenseConfig().collectEnabled === false && typeof obj.scheduleLicenseCollection === 'undefined' && typeof obj.licPump === 'undefined' && typeof obj.licStartBatch === 'undefined');
+    check('license opt-in: collection is OFF by default AND the schedule is off by default (interval 0 = on demand only)',
+        obj.licenseConfig().collectEnabled === false && obj.licenseConfig().collectIntervalHours === 0 &&
+        typeof obj.licPump === 'undefined' && typeof obj.licStartBatch === 'undefined');
 
     // table apply + safety + rule sanitization
     var good = JSON.stringify({ entries: [{ match: 'adobe', label: 'Adobe Acrobat', rules: [{ type: 'registry', path: 'HKLM:\\SOFTWARE\\Adobe', value: 'Serial' }] }] });
@@ -3640,6 +3641,8 @@ steps.push(function (next) {
 
             // 2) the asset push payload must carry exactly the same finding ids (this FAILED before v5.1.0)
             oF.pluginSettings = { assetManagement: { enabled: true, targetType: 'generic', endpointUrl: 'https://am.example.com/i', authMode: 'none', bodyTemplate: '{"host":"{{device.host}}","vulns":"{{vulnerabilities}}","cov":"{{coverage}}","apps":"{{software}}","serial":"{{hardware.serial}}","cpu":"{{hardware.cpu}}"}', externalIdPath: 'id' } };
+            // a collected license key must NEVER ride along in the push (v5.2.0 collects on a schedule, so this matters)
+            oF.licenseInventory = { k1: { time: 'x', items: [{ name: 'Firefox', license: 'SECRET-LIC-KEY-9', source: 'registry' }], ms: [{ name: 'Windows', key: 'MS-PARTIAL-7' }] } };
             var cap = [];
             oF.assetHttp = function (opts, cb) { cap.push(opts); cb(null, { statusCode: 200, text: '{"id":"K1"}' }); };
             oF.handleAdminPostReq({ headers: XHDR, body: { action: 'as_push' } }, mockRes(function () {
@@ -3656,6 +3659,9 @@ steps.push(function (next) {
                         !!body && body.apps.length === 3 && body.apps[0].name === 'Firefox' && body.apps[1].location === 'dpkg' && body.apps[1].publisher.indexOf('Ubuntu') >= 0, body && body.apps);
                     check('1:1 - the pushed hardware equals the hardware-CSV facts (serial + cpu from the same derivation)',
                         !!body && body.serial === 'CHASSIS-SN-1' && body.cpu === 'Intel Core i7-12700', body && [body.serial, body.cpu]);
+                    check('v5.2.0 security: collected license keys NEVER ride along in the asset push (they stay on this server)',
+                        !!body && JSON.stringify(body).indexOf('SECRET-LIC-KEY-9') < 0 && JSON.stringify(body).indexOf('MS-PARTIAL-7') < 0,
+                        Object.keys(body || {}));
 
                     // 3) the software CSV must list the same programs as the push
                     oF.buildCsvForNodes([fNodes[0]], 'software', function (e2, csvS) {
@@ -3730,6 +3736,149 @@ steps.push(function (next) {
                     String(csv).indexOf('Adobe Acrobat Pro') >= 0, String(csv).split('\r\n').slice(0, 2));
                 next();
             });
+        }), user);
+    });
+});
+
+// ---- v5.2.0: the NVD feed timer is due-aware (a stale feed is fetched, not postponed forever) ----
+steps.push(function (next) {
+    var dpN = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-nvd-'));
+    var dbN = { GetAllType: function (t, cb) { cb(null, t === 'node' ? [] : meshes.slice()); }, Get: function (id, cb) { cb(null, []); } };
+    var oN = factory({ parent: { db: dbN, datapath: dpN, debug: function () { }, config: { settings: {} }, webserver: { meshes: {}, wsagents: {} }, DispatchEvent: function () { } } });
+    oN.pluginSettings = { vulnerabilityScanner: { updateHours: 168 } };
+    var timers = [];
+    oN.longTimeout = function (fn, ms) { timers.push({ fn: fn, ms: ms }); };
+    var hour = 3600 * 1000;
+
+    // the reported symptom: lastUpdate 285h old, interval 168h -> the run must be due NOW, not in 168h
+    oN.lastUpdate = new Date(Date.now() - 285 * hour).toISOString();
+    timers.length = 0;
+    oN.scheduleUpdate();
+    check('v5.2.0 NVD timer: a feed that is 285h old (interval 168h) is fetched within a minute, NOT postponed another 168h',
+        timers.length === 1 && timers[0].ms === oN.NVD_MIN_DELAY_MS, timers.map(function (t) { return t.ms; }));
+    check('v5.2.0 NVD timer: before the fix this was the bug - the delay is no longer the full interval',
+        timers[0].ms !== 168 * hour, timers[0].ms);
+
+    // a fresh feed waits (almost) the full interval
+    oN.lastUpdate = new Date(Date.now() - 1 * hour).toISOString();
+    timers.length = 0;
+    oN.scheduleUpdate();
+    check('v5.2.0 NVD timer: a fresh feed waits the remaining interval (167h), not the floor',
+        timers.length === 1 && timers[0].ms === (168 * hour) - (1 * hour), timers.map(function (t) { return t.ms; }));
+
+    // no lastUpdate at all -> due immediately (floored so the server can settle)
+    oN.lastUpdate = null;
+    timers.length = 0;
+    oN.scheduleUpdate();
+    check('v5.2.0 NVD timer: without any lastUpdate the run is due immediately (floored to the settle delay)',
+        timers.length === 1 && timers[0].ms === oN.NVD_MIN_DELAY_MS, timers.map(function (t) { return t.ms; }));
+
+    // a FAILED run must not turn into a retry storm against the rate-limited NVD
+    var nvdCalls = 0;
+    oN.runNvdUpdate = function (force, cb) { nvdCalls++; cb(new Error('download failed')); };
+    oN.maybeFetchCpeTable = function () { }; oN.maybeFetchOsLifecycle = function () { };
+    oN.lastUpdate = new Date(Date.now() - 285 * hour).toISOString();
+    timers.length = 0;
+    oN.scheduleUpdate();
+    timers[0].fn();   // fires the run, which fails
+    check('v5.2.0 NVD timer: a failed run retries after the bounded retry delay (6h), never in a tight loop',
+        nvdCalls === 1 && timers.length === 2 && timers[1].ms === oN.NVD_RETRY_MS, timers.map(function (t) { return t.ms; }));
+
+    // a successful run refreshes lastUpdate, so the next delay is the normal cycle
+    oN.runNvdUpdate = function (force, cb) { oN.lastUpdate = new Date().toISOString(); cb(null); };
+    timers.length = 0;
+    oN.scheduleUpdate();
+    timers[0].fn();
+    check('v5.2.0 NVD timer: after a successful run the next cycle is the full interval again',
+        timers.length === 2 && timers[1].ms > (167 * hour), timers.map(function (t) { return t.ms; }));
+
+    // bug 2: rescheduleAll bumps timerGen (killing the armed NVD timer) - it MUST re-arm it
+    var schedCalls = 0;
+    var realSched = oN.scheduleUpdate;
+    oN.scheduleUpdate = function () { schedCalls++; };
+    oN.rescheduleAll();
+    check('v5.2.0 NVD timer: a settings save (rescheduleAll) RE-ARMS the feed timer instead of silently killing it',
+        schedCalls === 1, schedCalls);
+    oN.scheduleUpdate = realSched;
+
+    // the self-heal must report staleness but NOT arm a second timer (server_startup arms one)
+    var logged = [];
+    oN.nvdLog = function (m) { logged.push(m); };
+    oN.notifyAdminsNvdStale = function () { };
+    schedCalls = 0;
+    oN.scheduleUpdate = function () { schedCalls++; };
+    oN.lastUpdate = new Date(Date.now() - 309 * hour).toISOString();
+    var stale = oN.checkAndRepairNvdTimer();
+    check('v5.2.0 self-heal: reports the stale feed and notifies, but arms NO second timer (server_startup does that once)',
+        stale === true && schedCalls === 0 && logged.length === 1 && /309h old/.test(logged[0]) && /due/.test(logged[0]), [stale, schedCalls, logged]);
+    oN.scheduleUpdate = realSched;
+    oN.lastUpdate = new Date().toISOString();
+    check('v5.2.0 self-heal: a fresh feed is reported as not stale', oN.checkAndRepairNvdTimer() === false);
+    next();
+});
+
+// ---- v5.2.0: the optional license collection schedule ----
+steps.push(function (next) {
+    var dpLS = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-licsch-'));
+    var lsNodes = [
+        { _id: 'node//ls1', meshid: 'mesh//grp1', rname: 'ls1', name: 'WinOnline', osdesc: 'Microsoft Windows 11 Pro' },
+        { _id: 'node//ls2', meshid: 'mesh//grp1', rname: 'ls2', name: 'WinOffline', osdesc: 'Microsoft Windows 10' },
+        { _id: 'node//ls3', meshid: 'mesh//grp2', rname: 'ls3', name: 'LinOnline', osdesc: 'Ubuntu 24.04 LTS' },
+        { _id: 'node//ls4', meshid: 'mesh//grp1', rname: 'ls4', name: 'WinBusy', osdesc: 'Microsoft Windows 11' }
+    ];
+    var dbLS = { GetAllType: function (t, cb) { cb(null, t === 'node' ? lsNodes.slice() : meshes.slice()); }, Get: function (id, cb) { cb(null, lsNodes.filter(function (n) { return n._id === id; })); } };
+    var sentLS = [];
+    var sentLS4 = [];
+    var agentsLS = { 'node//ls1': { send: function (m) { sentLS.push(JSON.parse(m)); } }, 'node//ls3': { send: function () { } }, 'node//ls4': { send: function (m) { sentLS4.push(JSON.parse(m)); } } };
+    var oLS = factory({ parent: { db: dbLS, datapath: dpLS, debug: function () { }, config: { settings: {} }, webserver: { meshes: {}, wsagents: agentsLS }, DispatchEvent: function () { } } });
+    oLS.softwareInventory = { ls1: { apps: [{ name: 'Adobe Acrobat Pro', version: '11' }] }, ls4: { apps: [{ name: 'Adobe Acrobat Pro', version: '11' }] } };
+    oLS.customLicenseEntries = [{ match: 'acrobat', label: 'Adobe Acrobat', rules: [{ type: 'registry', path: 'HKLM:\\SOFTWARE\\Adobe', value: 'Serial' }] }];
+    var timersLS = [];
+    oLS.longTimeout = function (fn, ms) { timersLS.push({ fn: fn, ms: ms }); };
+
+    // scheduler arming rules
+    oLS.pluginSettings = { inventoryScanner: { licenseCollectionEnabled: false, licenseCollectIntervalHours: 24 } };
+    timersLS.length = 0; oLS.scheduleLicenseCollection();
+    check('v5.2.0 license schedule: nothing is armed while the master switch is OFF (even with an interval set)', timersLS.length === 0, timersLS.length);
+    oLS.pluginSettings = { inventoryScanner: { licenseCollectionEnabled: true, licenseCollectIntervalHours: 0 } };
+    timersLS.length = 0; oLS.scheduleLicenseCollection();
+    check('v5.2.0 license schedule: interval 0 means on demand only - nothing is armed', timersLS.length === 0, timersLS.length);
+    oLS.pluginSettings = { inventoryScanner: { licenseCollectionEnabled: true, licenseCollectIntervalHours: 24 } };
+    timersLS.length = 0; oLS.scheduleLicenseCollection();
+    check('v5.2.0 license schedule: enabled + interval 24h arms exactly one 24h cycle',
+        timersLS.length === 1 && timersLS[0].ms === 24 * 3600 * 1000, timersLS.map(function (t) { return t.ms; }));
+
+    // the sweep itself: online Windows only, and a device busy with another engine is skipped
+    oLS.wgPending['node//ls4'] = { nodeid: 'node//ls4' };
+    sentLS.length = 0; sentLS4.length = 0;
+    oLS.licSweepOnce('the test', function (err, r) {
+        check('v5.2.0 license sweep: sends only to the ONLINE Windows device - not offline, not Linux, and NOT to a device busy with another engine (one runcommands session per agent)',
+            !err && r.candidates === 2 && r.started === 1 && sentLS.length === 1 && sentLS4.length === 0 &&
+            String(sentLS[0].sessionid).indexOf('invscanner-lic-') === 0 && sentLS[0].type === 1, [r, sentLS.length, sentLS4.length]);
+        var script = (function () { var m = String(sentLS[0].cmds).match(/FromBase64String\('([A-Za-z0-9+\/=]+)'\)/); return m ? require('zlib').gunzipSync(Buffer.from(m[1], 'base64')).toString('utf8') : ''; })();
+        check('v5.2.0 license sweep: the scheduled run is the SAME read-only script (no write, no reboot)',
+            script.indexOf('.GetValue(') >= 0 && !/Set-|New-Item|Remove-Item|shutdown|Restart-Computer/i.test(script), script.length);
+        check('v5.2.0 license sweep: the run is logged with its trigger and a count, never a key',
+            fs.readFileSync(oLS.licenseLogPath, 'utf8').indexOf('by the test') >= 0 &&
+            fs.readFileSync(oLS.licenseLogPath, 'utf8').indexOf('Serial') < 0);
+
+        // the settings round trip: stored, sourced, revertable - and an ABSENT field keeps the saved value
+        oLS.longTimeout = function (fn, ms) { };
+        oLS.handleAdminPostReq({ headers: XHDR, body: { action: 'save_settings', scanIntervalHours: '24', updateHours: '168', anyCveMaxAgeYears: '5', collectIntervalMinutes: '1440', notifyThreshold: 'HIGH', licenseCollectIntervalHours: '12' } }, mockRes(function (d1) {
+            check('v5.2.0 settings: the license interval is stored and reported with its source',
+                d1.settings && d1.settings.licenseCollectIntervalHours === 12 && d1.sources.licenseCollectIntervalHours === 'file', d1.settings && d1.settings.licenseCollectIntervalHours);
+            oLS.handleAdminPostReq({ headers: XHDR, body: { action: 'save_settings', scanIntervalHours: '24', updateHours: '168', anyCveMaxAgeYears: '5', collectIntervalMinutes: '1440', notifyThreshold: 'HIGH' } }, mockRes(function (d2) {
+                check('v5.2.0 settings: a save WITHOUT the field keeps the stored value (an older cached panel is not locked out)',
+                    d2.settings && d2.settings.licenseCollectIntervalHours === 12, d2.settings && d2.settings.licenseCollectIntervalHours);
+                oLS.handleAdminPostReq({ headers: XHDR, body: { action: 'save_settings', scanIntervalHours: '24', updateHours: '168', anyCveMaxAgeYears: '5', collectIntervalMinutes: '1440', notifyThreshold: 'HIGH', licenseCollectIntervalHours: '99999' } }, mockRes(function (d3) {
+                    check('v5.2.0 settings: an out-of-range interval is rejected (0..8760)', !!d3.error && /license collection interval/i.test(d3.error), d3.error);
+                    oLS.handleAdminPostReq({ headers: XHDR, body: { action: 'revert_setting', revertLicenseCollectIntervalHours: 'true' } }, mockRes(function (d4) {
+                        check('v5.2.0 settings: the interval can be reverted to config.json/default (back to 0 = off)',
+                            d4.settings && d4.settings.licenseCollectIntervalHours === 0 && d4.sources.licenseCollectIntervalHours === 'default', d4.settings && d4.settings.licenseCollectIntervalHours);
+                        next();
+                    }), user);
+                }), user);
+            }), user);
         }), user);
     });
 });

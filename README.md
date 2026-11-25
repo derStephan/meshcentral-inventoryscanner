@@ -74,8 +74,10 @@ without sending inventory data to anyone.
    can carry `License` + `License Source` columns. A configurable rule table (curated + your own, like the CPE mapping)
    maps each program to where its license lives - a Windows registry value, a file (regex / JSON field / line) or a WMI
    property - so it is **not limited to Microsoft software** (Microsoft keys come from the `SoftwareLicensingProduct`
-   class behind a switch). Reading is **opt-in and on demand only** (no background scan), **read-only** as SYSTEM, and the
-    keys stay **on this server** (`data/<node>/license.json`) - never sent anywhere, never in a log.
+    class behind a switch). Reading is **opt-in**, **read-only** as SYSTEM, and the
+    keys stay **on this server** (`data/<node>/license.json`) - never sent anywhere, never in a log. By default it
+    runs **on demand only** (you press *Collect*); since v5.2.0 you can also set an automatic interval in the
+    Settings (0 = off, the default), which runs the same read-only collection on every online Windows device.
 * **Push to an external asset-management system (Settings > Asset management, v5.0.0, optional)** - the three
    lists this plugin already has (hardware, software, vulnerabilities) can be transferred to your asset system
    over REST. Choose **Generic** and describe the request yourself (HTTP method, extra headers and a JSON body

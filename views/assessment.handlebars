@@ -337,7 +337,18 @@
             <div class="setgrid">
                 <label for="setLicCollect">Collect software license keys (opt-in)</label>
                 <div><input type="checkbox" id="setLicCollect">
-                    <div class="hint">Master switch for the License keys section below. Off by default; nothing reads licenses until you turn it on AND press Collect (there is no automatic license scan).</div></div>
+                    <div class="hint">Master switch for the License keys section below. Off by default; nothing reads
+                    licenses until you turn it on AND press Collect - or set an automatic interval below.</div></div>
+
+                <label for="setLicInterval">Collect licenses automatically every (hours)</label>
+                <div><input type="text" id="setLicInterval" class="num">
+                    <select id="setLicIntervalSrc" class="srcsel"></select>
+                    <div class="hint">0 = off (on demand only, the default). Otherwise the server runs the same
+                    read-only collection on every ONLINE Windows device on this cycle - 24 = daily, 168 = weekly.
+                    Offline devices are skipped and keep their last result. The run never writes to a device, never
+                    reboots it, and the keys stay on this server (they are never logged and never sent anywhere by
+                    this feature). Devices that are busy with another task are skipped for that cycle.</div></div>
+
                 <label for="setLicMsKeys">Include Microsoft product keys</label>
                 <div><input type="checkbox" id="setLicMsKeys">
                     <div class="hint">Also read the Microsoft partial product key(s) from the WMI SoftwareLicensingProduct class on each Windows device.</div></div>
@@ -358,10 +369,11 @@
                 Rows labelled <em>Table</em> come from the curated <code>license-table.json</code> (refreshed from its
                 URL); <em>Custom</em> rows are yours and win. Microsoft keys come from the <em>Include Microsoft
                 product keys</em> switch above, not from a rule.<br>
-                Reading is <strong>on demand only</strong> (no background license scan), runs as SYSTEM, reads registry
-                values / files / WMI properties only, and stores the result on this server under the device's data
-                folder - nothing is sent anywhere. Turn on <em>Collect software license keys</em> above, then press
-                <em>Collect</em>. The CSV export (Software type) then includes the found keys.
+                Reading runs as SYSTEM and is <strong>read-only</strong> (registry values / files / WMI properties
+                only); the result is stored on this server under the device's data folder - nothing is sent anywhere
+                and no key is ever written to a log. Turn on <em>Collect software license keys</em> above, then either
+                press <em>Collect</em> or set an automatic interval above (0 = off, on demand only - the default).
+                The CSV export (Software type) then includes the found keys.
                 <br><br>
                 <strong>Rules JSON</strong> example:
                 <code>[{"type":"registry","path":"HKLM:\\SOFTWARE\\Vendor\\App","value":"LicenseKey"}]</code>
@@ -2445,6 +2457,8 @@
                 if (s.cpeTableUrl !== undefined) $('setCpeTableUrl').value = s.cpeTableUrl;
                 applyConfigSourceUi($('setCpeTableUrlSrc'), src.cpeTableUrl, 'revertCpeTableUrl');
                 setBool('setLicCollect', s.licenseCollectionEnabled);
+                if (s.licenseCollectIntervalHours !== undefined) $('setLicInterval').value = s.licenseCollectIntervalHours;
+                applyConfigSourceUi($('setLicIntervalSrc'), src.licenseCollectIntervalHours, 'revertLicenseCollectIntervalHours');
                 setBool('setLicMsKeys', s.licenseMsKeys);
                 setBool('setLicTableEnabled', s.licenseTableEnabled);
                 applyConfigSourceUi($('setLicTableEnabledSrc'), src.licenseTableEnabled, 'revertLicenseTableEnabled');
@@ -2527,6 +2541,7 @@
                 osLifecycleUrl: $('setOsLifecycleUrl').value.trim(),
                 osUpgradeUrgentDays: $('setOsUrgentDays').value.trim(),
                 licenseCollectionEnabled: $('setLicCollect').checked ? 'true' : 'false',
+                licenseCollectIntervalHours: $('setLicInterval').value.trim(),
                 licenseMsKeys: $('setLicMsKeys').checked ? 'true' : 'false',
                 licenseTableEnabled: $('setLicTableEnabled').checked ? 'true' : 'false',
                 licenseTableUrl: $('setLicTableUrl').value.trim(),

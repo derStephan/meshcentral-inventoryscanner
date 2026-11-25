@@ -108,7 +108,11 @@ try {
     console.log(((a.indexOf("post('sw_fleet'") >= 0 && a.indexOf("post('os_status'") >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v4.9.5: views reuse existing routes (no invented endpoint)');
     // v4.9.6: the CPE + License help text that the v4.9.0 move had dropped must be back (guards the regression).
     console.log(((a.indexOf('Fix a wrong row') >= 0 && a.indexOf('dictionary that tells the scanner') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v4.9.6: CPE mapping help text present again');
-    console.log(((a.indexOf('For asset management the software-inventory CSV') >= 0 && a.indexOf('no background license scan') >= 0 && a.indexOf('SoftwareLicensingProduct') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v4.9.6: License keys help text present again');
+    console.log(((a.indexOf('For asset management the software-inventory CSV') >= 0 && a.indexOf('SoftwareLicensingProduct') >= 0 && a.indexOf('no key is ever written to a log') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v4.9.6: License keys help text present again');
+    // v5.2.0: the optional license collection schedule must be visible + honestly described in the panel
+    console.log(((a.indexOf('id="setLicInterval"') >= 0 && a.indexOf('id="setLicIntervalSrc"') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v5.2.0: the license collection interval is configurable in the panel (with source/revert)');
+    const an = a.replace(/\s+/g, ' ');   // phrase checks must survive the source line wrapping
+    console.log(((an.indexOf('0 = off (on demand only, the default)') >= 0 && an.indexOf('never reboots it') >= 0 && an.indexOf('keys stay on this server') >= 0 && an.indexOf('read-only collection on every ONLINE Windows device') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v5.2.0: the schedule is described as opt-in, read-only and server-local');
     // v5.0.0 issue #5: the optional external asset-management connector (Settings > Asset management)
     console.log(((a.indexOf('id="tab-asset"') >= 0 && a.indexOf('data-main="settings" data-sub="asset"') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v5.0.0: asset-management panel lives under Settings');
     console.log(((a.indexOf("key: 'asset'") >= 0 && a.indexOf('function loadAssetSection') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v5.0.0: asset sub-tab + loader present');
