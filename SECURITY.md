@@ -136,6 +136,14 @@ Please report security vulnerabilities by opening an issue.
   admin-configured, it inherits the same trust model as the other admin-configurable URLs (SSRF is bounded by
   "a full site admin chose this https host"); the generic body template is JSON **data** only - placeholders are
   substituted as values and the template is never evaluated as code.
+  Hardened in v5.0.1: a custom header name must be an RFC 7230 token and a header value must not contain control
+  characters (checked for the auth header and for every generic extra header), so no header injection/request
+  smuggling is possible; enabling a target requires the matching credential to actually exist (bearer token,
+  basic user/password, header name+value), so a configuration that could only ever answer 401 cannot be saved;
+  a push answers immediately and runs in the background with bounded parallelism (4) and a 10-minute watchdog
+  that unlocks the connector, so a hung target can neither time out the admin's request nor block the feature;
+  redirects are deliberately NOT followed (an answered 3xx is a failure), which keeps the Authorization header
+  from ever being replayed to another host.
 - Ratings, comments and mappings are stored locally under `<datapath>/nvd/` and
   `<datapath>/plugins/inventoryscanner/`; comments are stored raw and escaped on output.
 - **License keys (v4.8.0)** are treated as sensitive: collection is **opt-in (default off)**, runs **only on

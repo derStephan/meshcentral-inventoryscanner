@@ -1462,7 +1462,7 @@ v4.9.6: completeness audit of the v4.9.x issue-#8 UI work - restore help text th
   Settings", the license switches "above" - which is true inside the moved panel).
 - Tests: +2 render assertions in tools/test-views.js pin the restored CPE + License help text so a future
   regroup cannot silently drop them. Suite unchanged otherwise. Version 4.9.5 -> 4.9.6.
-v5.0.0 (this release): issue #5 - optional connector to an external asset-management system.
+v5.0.0: issue #5 - optional connector to an external asset-management system.
 - New module `lib/assetmgmt.js` + a new **Settings > Asset management** sub-tab. It transfers the three lists
   the plugin already aggregates (hardware inventory, software inventory, vulnerabilities) to an external REST
   system. Designed GENERIC first, with two first-class presets:
@@ -1504,3 +1504,37 @@ v5.0.0 (this release): issue #5 - optional connector to an external asset-manage
   skips a clean device and RECORDS the skip, as_test, the scheduler registers nothing while disabled/interval 0
   and only then, and get_log/as_status. Plus 7 render assertions for the panel, its disclosure text, the as_*
   routes, password fields with an explicit clear, and the per-push consent. Version 4.9.6 -> 5.0.0.
+v5.0.1 (this release): full source review of the #5 connector - six real defects found and fixed.
+- **Linux distribution packages were mis-scanned before being pushed** (the most serious one): the record
+  collector handed the matcher a reduced projection ({name,version,publisher}) instead of the RAW stored rows,
+  so `location`/`installLocation` (dpkg, rpm, apk, pacman) was lost. `isDistroPackage`/`isDistroMaintained`
+  need exactly that field, so distro packages would have been judged by NVD version ranges and pushed as
+  FALSE-POSITIVE vulnerabilities. Fixed: the matcher now receives the raw rows (like the CSV path does), and the
+  pushed software list keeps name/version/publisher and additionally `location`. Pinned by a test that asserts
+  the raw rows (with location) reach `scanNodeSoftware`.
+- **`jiraVulnIssues` was a dead option**: stored, returned by the API and described in the UI, but never used by
+  the builder. Now implemented: one additional Jira issue per finding, each tracked by its OWN stored id
+  (`asResults[node].vulnIssues[cve]`) so a later push UPDATES it instead of duplicating every run, capped at
+  `AS_MAX_VULN_ISSUES` (100) per device. Requests now carry an `idSlot` ('device' or 'cve:<CVE>') that tells
+  `asSendDevice` where a returned id belongs.
+- **`as_push` blocked the HTTP request until every device was done** - on a large fleet that runs into a proxy/
+  browser timeout. Now it answers IMMEDIATELY (`{started, devices, background:true}`) and runs in the background
+  exactly like `wg_run`/`os_run`; the panel polls `as_status` every 3 s until `running` is false and then reports
+  ok/error/skipped counts.
+- **No watchdog and no pacing**: a callback that never fired left `asPushing = true` forever (every later push
+  refused as "busy" until a server restart), and all devices were fired in parallel. Now the loop uses the shared
+  `pacedEach` with `AS_PUSH_PARALLEL` (4), and `AS_PUSH_MAX_MS` (10 min) unlocks the connector and logs an
+  ABORTED line. `assetHttp` also wraps `https.request` in try/catch and answers through a once-guard, so an
+  invalid header can neither throw into the push loop nor double-call the callback.
+- **Header hardening**: a custom header name must be an RFC 7230 token and a value must not contain control
+  characters (checked for the auth header AND for every entry of the generic `headersJson`) - a CRLF would allow
+  header injection, and an invalid name would have failed obscurely at request time.
+- **Smaller correctness/robustness fixes**: enabling a target now validates the EFFECTIVE credential (bearer
+  needs a token, basic needs user and/or password, header mode needs name+value) so a config that could only ever
+  answer 401 cannot be saved; clearing a secret while enabled+bearer is refused with a clear message (disable or
+  change the auth mode first). The push/status node filter no longer requires `n.name != null` (a device without
+  a name was silently skipped - other engines never required it). Results of deleted devices are pruned during a
+  full push so `asset-sync.json` cannot grow forever; a corrupt/array-shaped file is ignored instead of becoming
+  the result map; `as_status` no longer ships the internal per-CVE id map to the browser (a count instead).
+- Tests: +3 steps / +21 assertions (619 PASS + 3 SKIP / 94 steps) pinning every fix above, including the
+  background-answer + watchdog-unlock behaviour and the raw-rows contract. Version 5.0.0 -> 5.0.1.

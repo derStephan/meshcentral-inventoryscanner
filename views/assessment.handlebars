@@ -3144,15 +3144,39 @@
 
         function asPush(nodeIds) {
             var body = nodeIds ? { nodeIds: nodeIds } : {};
-            $('asRunInfo').textContent = 'pushing...';
+            $('asRunInfo').textContent = 'starting the push...';
             post('as_push', body).then(function (d) {
                 if (d.error) { $('asRunInfo').textContent = ''; showMsg('asMsg', d.error, false); return; }
                 if (d.busy) { $('asRunInfo').textContent = ''; showMsg('asMsg', 'A push is already running.', false); return; }
-                $('asRunInfo').textContent = 'pushed ' + d.devices + ' device(s), ' + d.errors + ' error(s).';
-                showMsg('asMsg', 'Push finished: ' + d.devices + ' device(s), ' + d.errors + ' error(s). See the table and the log below.', d.errors === 0);
-                return post('as_status', {}).then(function (s) { asApp.devices = s.devices || []; asRenderStatus(); });
+                if (d.background) {
+                    // the push runs server-side in the background (like the other batch engines) - follow it by polling
+                    $('asRunInfo').textContent = 'pushing ' + d.devices + ' device(s) in the background...';
+                    showMsg('asMsg', 'Push started for ' + d.devices + ' device(s). The table below fills in as they complete.', true);
+                    asPollStatus(0);
+                    return;
+                }
+                $('asRunInfo').textContent = 'pushed ' + d.devices + ' device(s), ' + (d.errors || 0) + ' error(s).';
+                asPollStatus(0);
             }).catch(function (e) { $('asRunInfo').textContent = ''; showMsg('asMsg', 'Push failed: ' + e.message, false); });
-            setTimeout(asLoadLog, 1500);
+        }
+
+        function asPollStatus(round) {
+            if (round > 200) { $('asRunInfo').textContent = 'still running - press Refresh later.'; asLoadLog(); return; }
+            setTimeout(function () {
+                post('as_status', {}).then(function (s) {
+                    asApp.devices = s.devices || [];
+                    asRenderStatus();
+                    if (s.running) { asPollStatus(round + 1); return; }
+                    var ok = 0, err = 0, skip = 0;
+                    for (var i = 0; i < asApp.devices.length; i++) {
+                        var l = asApp.devices[i].last;
+                        if (!l) { continue; }
+                        if (l.status === 'ok') { ok++; } else if (l.status === 'skipped') { skip++; } else if (l.status === 'error') { err++; }
+                    }
+                    $('asRunInfo').textContent = 'push finished: ' + ok + ' ok, ' + err + ' error(s), ' + skip + ' skipped.';
+                    asLoadLog();
+                }).catch(function () { asPollStatus(round + 1); });
+            }, 3000);
         }
 
         function asLoadLog() {

@@ -117,6 +117,14 @@ const user = { name: 'admin', _id: 'user//u1', siteadmin: 0xFFFFFFFF, domain: ''
 // v3.0.1: every POST must carry the panel's request header (request-origin check)
 const XHDR = { 'x-invscanner-request': '1' };
 
+// v5.0.1: as_push answers immediately and runs in the background (like wg_run/os_run), so tests that
+// assert on the RESULT must wait for the run to finish instead of trusting the response.
+var waitPush = function (o, cb) {
+    var n = 0;
+    var poll = function () { if ((o.asPushing !== true) || (n++ > 400)) { cb(); } else { setTimeout(poll, 5); } };
+    poll();
+};
+
 const steps = [];
 
 // ---- buildOverallReport: locations, counting semantics, coverage ----
@@ -1796,11 +1804,11 @@ steps.push(function (next) {
                             check('os log route: tail available', Array.isArray(lgr.lines) && lgr.lines.length > 0 && lgr.file === 'plugins/inventoryscanner/os-update.log', lgr);
                             next();
                         }), user);
+                            }), user);
+                        }), user);
                     }), user);
                 }), user);
             }), user);
-        }), user);
-        }), user);
     }), user);
 });
 
@@ -3279,9 +3287,13 @@ steps.push(function (next) {
         // a blank secret keeps the stored one; the explicit sentinel clears it
         oB.handleAdminPostReq({ headers: XHDR, body: { action: 'as_save_config', enabled: 'true', targetType: 'generic', endpointUrl: 'https://am.example.com/ingest', authMode: 'bearer', token: '', bodyTemplate: '{}' } }, mockRes(function (keepRes) {
             check('as_save_config: leaving the secret blank KEEPS the stored value (it is never round-tripped through the browser)', oB.assetConfig().token === SECRETTOKEN, keepRes.config && keepRes.config.hasToken);
-            oB.handleAdminPostReq({ headers: XHDR, body: { action: 'as_save_config', enabled: 'true', targetType: 'generic', endpointUrl: 'https://am.example.com/ingest', authMode: 'bearer', token: oB.AS_CLEAR, bodyTemplate: '{"a":1}' } }, mockRes(function () {
-                check('as_save_config: the clear sentinel erases the stored secret', oB.assetConfig().token === '' && oB.assetConfig()._hasToken === false);
+            // v5.0.1: an enabled bearer target without a token would only ever produce 401s -> refused
+            oB.handleAdminPostReq({ headers: XHDR, body: { action: 'as_save_config', enabled: 'true', targetType: 'generic', endpointUrl: 'https://am.example.com/ingest', authMode: 'bearer', token: oB.AS_CLEAR, bodyTemplate: '{"a":1}' } }, mockRes(function (refClear) {
+                check('v5.0.1 save: clearing the token while enabled+bearer is refused (it would only ever fail with 401)', !!refClear.error && /needs a token/i.test(refClear.error) && oB.assetConfig().token === SECRETTOKEN, refClear.error);
+            oB.handleAdminPostReq({ headers: XHDR, body: { action: 'as_save_config', enabled: 'false', targetType: 'generic', endpointUrl: 'https://am.example.com/ingest', authMode: 'bearer', token: oB.AS_CLEAR, bodyTemplate: '{"a":1}' } }, mockRes(function () {
+                check('as_save_config: the clear sentinel erases the stored secret (with the connector disabled)', oB.assetConfig().token === '' && oB.assetConfig()._hasToken === false);
                 // restore for the push test (the section is replaced wholesale on every save)
+                oB.pluginSettings.assetManagement.enabled = true;
                 oB.pluginSettings.assetManagement.token = SECRETTOKEN;
                 oB.pluginSettings.assetManagement.headersJson = '{"X-Tenant":"acme"}';
                 oB.pluginSettings.assetManagement.externalIdPath = 'id';
@@ -3342,7 +3354,9 @@ steps.push(function (next) {
                 // ---- the push itself ----
                 captured.length = 0;
                 oB.handleAdminPostReq({ headers: XHDR, body: { action: 'as_push' } }, mockRes(function (pushed) {
-                    check('as_push: pushes every device and reports the count', pushed.started === true && pushed.devices === 2 && pushed.errors === 0, pushed);
+                    check('as_push: answers IMMEDIATELY and runs in the background (no HTTP timeout on a big fleet)',
+                        pushed.started === true && pushed.devices === 2 && pushed.background === true, pushed);
+                    waitPush(oB, function () {
                     check('as_push: it issues NO agent command at all (server-side aggregation only)', sentB.length === 0, sentB.length);
                     check('as_push: one https request per device to the configured endpoint with the filled body',
                         captured.length === 2 && captured.every(function (c) { return c.url === 'https://am.example.com/ingest' && c.method === 'POST'; }) &&
@@ -3350,6 +3364,7 @@ steps.push(function (next) {
                     check('as_push: the external id from the answer is stored so the next push updates instead of duplicating',
                         oB.asResults['node//b1'] && oB.asResults['node//b1'].status === 'ok' && oB.asResults['node//b1'].httpCode === 201 &&
                         oB.asResults['node//b1'].externalId === 'ext-77' && fs.existsSync(oB.asResultsPath), oB.asResults['node//b1']);
+                    check('as_push: the connector is unlocked again once the run finished', oB.asPushing === false, oB.asPushing);
 
                     var logText = fs.readFileSync(oB.asLogPath, 'utf8');
                     check('asset log: records device + status only - NEVER the credential and NEVER the payload',
@@ -3360,6 +3375,7 @@ steps.push(function (next) {
                     oB.pluginSettings.assetManagement.only = 'vulnerable';
                     captured.length = 0;
                     oB.handleAdminPostReq({ headers: XHDR, body: { action: 'as_push', nodeIds: 'node//b2' } }, mockRes(function (sk) {
+                        waitPush(oB, function () {
                         check('as_push: "only devices with vulnerabilities" skips a clean device without sending anything',
                             captured.length === 0 && oB.asResults['node//b2'] && oB.asResults['node//b2'].status === 'skipped', oB.asResults['node//b2']);
                         oB.pluginSettings.assetManagement.only = 'all';
@@ -3392,11 +3408,150 @@ steps.push(function (next) {
                                 }), user);
                             }), user);
                         }), user);
+                        });
+                    }), user);
+                    });
+                }), user);
+            }), user);
+            }), user);
+        }), user);
+    }), user);
+});
+
+// ---- v5.0.1 review fixes: per-finding Jira issues, header validation, node filter, pruning, watchdog ----
+steps.push(function (next) {
+    var dpC = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-as3-'));
+    var cNodes = [
+        { _id: 'node//c1', meshid: 'mesh//grp1', rname: 'ch1', name: 'Named', osdesc: 'Microsoft Windows 11 Pro' },
+        { _id: 'node//c2', meshid: 'mesh//grp1', rname: 'ch2', osdesc: 'Ubuntu 24.04 LTS' } // deliberately NO name property
+    ];
+    var cSys = { 'sinode//c1': { _id: 'sinode//c1', doc: { hardware: { identifiers: { serial: 'SN-C1' } } } } };
+    var dbC = { GetAllType: function (t, cb) { cb(null, t === 'node' ? cNodes.slice() : meshes.slice()); }, Get: function (id, cb) { if (cSys[id]) { cb(null, [cSys[id]]); return; } cb(null, cNodes.filter(function (n) { return n._id === id; })); } };
+    var sentC = [];
+    var oC = factory({ parent: { db: dbC, datapath: dpC, debug: function () { }, config: { settings: {} }, webserver: { meshes: {}, wsagents: {} }, DispatchEvent: function () { } } });
+    oC.softwareInventory = { c1: { apps: [{ name: 'Firefox', version: '1.0' }] }, c2: { apps: [{ name: 'Firefox', version: '2.0' }] } };
+    oC.scanDeviceSoftware = function (list, cb) {
+        cb([{ isCve: true, cve: 'CVE-2024-0001', severity: 'CRITICAL', cvss: 9.8, software: 'Firefox', version: '1.0' },
+            { isCve: true, cve: 'CVE-2024-0002', severity: 'HIGH', cvss: 7.5, software: 'Firefox', version: '1.0' }]);
+    };
+    var capturedC = [];
+    oC.assetHttp = function (opts, cb) { capturedC.push(opts); cb(null, { statusCode: 201, text: '{"id":"ID-' + capturedC.length + '","key":"KEY-' + capturedC.length + '"}' }); };
+
+    // 1) the jiraVulnIssues option really does something now (it was stored but ignored before)
+    var recC = {
+        device: { id: 'node//c1', host: 'ch1', given: 'Named', group: 'HQ', os: 'W11', online: true },
+        hardware: { serial: 'SN-C1' }, software: [{ name: 'Firefox', version: '1.0' }],
+        vulnerabilities: [{ cve: 'CVE-2024-0001', severity: 'CRITICAL', cvss: 9.8, software: 'Firefox', version: '1.0' }, { cve: 'CVE-2024-0002', severity: 'HIGH', cvss: 7.5, software: 'Firefox', version: '1.0' }],
+        counts: { software: 1, vulnerabilities: 2 }
+    };
+    var jcfgOff = { targetType: 'jira', endpointUrl: 'https://acme.atlassian.net', authMode: 'none', jiraProject: 'IT', jiraIssueType: 'Task', jiraLabel: 'inv', jiraSummary: '[Inventory] {{device.host}}', jiraVulnIssues: false };
+    var off = oC.asBuildRequests(recC, jcfgOff, null, {});
+    check('v5.0.1 jira: with "one issue per vulnerability" OFF there is exactly the device issue', !!off.requests && off.requests.length === 1 && off.requests[0].idSlot === 'device', off.requests && off.requests.length);
+    var jcfgOn = Object.assign({}, jcfgOff, { jiraVulnIssues: true });
+    var on = oC.asBuildRequests(recC, jcfgOn, null, {});
+    check('v5.0.1 jira: turning the option ON adds one CREATE issue per finding, each with its own id slot',
+        !!on.requests && on.requests.length === 3 && on.requests[0].idSlot === 'device' &&
+        on.requests[1].idSlot === 'cve:CVE-2024-0001' && on.requests[2].idSlot === 'cve:CVE-2024-0002' &&
+        on.requests[1].method === 'POST' && on.requests[1].body.fields.summary.indexOf('CVE-2024-0001') >= 0 &&
+        on.requests[1].body.fields.labels.indexOf('vulnerability') >= 0, on.requests && on.requests.map(function (r) { return r.idSlot; }));
+    var upd = oC.asBuildRequests(recC, jcfgOn, 'KEY-9', { 'CVE-2024-0001': 'KEY-1' });
+    check('v5.0.1 jira: a stored per-CVE id makes the next push UPDATE that issue instead of duplicating it',
+        !!upd.requests && upd.requests.length === 3 && upd.requests[0].method === 'PUT' && upd.requests[0].url.indexOf('/issue/KEY-9') >= 0 &&
+        upd.requests[1].method === 'PUT' && upd.requests[1].url.indexOf('/issue/KEY-1') >= 0 && upd.requests[2].method === 'POST',
+        upd.requests && upd.requests.map(function (r) { return r.method + ' ' + r.idSlot; }));
+    var many = { vulnerabilities: [] };
+    for (var mi = 0; mi < 150; mi++) { many.vulnerabilities.push({ cve: 'CVE-2024-1' + mi, severity: 'LOW', software: 'x', version: '1' }); }
+    many.device = recC.device; many.hardware = {}; many.software = []; many.counts = { software: 0, vulnerabilities: 150 };
+    var capped = oC.asBuildRequests(many, jcfgOn, null, {});
+    check('v5.0.1 jira: the per-finding issues are capped (100) so one device cannot create an unbounded issue storm',
+        !!capped.requests && capped.requests.length === 1 + oC.AS_MAX_VULN_ISSUES, capped.requests && capped.requests.length);
+
+    // 2) header safety at save time
+    oC.handleAdminPostReq({ headers: XHDR, body: { action: 'as_save_config', enabled: 'true', targetType: 'generic', endpointUrl: 'https://am.example.com/i', authMode: 'header', headerName: 'Bad Header Name', headerValue: 'x', bodyTemplate: '{"a":1}' } }, mockRes(function (hn) {
+        check('v5.0.1 save: an invalid custom header NAME is rejected (RFC 7230 token)', !!hn.error && /header name/i.test(hn.error), hn.error);
+        oC.handleAdminPostReq({ headers: XHDR, body: { action: 'as_save_config', enabled: 'true', targetType: 'generic', endpointUrl: 'https://am.example.com/i', authMode: 'header', headerName: 'X-Api-Key', headerValue: 'a\r\nX-Injected: 1', bodyTemplate: '{"a":1}' } }, mockRes(function (hv) {
+            check('v5.0.1 save: a header VALUE with CRLF/control characters is rejected (header injection)', !!hv.error && /control characters/i.test(hv.error), hv.error);
+            oC.handleAdminPostReq({ headers: XHDR, body: { action: 'as_save_config', enabled: 'true', targetType: 'generic', endpointUrl: 'https://am.example.com/i', headersJson: '{"Bad Name":"x"}', bodyTemplate: '{"a":1}' } }, mockRes(function (hj) {
+                check('v5.0.1 save: an invalid name inside the extra-headers JSON is rejected too', !!hj.error && /extra header name/i.test(hj.error), hj.error);
+
+                // 3) a valid config, then the push: node filter + pruning + status sanitising
+                oC.handleAdminPostReq({ headers: XHDR, body: { action: 'as_save_config', enabled: 'true', targetType: 'generic', endpointUrl: 'https://am.example.com/i', authMode: 'bearer', token: 'TOK-C', bodyTemplate: '{"host":"{{device.host}}","apps":"{{software}}"}', externalIdPath: 'id' } }, mockRes(function () {
+                    oC.asResults['node//ghost'] = { time: 'x', status: 'ok', externalId: 'old' }; // a deleted device
+                    oC.pluginSettings.assetManagement.jiraVulnIssues = false;
+                    capturedC.length = 0;
+                    oC.handleAdminPostReq({ headers: XHDR, body: { action: 'as_push' } }, mockRes(function (p) {
+                        check('v5.0.1 push: answers immediately with the number of devices it will push', p.started === true && p.devices === 2 && p.background === true, p);
+                        waitPush(oC, function () {
+                        check('v5.0.1 push: a device WITHOUT a name property is no longer silently skipped',
+                            capturedC.length === 2 && sentC.length === 0, [capturedC.length, sentC.length]);
+                        check('v5.0.1 push: results of deleted devices are pruned so asset-sync.json cannot grow forever',
+                            oC.asResults['node//ghost'] === undefined && oC.asResults['node//c1'] != null, Object.keys(oC.asResults));
+                        oC.asResults['node//c1'].vulnIssues = { 'CVE-2024-0001': 'KEY-1', 'CVE-2024-0002': 'KEY-2' };
+                        oC.handleAdminPostReq({ headers: XHDR, body: { action: 'as_status' } }, mockRes(function (st) {
+                            var d1 = st.devices.filter(function (x) { return x.id === 'node//c1'; })[0];
+                            check('v5.0.1 status: the internal per-CVE id map is not shipped to the browser - only a count',
+                                !!d1 && d1.last && d1.last.vulnIssues === 2 && JSON.stringify(st).indexOf('KEY-1') < 0, d1 && d1.last);
+                            next();
+                        }), user);
+                        });
                     }), user);
                 }), user);
             }), user);
         }), user);
     }), user);
+});
+
+// ---- v5.0.1: a stuck push must not block the connector forever (watchdog) ----
+steps.push(function (next) {
+    var dpD = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-as4-'));
+    var dNodes = [{ _id: 'node//d1', meshid: 'mesh//grp1', rname: 'dh1', name: 'Stuck', osdesc: 'Microsoft Windows 11' }];
+    var dbD = { GetAllType: function (t, cb) { cb(null, t === 'node' ? dNodes.slice() : meshes.slice()); }, Get: function (id, cb) { cb(null, dNodes.filter(function (n) { return n._id === id; })); } };
+    var oD = factory({ parent: { db: dbD, datapath: dpD, debug: function () { }, config: { settings: {} }, webserver: { meshes: {}, wsagents: {} }, DispatchEvent: function () { } } });
+    oD.softwareInventory = { d1: { apps: [{ name: 'Firefox', version: '1.0' }] } };
+    oD.scanDeviceSoftware = function (list, cb) { cb([]); };
+    oD.pluginSettings = { assetManagement: { enabled: true, targetType: 'generic', endpointUrl: 'https://am.example.com/i', authMode: 'none', bodyTemplate: '{"a":1}', intervalHours: 0 } };
+    oD.assetHttp = function () { /* never answers - simulates a hung target */ };
+    oD.AS_PUSH_MAX_MS = 40;
+    oD.handleAdminPostReq({ headers: XHDR, body: { action: 'as_push' } }, mockRes(function (r) {
+        check('v5.0.1 watchdog: the push answers immediately (background) even though the target never responds',
+            r.started === true && r.background === true && r.devices === 1, r);
+        check('v5.0.1 watchdog: the connector is locked while the hung push is in flight', oD.asPushing === true, oD.asPushing);
+        setTimeout(function () {
+            check('v5.0.1 watchdog: a hung push is aborted and the connector UNLOCKED, so the next push is not refused as busy',
+                oD.asPushing === false, oD.asPushing);
+            var logD = '';
+            try { logD = fs.readFileSync(oD.asLogPath, 'utf8'); } catch (e) { }
+            check('v5.0.1 watchdog: the abort is recorded in the log', logD.indexOf('ABORTED') >= 0, logD.substring(0, 160));
+            next();
+        }, 200);
+    }), user);
+});
+
+// ---- v5.0.1: the matcher must receive the RAW inventory rows (Linux distro packages need location) ----
+steps.push(function (next) {
+    var dpE = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-as5-'));
+    var eNodes = [{ _id: 'node//e1', meshid: 'mesh//grp2', rname: 'eh1', name: 'LinBox', osdesc: 'Ubuntu 24.04 LTS' }];
+    var dbE = { GetAllType: function (t, cb) { cb(null, t === 'node' ? eNodes.slice() : meshes.slice()); }, Get: function (id, cb) { cb(null, eNodes.filter(function (n) { return n._id === id; })); } };
+    var oE = factory({ parent: { db: dbE, datapath: dpE, debug: function () { }, config: { settings: {} }, webserver: { meshes: {}, wsagents: {} }, DispatchEvent: function () { } } });
+    oE.softwareInventory = { e1: { apps: [{ name: 'libc6', version: '2.39', location: 'dpkg' }, { name: 'nginx', version: '1.24', installLocation: 'dpkg', publisher: 'Debian' }] } };
+    var seen = null;
+    oE.scanNodeSoftware = function (node, list, cb) { seen = list; cb([]); };
+    oE.asCollectDeviceRecord(eNodes[0], function (err, rec) {
+        check('v5.0.1 record: the matcher gets the RAW stored rows, so location/installLocation survive (distro-managed detection)',
+            !err && Array.isArray(seen) && seen.length === 2 && seen[0].location === 'dpkg' && seen[1].installLocation === 'dpkg', seen);
+        check('v5.0.1 record: the pushed software list keeps name/version/publisher and now also the install location',
+            !!rec && rec.software.length === 2 && rec.software[0].name === 'libc6' && rec.software[0].version === '2.39' &&
+            rec.software[0].location === 'dpkg' && rec.software[1].location === 'dpkg' && rec.software[1].publisher === 'Debian', rec && rec.software);
+        check('v5.0.1 record: the distro-managed rows are NOT reported as vulnerabilities (no false positives pushed)',
+            !!rec && rec.counts.vulnerabilities === 0 && rec.vulnerabilities.length === 0, rec && rec.counts);
+        // a corrupt results file must not poison the lookup map
+        fs.mkdirSync(path.dirname(oE.asResultsPath), { recursive: true });
+        fs.writeFileSync(oE.asResultsPath, '[1,2,3]');
+        oE.loadAssetResults();
+        check('v5.0.1 results: an array-shaped/corrupt asset-sync.json is ignored instead of becoming the map',
+            oE.asResults && !Array.isArray(oE.asResults) && Object.keys(oE.asResults).length === 0, oE.asResults);
+        next();
+    });
 });
 
 // The runner MUST stay the last statement: every steps.push() above has to be registered before
