@@ -136,8 +136,12 @@ A file from Server Files can have been placed there by any user with that group'
 before you deploy it to other machines.
 
 **License keys** - the rule table that maps a program name to where its license lives (a registry value, a file, or
-a WMI property), your own rules, the collection log and the schedule. Reading is **read-only**, the keys stay on
-this server and are **never displayed in the panel** - they appear only in the software CSV export. Off by default;
+a WMI property), your own rules, the collection log and the schedule. Rules can also reach **per-user** storage
+(a registry path written as `HKCU:` is read from every loaded user hive; a file path may use the profile-directory
+placeholder) and **version-dependent subkeys** (one `*` wildcard per path) - but hives of logged-off users are never
+loaded, so the extraction stays strictly read-only. Reading is **read-only**, the keys stay on
+this server and are **never displayed in the panel** - they appear only in the software CSV export, whose License
+Source column names the rule type and the user a value came from. Off by default;
 you can collect on demand, on a schedule, per device from the device list, or for all online Windows devices here.
 
 ### Vulnerabilities

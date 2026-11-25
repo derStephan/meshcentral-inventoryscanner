@@ -131,7 +131,7 @@ Consequences an agent must respect:
 | `lib/devreset.js` | per-device Windows PC reset (v4.5.0, the ONLY rebooting feature): `devBuildProbeScript`/`devBuildResetScript`, `devDispatch`, `devModeAllowed`/`devProbeFresh`/`devBitlockerState` gates, `devHandleResponse`/`devResetTimeout`, `dr_status`/`dr_probe`/`dr_reset` handlers, `device-reset.json` + `device-reset.log` |
 | `lib/wutroubleshoot.js` | per-device Windows Update troubleshooter (v4.6.0): `wuBuildDiagnoseScript`/`wuBuildRepairScript`/`wuHead`, `wuDispatch`, `wuHandleResponse`/`wuTimeout`, reboot-state reporting, `wu_diag`/`wu_repair` handlers, `wu-troubleshoot.json` + `wu-troubleshoot.log` |
 | `lib/devreboot.js` | per-device force restart + user notice (v4.7.0): `rbBuild*Script`/`rbBuildScript`/`rbProbeLines`/`rbCleanMessage`/`rbB64`, `rbDispatch`, `rbHandleResponse`/`rbTimeout`, `reboot_now`/`reboot_notify` handlers, `device-reboot.json` + `device-reboot.log` |
-| `lib/license.js` | license keys/info in the software CSV (v4.8.0): curated `license-table.json` + remote fetch + custom rules (`applyLicenseTableText`/`sanitizeLicenseRules`/`licenseRulesForApp`), read-only `licenseBuildScript`, `licenseAppRules(rows)` (since v5.1.0 fed by `obj.fetchNodeSoftware`, so a program that only exists in the sysinfo doc is matched too - it used to see fewer programs than the CSV listed), `licDispatch`/`licHandleResponse`/`licTimeout`, `licSweepOnce` (one pass over all online Windows devices - used by BOTH the `all=true` route and the scheduler, v5.2.0), `scheduleLicenseCollection` (only when the master switch is on AND `licenseCollectIntervalHours` > 0; default 0 = on demand only), per-node `data/<node>/license.json`, `lic_status`/`lic_collect`/`get_license_table`/`add_license`/`remove_license`, `license-collection.log` |
+| `lib/license.js` | license keys/info in the software CSV (v4.8.0): curated `license-table.json` + remote fetch + custom rules (`applyLicenseTableText`/`sanitizeLicenseRules`/`licenseRulesForApp`), read-only `licenseBuildScript`, `licenseAppRules(rows)` (since v5.1.0 fed by `obj.fetchNodeSoftware`, so a program that only exists in the sysinfo doc is matched too - it used to see fewer programs than the CSV listed), `licDispatch`/`licHandleResponse`/`licTimeout`, `licSweepOnce` (one pass over all online Windows devices - used by BOTH the `all=true` route and the scheduler, v5.2.0), `scheduleLicenseCollection` (only when the master switch is on AND `licenseCollectIntervalHours` > 0; default 0 = on demand only), per-node `data/<node>/license.json`, `lic_status`/`lic_collect`/`get_license_table`/`add_license`/`remove_license`, `license-collection.log`. Since v5.5.0 (issue #10) rules may carry `perUser:true` (registry path written `HKCU:\...` read from every ALREADY-LOADED hive `Registry::HKEY_USERS\<SID>`; file path with a `{{profile}}` placeholder per profile dir) and ONE `*` wildcard (registry subkey segment enumerated, <=20 matches; file leaf pattern, <=5 files); users come read-only from ProfileList, capped at `LIC_MAX_USERS` (20); offline hives are NEVER loaded (`reg load`/`LoadKey` are rejected by the script-shape test); answer items carry `user`; `licenseMapForNode` is FIRST-OK-WINS (the old last-wins let a failing rule mask a found value) and puts the user into the source string (`registry (user: alice)`) for the CSV |
 | `lib/fleetindex.js` | READ-ONLY fleet index for the two unified views (v4.9.5, issue #8): `buildFleetIndex` walks `obj.collectNodeInventory` **via `obj.pacedEach`** (v5.4.2 - a bare loop hogged the event loop and unrelated requests died at the proxy with 502) and **coalesces parallel builds** (`_fleetIndexWaiters`, v5.4.2) so two views opening at once walk the fleet once; joins `wgResults` (updatable) + `licenseMapForNode`; `swFleetHandler` (POST `sw_fleet`, 60 s in-memory cache, `?refresh=1`). Since v5.4.0 it also owns the two on-demand detail routes `devDetailsHandler` (`dev_details`) and `swDetailsHandler` (`sw_details`, own 60 s cache per name) - both read-only, both built on `collectNodeInventory`, both reporting license COUNTS/presence and never a value. Per-software CVE attribution uses the software findings only (OS-level findings belong to the device, not to a program); the device badge counts `uniqueFindingIds` = the same distinct ids the CSV/report show. No agent command, no outbound request. |
 | `lib/assetmgmt.js` | OPTIONAL outbound asset-management connector (v5.0.0, issue #5): `assetConfig`, `asBuildRequests` (generic JSON body template with `{{placeholders}}` + Jira and Snipe-IT presets, create-or-update via a stored external id), `asExternalId`, `assetHttp` (https-only, injectable), `asCollectDeviceRecord` (since v5.1.0 a thin shaping of `obj.collectNodeInventory` - the push therefore carries the SAME findings/hardware/software as the CSV: `vulnerabilities` = every finding with an id, `coverage` = the blind-spot rows), `asSendDevice`/`asPushHandler`/`asTestHandler`, `asStatusHandler`, `asGetConfigHandler`/`asSaveConfigHandler` (own `assetManagement` settings section, secrets masked + blank-keeps + `__AS_CLEAR__`), `asLog` (status only, never a payload/secret), `scheduleAssetSync` (off unless enabled AND interval > 0), `asset-sync.json` + `asset-sync.log` |
 | `lib/swstore.js` | deploy foundation: installer library index/folders, resumable upload parts, task store load/save/prune, staging into `<filespath>/tmp`, `swDownloadCookie` (agentdownload), name/args/extension sanitizers, `swEnsureStaged` |
@@ -1042,6 +1042,23 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   Get-Content / Get-CimInstance) and emits no write or reboot command (a test asserts this). The collected
   values are secrets: they are stored ONLY on this server under `data/<node>/license.json` (never in a log,
   never exported anywhere but the admin's own software CSV). `licenseLog` records counts, not the keys.
+- **Per-user reads + wildcards (v5.5.0, issue #10):** rules may carry `perUser:true`. A per-user REGISTRY rule is
+  written `HKCU:\...` and applied as `Registry::HKEY_USERS\<SID>\...` for every **already-loaded** hive (logged-on
+  users; `Test-Path` on the hive decides) - offline hives are NEVER mounted: `reg load`/`reg save`/`LoadKey` are
+  rejected by the script-shape test, because mounting a hive is a system modification and the issue rules it out.
+  A per-user FILE rule replaces the `{{profile}}` placeholder with each existing profile directory (`{{profile}}`
+  without `perUser` is refused). Exactly ONE `*` per path: in a registry path it must be one whole subkey segment
+  (enumerated via `Get-ChildItem`, ≤20 matches, first non-empty value wins - the VMware `License.ws.*` case), in a
+  file path a leaf pattern (≤5 candidate files, e.g. `*.mountainducklicense`); `*` in a registry VALUE is refused,
+  as is `perUser` on wmi. Users are discovered read-only from
+  `HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList` (SID + `ProfileImagePath`, machine env expanded),
+  capped at `LIC_MAX_USERS` (20); only profiles with a loaded hive (registry) or an existing directory (files) take
+  part. Every answer item carries the `user` (the profile leaf name) it came from.
+- **First-ok-wins mapping (v5.5.0):** `licenseMapForNode` used to let the LAST item per name win, so a later failing
+  rule masked a value an earlier rule had found; now the first `ok:true` item with a non-empty license wins (a test
+  pins both directions), and the CSV's `License Source` shows `registry (user: alice)` style attribution. `add_license`
+  accepts a `perUser` flag from the editor checkbox and stamps it onto every registry/file rule of the payload;
+  `sanitizeLicenseRules` remains the single gate for table, remote and custom rules.
 - **Transport + exclusion**: `invscanner-lic-<node>` runcommands type 1 on the shared hook (`.cbuf` console
   buffering); `licDispatch` reserves the node and refuses if any `lic/rb/wu/dev/wg/os/sw` session holds it,
   and all pumps skip a node with a `licPending` entry. Watchdog `LIC_TIMEOUT_MS` 6 min.
@@ -1866,7 +1883,7 @@ v5.4.1 (this release): UI polish round on the #9 rework - seven reported defects
   regenerated in the same commit (201 ids, 63 help texts, 5 links, 11 panels - the removed link panels and the
   export chooser are the visible diff). test-plugin unchanged (679 PASS + 3 SKIP / 99 steps): no route, handler,
   engine or data shape moved. Version 5.4.0 -> 5.4.1.
-v5.4.2 (this release): two reported defects fixed - details did nothing, and four requests died with 502.
+v5.4.2: two reported defects fixed - details did nothing, and four requests died with 502.
 - **Software list > Details did nothing and sent no request.** Two compounding causes, both structural: the
   detail cell id was the ROW INDEX (`swfd-<i>`), which no longer matches after any filter or re-render, and the
   row lookup used `b.parentNode.parentNode` - a chain that silently landed on the `<td>` instead of the `<tr>`
@@ -1890,3 +1907,52 @@ v5.4.2 (this release): two reported defects fixed - details did nothing, and fou
   click, and switching pages no longer produces background requests (or 502s) for the page that was left.
 - Tests: +1 step / +3 assertions in test-plugin (682 PASS + 3 SKIP / 100 steps), +4 render assertions in
   test-views (59 PASS). check.js unchanged green (246). Version 5.4.1 -> 5.4.2.
+v5.5.0 (this release): issue #10 - per-user license rules (HKU hives / profile files) + one subkey/leaf wildcard,
+plus the curated table and the CONTRIBUTING process for it.
+- **Rule schema (backward compatible, all optional, still data-only):** `perUser:true` on a registry rule means the
+  path is written `HKCU:\...` and read from every ALREADY-LOADED user hive (`Registry::HKEY_USERS\<SID>\...`, gated
+  by `Test-Path` on the hive); `perUser:true` on a file rule allows the `{{profile}}` placeholder, replaced per
+  existing profile directory; exactly ONE `*` per path - a whole registry subkey segment enumerated with
+  `Get-ChildItem` (<=20 matches, first non-empty value wins; the VMware `License.ws.*` case incl. a WOW6432Node
+  twin rule) or a file leaf pattern (<=5 candidate files, e.g. `*.mountainducklicense`). `sanitizeLicenseRules`
+  refuses: `perUser` on an HKLM registry path or on wmi, `{{profile}}` without `perUser`, more than one `*`, and a
+  `*` inside a registry value. Users are discovered read-only from ProfileList (SID + ProfileImagePath, machine env
+  expanded), capped at `LIC_MAX_USERS` = 20. **Offline hives are never mounted** - `reg load`/`reg save`/`LoadKey`
+  are rejected by the script-shape test, so the read-only guarantee of v4.8.0 stands (the issue demanded exactly
+  this). Every answer item carries the `user` (profile leaf name); `licHandleResponse` stores it capped at 100.
+- **`licenseMapForNode` first-ok-wins (the masking bug the issue named):** the last item per name used to overwrite,
+  so a later failing rule hid a value an earlier rule had found; now the first `ok:true` item with a non-empty
+  license wins, and the source string gains the attribution - the software CSV's License Source shows e.g.
+  `registry (user: alice)`. Pinned by tests in both directions (fail-then-ok, ok-then-ok, all-fail).
+- **Script:** two single-line read helpers (`invRegVal`, `invFileVal`) and one per-rule target loop replacing the
+  old fixed single-path read; the marker line, the base64 rule blob and the item caps are unchanged. The generated
+  script passes the PowerShell parser and the one-statement-per-line check (a missing closing brace in the two
+  perUser branches was caught by the parser test during development and fixed).
+- **UI:** the custom-rule editor gained an "apply these rules per user" checkbox (`add_license` stamps `perUser`
+  onto every registry/file rule of the payload), the info block documents per-user reads, the placeholder, the
+  wildcard caps and the never-loaded offline hives, the custom-rule table shows `(per user)` per rule, and the
+  hover help covers the checkbox.
+- **Curated `license-table.json`:** `_comment` now documents the whole schema incl. the v5.5.0 extensions, the caps,
+  first-ok-wins and the CSV attribution; two entries added, BOTH with a `_source` citation in the file: VMware
+  Workstation (serial in the version-dependent `License.ws.*` subkey, Broadcom KB 342831 + fleet measurement; the
+  WOW6432Node twin covers older installs) and Mountain Duck (per-user `*.mountainducklicense` in the application
+  support folder, docs.mountainduck.io + fleet measurement). gpg4o and PL/SQL Developer are NOT in the table: the
+  issue documents only "a per-user license file in the gpg4o user directory" and "registration under
+  HKCU\Software\Allround Automations\..." without the file/value names - adding guessed segments would violate the
+  table's honesty rule; both are now expressible by an admin custom rule (documented in CONTRIBUTING.md and the
+  panel help). The vendor-encrypted non-goals (Adobe/Foxit/PDF-XChange, Total Commander) are named in the comment.
+- **CONTRIBUTING.md:** a full "License-mapping contributions" section parallel to the CPE one - evidence rule
+  (documented path + citation, never guess; encrypted blobs are non-goals), the data-only rule types, the per-user
+  and wildcard syntax with its caps, order/first-hit-wins, the safety gate, validation commands, and what the file
+  is not (no key dumps, no MS keys, no single-machine paths).
+- **Docs:** README license paragraphs (per-user + wildcard + never-loaded hives + CSV attribution), SECURITY.md
+  (the per-user read scope stays inside the read-only guarantee; the only per-user datum that leaves the device is
+  the profile NAME in the CSV source), AGENTS.md (module row + engine section).
+- Tests: +1 step / +26 assertions in test-plugin (705 PASS + 3 SKIP / 101 steps): schema accept/refuse matrix,
+  script shape (ProfileList discovery + cap, loaded-hives-only, placeholder replacement, wildcard caps, NEVER a
+  hive mount, still no write/reboot, base64 blob, one statement per line, PS parser), a dispatched per-user collect
+  whose answer stores `user` per item, first-ok-wins + source attribution + all-fail-empty, the CSV carrying
+  `registry (user: alice)`, the shipped table applying with 4 entries and both new entries well-formed with cited
+  sources, and `add_license` stamping/refusing perUser. +3 render assertions in test-views (62 PASS) for the editor
+  checkbox, the panel explanation and the hover help. The inventory fixture was regenerated (202 ids). check.js
+  green. The live CI integration exercises lic_collect on a real agent unchanged. Version 5.4.2 -> 5.5.0.

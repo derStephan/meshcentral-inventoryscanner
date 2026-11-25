@@ -1,6 +1,6 @@
 {
   "updated": "2026-11-25",
-  "_comment": "License-key extraction rules per software, the asset-management counterpart of cpe-table.json. Each entry: a case-insensitive 'match' regex against the installed-software display name, a human 'label', and 'rules' - one or more of: {type:'registry', path:'HKLM:\\...', value:'<name>'}, {type:'file', path:'<file>', regex:'<regex with group 1 = the key>' | jsonfield:'<name>' | line:<n>}, {type:'wmi', class:'<ClassName>', property:'<Prop>', filter:'<WQL filter>'}. The script only ever uses these as a registry value / file content / CIM property - never as code. Microsoft keys come from SoftwareLicensingProduct (the 'include Microsoft keys' switch), not from here. Keep the curated set small and correct: add your own per-program rules in the panel (Software > License keys).",
+  "_comment": "License-key extraction rules per software, the asset-management counterpart of cpe-table.json. Each entry: a case-insensitive 'match' regex against the installed-software display name, a human 'label', and 'rules' - one or more of: {type:'registry', path:'HKLM:\\...', value:'<name>'}, {type:'file', path:'<file>', regex:'<regex with group 1 = the key>' | jsonfield:'<name>' | line:<n>}, {type:'wmi', class:'<ClassName>', property:'<Prop>', filter:'<WQL filter>'}. Since v5.5.0 three optional extensions exist, all data-only like the rest: 'perUser':true on a registry rule means the path is written 'HKCU:\\...' and read from every ALREADY-LOADED user hive (HKEY_USERS\\<SID>; hives of logged-off users are never loaded - the extraction stays read-only); 'perUser':true on a file rule allows the placeholder {{profile}} in the path, which becomes each user's profile directory; and exactly ONE '*' per path - in a registry path a whole subkey segment that is enumerated (version-dependent subkeys like 'License.ws.*', at most 20 matches, first non-empty value wins), in a file path a leaf pattern (at most 5 candidate files). At most 20 user profiles are considered per run. Answers carry the user they came from; the first successful read per program wins, and the software CSV's License Source column shows e.g. 'registry (user: alice)'. The script only ever uses these as a registry value / file content / CIM property - never as code. Microsoft keys come from SoftwareLicensingProduct (the 'include Microsoft keys' switch), not from here. Keep the curated set small and correct - ONLY entries with a documented, researched path (cite the source in the pull request); products whose vendors store encrypted blobs are deliberately NOT in this table. Add your own per-program rules in the panel (Software > License keys), they win over every row here.",
   "entries": [
     {
       "match": "^microsoft office|^microsoft 365|office 201[0-9]|^office ltsc",
@@ -21,6 +21,35 @@
           "type": "registry",
           "path": "HKLM:\\SOFTWARE\\WOW6432Node\\Adobe\\Adobe Acrobat\\11.0",
           "value": "Serial"
+        }
+      ]
+    },
+    {
+      "match": "^vmware workstation",
+      "label": "VMware Workstation",
+      "_source": "Broadcom knowledge base 342831 (measured on a fleet install, 2026-11-25): the serial lives in a VERSION-DEPENDENT subkey License.ws.<x>.<y> under the product key, older installs under WOW6432Node - hence the single-segment wildcard, which the v5.5.0 schema can express.",
+      "rules": [
+        {
+          "type": "registry",
+          "path": "HKLM:\\SOFTWARE\\VMware, Inc.\\VMware Workstation\\License.ws.*",
+          "value": "Serial"
+        },
+        {
+          "type": "registry",
+          "path": "HKLM:\\SOFTWARE\\WOW6432Node\\VMware, Inc.\\VMware Workstation\\License.ws.*",
+          "value": "Serial"
+        }
+      ]
+    },
+    {
+      "match": "^mountain duck",
+      "label": "Mountain Duck",
+      "_source": "docs.mountainduck.io (registration article, measured on a fleet install, 2026-11-25): the registration is a '*.mountainducklicense' file in the PER-USER application support folder - on Windows that is %APPDATA%\\Mountain Duck, i.e. {{profile}}\\AppData\\Roaming\\Mountain Duck; the file content is the key.",
+      "rules": [
+        {
+          "type": "file",
+          "path": "{{profile}}\\AppData\\Roaming\\Mountain Duck\\*.mountainducklicense",
+          "perUser": true
         }
       ]
     }

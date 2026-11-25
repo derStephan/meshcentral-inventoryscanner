@@ -4032,6 +4032,107 @@ steps.push(function (next) {
     }
 });
 
+// ---- v5.5.0 (issue #10): per-user rules, subkey/file wildcard, first-ok-wins map ----
+steps.push(function (next) {
+    // 1) schema: accept the new forms, reject the unsafe/meaningless ones
+    var okReg = obj.sanitizeLicenseRules([{ type: 'registry', path: 'HKCU:\\Software\\Vendor', value: 'Serial', perUser: true }]);
+    var okWild = obj.sanitizeLicenseRules([{ type: 'registry', path: 'HKLM:\\SOFTWARE\\V\\Product\\License.ws.*', value: 'Serial' }]);
+    var okFile = obj.sanitizeLicenseRules([{ type: 'file', path: '{{profile}}\\AppData\\Roaming\\P\\*.lic', perUser: true }]);
+    check('v5.5.0 schema: perUser registry (HKCU), one wildcard segment and perUser file with {{profile}} are accepted',
+        !!okReg && okReg[0].perUser === true && !!okWild && !!okFile && okFile[0].perUser === true, [okReg, okWild, okFile]);
+    check('v5.5.0 schema: perUser on an HKLM path is refused (it would mean nothing)',
+        obj.sanitizeLicenseRules([{ type: 'registry', path: 'HKLM:\\SOFTWARE\\V', value: 'S', perUser: true }]) === null);
+    check('v5.5.0 schema: {{profile}} without perUser is refused',
+        obj.sanitizeLicenseRules([{ type: 'file', path: '{{profile}}\\a.lic' }]) === null);
+    check('v5.5.0 schema: more than one wildcard per path is refused (registry and file)',
+        obj.sanitizeLicenseRules([{ type: 'registry', path: 'HKLM:\\A\\*\\B\\*', value: 'S' }]) === null &&
+        obj.sanitizeLicenseRules([{ type: 'file', path: 'C:\\*\\x\\*.lic' }]) === null);
+    check('v5.5.0 schema: a wildcard in the registry VALUE and perUser on wmi are refused',
+        obj.sanitizeLicenseRules([{ type: 'registry', path: 'HKLM:\\A', value: 'S*' }]) === null &&
+        obj.sanitizeLicenseRules([{ type: 'wmi', class: 'C', property: 'P', perUser: true }]) === null);
+
+    // 2) script shape: per-user discovery from ProfileList, loaded hives only, capped wildcards, NO hive loading
+    var puRules = [{ name: 'PerUserApp', label: 'PerUserApp', rules: [{ type: 'registry', path: 'HKCU:\\Software\\Vendor', value: 'Serial', perUser: true }] },
+        { name: 'WildApp', label: 'WildApp', rules: [{ type: 'registry', path: 'HKLM:\\SOFTWARE\\V\\Product\\License.ws.*', value: 'Serial' }] },
+        { name: 'FileApp', label: 'FileApp', rules: [{ type: 'file', path: '{{profile}}\\AppData\\Roaming\\P\\*.lic', perUser: true }] }];
+    var scr = obj.licenseBuildScript(puRules, false);
+    check('v5.5.0 script: enumerates users read-only from ProfileList and caps them at LIC_MAX_USERS',
+        scr.indexOf('ProfileList') >= 0 && scr.indexOf('ProfileImagePath') >= 0 && scr.indexOf('-ge ' + obj.LIC_MAX_USERS) >= 0, scr.length);
+    check('v5.5.0 script: per-user registry reads loaded hives only (HKEY_USERS by SID), HKCU prefix replaced',
+        scr.indexOf("Registry::HKEY_USERS\\") >= 0 && scr.indexOf('-replace \'^HKCU:') >= 0 && scr.indexOf('Test-Path (\'Registry::HKEY_USERS\\\'') >= 0, scr.substring(0, 80));
+    check('v5.5.0 script: the profile placeholder is replaced per user (as an escaped regex) and wildcards are enumerated with caps',
+        scr.indexOf('\\{\\{profile\\}\\}') >= 0 && (scr.match(/-ge 20/g) || []).length >= 2 && scr.indexOf('-ge 5') >= 0, scr.length);
+    check('v5.5.0 script: NEVER loads or saves a hive (the read-only guarantee incl. offline users)',
+        !/reg(\.exe)?\s+load/i.test(scr) && scr.indexOf('LoadKey') < 0 && !/reg(\.exe)?\s+save/i.test(scr) && scr.indexOf('Mount-Registry') < 0);
+    check('v5.5.0 script: still read-only overall - no write/reboot cmdlet, marker kept, rules stay base64',
+        !/Set-|New-Item|Remove-Item|shutdown|Restart-Computer/i.test(scr) && scr.indexOf(obj.LIC_MARKER) >= 0 &&
+        scr.indexOf('HKCU:\\Software\\Vendor') < 0 && scr.indexOf('FromBase64String') >= 0);
+    var openersPU = scr.split(String.fromCharCode(10)).filter(function (l) { return /[({]\s*$/.test(l); });
+    check('v5.5.0 script: one statement per line (agent runs PowerShell line-interactive)', openersPU.length === 0, openersPU.slice(0, 3));
+    var dirPU = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-pups-'));
+    var fpPU = path.join(dirPU, 'pu.ps1'); fs.writeFileSync(fpPU, scr);
+    var psrPU = runPs(['-NoProfile', '-NonInteractive', '-Command', "$t=$null;$e=$null;[void][System.Management.Automation.Language.Parser]::ParseFile('" + fpPU + "',[ref]$t,[ref]$e);$e.Count"]);
+    if (psrPU == null) { console.log('SKIP v5.5.0 script: PowerShell parser (PowerShell not available)'); }
+    else { check('v5.5.0 script: PowerShell parser reports no errors', !psrPU.failed && psrPU.text.trim() === '0', psrPU.text.trim()); }
+
+    // 3) stored answers carry the user; the map is first-ok-wins; the CSV names the user
+    var dpU = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-licu-'));
+    var uNodes = [{ _id: 'node//u1', meshid: 'mesh//grp1', rname: 'uh1', name: 'UserOne', osdesc: 'Microsoft Windows 11 Pro' }];
+    var dbU = { GetAllType: function (t, cb) { cb(null, t === 'node' ? uNodes.slice() : meshes.slice()); }, Get: function (id, cb) { cb(null, uNodes.filter(function (n) { return n._id === id; })); } };
+    var sentU = [];
+    var oU = factory({ parent: { db: dbU, datapath: dpU, debug: function () { }, config: { settings: {} }, webserver: { meshes: {}, wsagents: { 'node//u1': { send: function (m) { sentU.push(JSON.parse(m)); } } } }, DispatchEvent: function () { } } });
+    oU.softwareInventory = { u1: { apps: [{ name: 'PerUserApp', version: '1' }] } };
+    oU.customLicenseEntries = [{ match: 'peruserapp', label: 'PerUserApp', rules: [{ type: 'registry', path: 'HKCU:\\Software\\Vendor', value: 'Serial', perUser: true }] }];
+    oU.pluginSettings = { inventoryScanner: { licenseCollectionEnabled: true, licenseMsKeys: false } };
+    oU.handleAdminPostReq({ headers: XHDR, body: { action: 'lic_collect', nodeId: 'node//u1' } }, mockRes(function (dU) {
+        var gunzU = function (cmd) { var m = String(cmd).match(/FromBase64String\('([A-Za-z0-9+\/=]+)'\)/); return m ? require('zlib').gunzipSync(Buffer.from(m[1], 'base64')).toString('utf8') : ''; };
+        check('v5.5.0 collect: a per-user rule is dispatched on the lic session with the per-user script',
+            dU.started === true && sentU.length === 1 && String(sentU[0].sessionid).indexOf('invscanner-lic-') === 0 &&
+            gunzU(sentU[0].cmds).indexOf('ProfileList') >= 0, [dU, sentU.length]);
+        var sess = oU.licPending['node//u1'] ? oU.licPending['node//u1'].sid : 'invscanner-lic-u1';
+        var consumed = oU.onAgentResponse({ action: 'msg', type: 'runcommands', sessionid: sess, result: 'x' + oU.LIC_MARKER +
+            '{"collect":true,"items":[{"name":"PerUserApp","label":"PerUserApp","source":"registry","license":"","ok":false,"user":""},{"name":"PerUserApp","label":"PerUserApp","source":"registry","license":"PU-KEY-1","ok":true,"user":"alice"},{"name":"PerUserApp","label":"PerUserApp","source":"registry","license":"PU-KEY-2","ok":true,"user":"bob"}],"ms":[],"error":""}' + String.fromCharCode(10) }, '', 'node//u1');
+        var invU = oU.licenseInventory['u1'];
+        check('v5.5.0 response: the user of each read is stored per item',
+            consumed === true && invU.items.length === 3 && invU.items[1].user === 'alice' && invU.items[2].user === 'bob' && invU.items[0].user === '', invU.items);
+        var mapU = oU.licenseMapForNode('node//u1');
+        check('v5.5.0 map: the FIRST successful read wins (a later value no longer overwrites, a failing rule no longer masks)',
+            mapU['peruserapp'].license === 'PU-KEY-1' && mapU['peruserapp'].source === 'registry (user: alice)', mapU['peruserapp']);
+        check('v5.5.0 map: the source names the rule type AND the user for the CSV',
+            mapU['peruserapp'].source === 'registry (user: alice)', mapU['peruserapp'].source);
+        oU.licenseInventory['u1'] = { time: 'x', items: [{ name: 'OnlyFail', license: '', source: 'file', ok: false, user: '' }], ms: [] };
+        check('v5.5.0 map: an all-failing rule set yields an empty license (never a stale value)', oU.licenseMapForNode('node//u1')['onlyfail'].license === '');
+        obj.licenseInventory = { d1: { time: 'x', items: [{ name: 'Firefox', license: 'FIRE-KEY', source: 'registry', ok: true, user: 'alice' }], ms: [] } };
+        obj.buildCsvForNodes([nodes[0]], 'software', function (cerr, csvU) {
+            check('v5.5.0 CSV: the License Source column shows "registry (user: alice)"', String(csvU).indexOf('registry (user: alice)') >= 0 && String(csvU).indexOf('FIRE-KEY') >= 0, String(csvU).split('\r\n').slice(1, 2));
+            obj.licenseInventory = {};
+
+            // 4) the shipped curated table: new entries survive the same validation a running server applies
+            var tbl = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'license-table.json'), 'utf8'));
+            var app = obj.applyLicenseTableText(JSON.stringify(tbl));
+            check('v5.5.0 table: the shipped file applies (4 entries) with the new schema', app.ok === true && app.applied === 4 && app.skipped === 0, app);
+            var vm = tbl.entries.filter(function (e) { return /vmware/i.test(e.label); })[0];
+            var md = tbl.entries.filter(function (e) { return /mountain/i.test(e.label); })[0];
+            check('v5.5.0 table: VMware is covered by the version-subkey wildcard (both registry views), with a cited source',
+                !!vm && vm.rules.length === 2 && vm.rules.every(function (r) { return r.type === 'registry' && r.value === 'Serial' && (r.path.match(/\*/g) || []).length === 1; }) && !!vm._source, vm && vm.rules);
+            check('v5.5.0 table: Mountain Duck is a per-user wildcard file rule under the profile, with a cited source',
+                !!md && md.rules.length === 1 && md.rules[0].type === 'file' && md.rules[0].perUser === true && md.rules[0].path.indexOf('{{profile}}') === 0 && md.rules[0].path.indexOf('*') > 0 && !!md._source, md && md.rules);
+
+            // 5) add_license stamps perUser from the editor checkbox and still rejects unsafe combos
+            oU.handleAdminPostReq({ headers: XHDR, body: { action: 'add_license', match: '^Stamped', label: 'Stamped', perUser: 'true', rules: JSON.stringify([{ type: 'registry', path: 'HKCU:\\Software\\S', value: 'K' }]) } }, mockRes(function (adU) {
+                var stored = oU.customLicenseEntries[oU.customLicenseEntries.length - 1];
+                check('v5.5.0 add_license: the editor checkbox stamps perUser onto registry/file rules',
+                    adU.success === true && stored.rules[0].perUser === true, stored);
+                oU.handleAdminPostReq({ headers: XHDR, body: { action: 'add_license', match: '^BadPU', label: 'Bad', perUser: 'true', rules: JSON.stringify([{ type: 'registry', path: 'HKLM:\\Software\\S', value: 'K' }]) } }, mockRes(function (bdU) {
+                    check('v5.5.0 add_license: perUser on an HKLM path is refused with a message that names the rule model',
+                        !!bdU.error && /perUser|HKCU/i.test(bdU.error), bdU.error);
+                    next();
+                }), user);
+            }), user);
+        });
+    }), user);
+});
+
 // The runner MUST stay the last statement: every steps.push() above has to be registered before
 // step 0 starts (pre-3.0.1 it sat mid-file and the trailing steps only ran because an earlier
 // step happened to be asynchronous). New steps go ABOVE this block.

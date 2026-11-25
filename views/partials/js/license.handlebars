@@ -32,7 +32,7 @@
             var e = (licApp.table && licApp.table.entries) || [];
             var html = '';
             for (var i = 0; i < e.length; i++) {
-                var rulesTxt = (e[i].rules || []).map(function (r) { return r.type + (r.path ? (' ' + r.path) : '') + (r.class ? (' ' + r.class) : '') + (r.value ? ('=' + r.value) : '') + (r.property ? ('.' + r.property) : ''); }).join('; ');
+                var rulesTxt = (e[i].rules || []).map(function (r) { return r.type + (r.path ? (' ' + r.path) : '') + (r.class ? (' ' + r.class) : '') + (r.value ? ('=' + r.value) : '') + (r.property ? ('.' + r.property) : '') + (r.perUser ? ' (per user)' : ''); }).join('; ');
                 html += '<tr><td><code>' + esc(e[i].match) + '</code></td><td>' + esc(e[i].label || '') + '</td><td style="font-size:11px">' + esc(rulesTxt) + '</td>';
                 html += '<td>' + (e[i].source === 'custom' ? '<button class="small red licDel" data-idx="' + i + '">Remove</button>' : '<span class="hint">' + esc(e[i].source) + '</span>') + '</td></tr>';
             }
@@ -74,9 +74,11 @@
         $('addLicBtn').addEventListener('click', function () {
             var match = $('licMatch').value.trim(), label = $('licLabel').value.trim(), rules = $('licRules').value.trim();
             if (!match) { showMsg('licMsg', 'A match regex is required.', false); return; }
-            post('add_license', { match: match, label: label, rules: rules }).then(function (d) {
+            var body = { match: match, label: label, rules: rules };
+            if ($('licPerUser').checked) { body.perUser = 'true'; }
+            post('add_license', body).then(function (d) {
                 if (d.error) { showMsg('licMsg', d.error, false); return; }
-                $('licMatch').value = ''; $('licLabel').value = ''; $('licRules').value = '';
+                $('licMatch').value = ''; $('licLabel').value = ''; $('licRules').value = ''; $('licPerUser').checked = false;
                 showMsg('licMsg', 'Custom rule added.', true); loadLicenseSection();
             }).catch(function (ex) { showMsg('licMsg', 'Add failed: ' + ex.message, false); });
         });

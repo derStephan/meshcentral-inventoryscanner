@@ -193,6 +193,10 @@ try {
     console.log(((a.indexOf('rowOf(b)') >= 0 && count(a, /rowOf\(b\)/g) >= 2) ? 'PASS ' : (failed++, 'FAIL ')) + 'v5.4.2: both unified lists resolve the clicked row via rowOf (the .cellacts wrapper no longer breaks the parent chain)');
     console.log(((a.indexOf('function stopViewPolls') >= 0 && a.indexOf('stopViewPolls();') >= 0 && a.indexOf('gen !== asPollGen || currentSub !== \'asset\'') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v5.4.2: leaving a view stops its background polls (asset poll guarded by generation + visible sub)');
     console.log(((a.indexOf("busy && currentSub === 'devicelist'") >= 0 && a.indexOf("running && currentSub === 'updates'") >= 0 && a.indexOf("currentSub === 'license'") >= 0 && a.indexOf("currentSub === 'reset'") >= 0 && a.indexOf("currentSub === 'deploy'") >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v5.4.2: every remaining poller only runs while its own page is open');
+    // v5.5.0 (issue #10): the custom-rule editor and the help text document the per-user + wildcard schema
+    console.log(((a.indexOf('id="licPerUser"') >= 0 && a.indexOf('body.perUser') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v5.5.0: the rule editor has a per-user checkbox and submits it');
+    console.log(((an.indexOf('already-loaded') >= 0 && an.indexOf('never loaded') >= 0 && an.indexOf('Per user and wildcards') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v5.5.0: the panel explains per-user reads, the profile placeholder, the wildcard and that offline hives are never loaded');
+    console.log(((a.indexOf("'lic.peruser'") >= 0 && an.indexOf('registry (user: alice)') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v5.5.0: hover help covers the per-user option and the CSV names the user');
 } catch (e) { failed++; console.log('FAIL nav checks: ' + e.message); }
 
 console.log(failed === 0 ? '\ntest-views: ALL PASSED' : '\ntest-views: ' + failed + ' FAILURE(S)');

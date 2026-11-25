@@ -39,12 +39,24 @@
                 only); the result is stored on this server under the device's data folder - nothing is sent anywhere
                 and no key is ever written to a log. Turn on <em>Collect software license keys</em> above, then either
                 press <em>Collect</em> or set an automatic interval above (0 = off, on demand only - the default).
-                The CSV export (Software type) then includes the found keys.
+                The CSV export (Software type) then includes the found keys; its <em>License Source</em> column names
+                the rule type and, for per-user reads, the user (e.g. <code>registry (user: alice)</code>).
+                <br><br>
+                <strong>Per user and wildcards (v5.5.0):</strong> a rule can carry <code>"perUser": true</code>. On a
+                registry rule the path is then written as <code>HKCU:\Software\...</code> and read from every
+                <strong>already-loaded</strong> user hive (<code>HKEY_USERS\&lt;SID&gt;</code>) - hives of users who are
+                not logged on are <strong>never loaded</strong>, the extraction stays strictly read-only. On a file
+                rule the placeholder <code>\{{profile}}</code> in the path becomes each user's profile directory (e.g.
+                <code>\{{profile}}\AppData\Roaming\Product\key.lic</code>). One single <code>*</code> is allowed per
+                path: in a registry path it is one whole subkey segment that gets enumerated (version-dependent
+                subkeys such as <code>License.ws.*</code>, at most 20 matches, first non-empty value wins), in a file
+                path it is a leaf pattern (at most 5 candidate files). At most 20 user profiles are considered per run.
                 <br><br>
                 <strong>Rules JSON</strong> example:
                 <code>[{"type":"registry","path":"HKLM:\\SOFTWARE\\Vendor\\App","value":"LicenseKey"}]</code>
                 &middot; file: <code>[{"type":"file","path":"C:\\ProgramData\\App\\lic.dat","regex":"KEY=([A-Z0-9-]+)"}]</code>
                 &middot; WMI: <code>[{"type":"wmi","class":"SoftwareLicensingProduct","property":"PartialProductKey","filter":"LicenseStatus=1"}]</code>
+                &middot; per user: <code>[{"type":"registry","path":"HKCU:\\Software\\Vendor","value":"Serial","perUser":true}]</code>
             </div>
             <div class="hint" id="licTableSourceInfo"></div>
             <div class="controls">
@@ -65,6 +77,10 @@
                 <input id="licLabel" type="text" placeholder="Label, e.g. Adobe Illustrator CC" style="min-width:160px;">
                 <input id="licRules" type="text" placeholder='Rules JSON, e.g. [{"type":"registry","path":"HKLM:\\...","value":"LicenseKey"}]' style="min-width:360px;">
                 <button id="addLicBtn" data-help="lic.add">Add</button>
+            </div>
+            <div class="controls">
+                <label style="font-weight:400;" data-help="lic.peruser"><input type="checkbox" id="licPerUser"> apply these rules per user
+                (registry paths as HKCU:, file paths may use the profile placeholder, one * wildcard per path allowed)</label>
             </div>
             <div id="licMsg"></div>
             <h4 style="font-size:13px;color:#0b3d6b;margin:14px 0 6px 0;">License collection log</h4>

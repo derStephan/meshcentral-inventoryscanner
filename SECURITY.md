@@ -152,6 +152,14 @@ Please report security vulnerabilities by opening an issue.
   written **only** to `<datapath>/plugins/inventoryscanner/data/<node>/license.json` on this server, never sent
   off-server and never written to a log (the log records counts, not keys); they appear only in the admin's own
   software-CSV export. Remote/custom rules pass the same regex-safety and field-validation gate as the CPE table.
+  **Per-user reads (v5.5.0)** stay inside the same guarantee: user discovery enumerates SIDs and profile dirs from
+  `ProfileList` read-only; a per-user registry rule reads only **already-loaded** hives (`HKEY_USERS\<SID>` of
+  logged-on users) - offline hives are **never** mounted (`reg load`/`LoadKey` are rejected by the script-shape
+  test), because mounting a hive is a system modification. A per-user file rule reads only existing profile
+  directories. Wildcards are capped (20 registry subkeys, 5 file candidates, 20 user profiles per run). The only
+  per-user datum that leaves the device is the profile leaf NAME in the answer's `user` field (and thereby in the
+  CSV's License Source, e.g. `registry (user: alice)`) - a name, not a secret; the key itself is stored server-side
+  as before.
   **Trigger (v5.2.0):** by default the collection runs **only on demand** (an admin presses *Collect*). An
   automatic schedule can be enabled in the Settings (`licenseCollectIntervalHours`, default **0 = off**) and needs
   the master switch as well; it runs the identical read-only script on every **online Windows** device, skips

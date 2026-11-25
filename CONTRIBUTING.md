@@ -61,6 +61,56 @@ version bump, no new release.
   `npm test` must pass and the version is bumped in `config.json` **and** the `@version` header of
   `inventoryscanner.js` together.
 
+## License-mapping contributions: `license-table.json` (no release needed)
+
+The program-name → license-location table is `license-table.json` in this repository root. Like the CPE table it is
+shipped inside the plugin **and** re-downloaded by running servers (with every NVD refresh cycle, https only), so a
+pull request that improves it **may touch only this file** - no version bump, no release. The panel section
+*Software → License keys* shows where the active table came from, and admin-custom rules always win over it.
+
+### How to add a license rule (the verified process)
+
+1. **Find the storage location from documentation or a measured install - never guess.** A rule is only as honest
+   as its source: cite the vendor article / knowledge-base number / admin manual in the entry's `_source` field and
+   in the PR description. Entries without a documented path are rejected. If the vendor stores the key **encrypted**
+   (Adobe, Foxit, PDF-XChange's `Tracker Software\Vault`, ...) or as a **binary blob** (Total Commander's
+   `wincmd.key`), do NOT add an entry - a rule that extracts ciphertext would look like a license and is not one.
+   The same holds for anything you could only "confirm" by reading a value whose meaning is undocumented.
+2. **Express it with the data-only rule types.** `{type:'registry', path, value}`, `{type:'file', path,
+   regex|jsonfield|line}` (regex group 1 is the key; without an extractor the trimmed file content is used, capped
+   at 512 characters), `{type:'wmi', class, property, filter}`. There is deliberately **no command type** - the
+   table can never execute anything on a device.
+3. **Use the per-user / wildcard extensions (v5.5.0) when the product stores per user or per version:**
+   * `"perUser": true` on a **registry** rule: write the path as `HKCU:\Software\...`; it is then read from every
+     *already-loaded* user hive (`HKEY_USERS\<SID>`). Hives of logged-off users are **never** loaded (`reg load`
+     would modify the system), so such keys stay uncovered - say so in the PR instead of faking it.
+   * `"perUser": true` on a **file** rule: the placeholder `{{profile}}` in the path becomes each user's profile
+     directory (e.g. `{{profile}}\AppData\Roaming\Product\key.lic`). The placeholder without `perUser` is rejected.
+   * Exactly **one `*`** per path: in a registry path one whole subkey segment that is enumerated (version-dependent
+     subkeys such as `License.ws.*`; at most 20 matches, first non-empty value wins), in a file path a leaf pattern
+     (at most 5 candidate files, e.g. `*.mountainducklicense`). More than one `*` is rejected.
+   * At most 20 user profiles are considered per run; keep rule lists at ≤ 8 rules per entry.
+4. **Edit `license-table.json`:** entries are matched **in order, first hit wins** (custom rules of an admin win
+   over all of them), `match` is a JavaScript regex source compiled with the `i` flag only, and every `match` and
+   every file `regex` passes the same safety gate as the CPE table (no nested quantifiers, no backreferences).
+   Bump the `updated` field to the day of the change. The answer for a found key carries the user it came from, and
+   the software CSV's *License Source* column shows e.g. `registry (user: alice)`.
+5. **Validate before submitting:** `node -e "JSON.parse(require('fs').readFileSync('license-table.json','utf8'))"`,
+   every `match` compiles (`...entries.forEach(e=>new RegExp(e.match,'i'))`), and every rule survives the plugin's
+   own sanitizer - the cheapest check is `npm test`, whose license steps apply the shipped table exactly like a
+   running server does.
+6. **Submit a PR** touching only `license-table.json`, with the `_source` citation per entry and, where possible,
+   the display name as it appears in a software CSV export.
+
+### What this file is not
+
+* Not a key dump: values are read on the device and stay there (`data/<node>/license.json` on the server); the
+  table holds only *where to look*, never keys.
+* Not for Microsoft product keys - those come from the `SoftwareLicensingProduct` WMI class behind the
+  "include Microsoft keys" switch, not from a rule.
+* Not for paths that only exist on one machine of the author. A curated row ships to every server; if the location
+  differs per install, it belongs in the admin's custom rules instead.
+
 ## Code contributions
 
 * Run `npm test` (requires `npm ci` once; needs handlebars for the view tests). `tools/` is the
