@@ -21,7 +21,8 @@
                 if (info) { info.textContent = (s.running ? 'collection running… ' : '') + (s.enabled === false ? 'collection is OFF - enable it above.' : ''); }
                 loadLicLog();
                 if (licPollTimer != null) { clearTimeout(licPollTimer); licPollTimer = null; }
-                if (s.running || (s.devices || []).some(function (x) { return x.pending; })) {
+                // v5.4.2: poll only while the License page is open (the device list polls on its own)
+                if ((s.running || (s.devices || []).some(function (x) { return x.pending; })) && currentSub === 'license') {
                     licPollTimer = setTimeout(function () { post('lic_status', {}).then(function (s2) { if (!s2.error) { licApp.status = s2; loadLicLog(); } }); }, 5000);
                 }
             }).catch(function () { });

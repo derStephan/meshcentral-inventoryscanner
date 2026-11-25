@@ -47,6 +47,21 @@
         };
         var currentMain = 'vulns', currentSub = 'assessment';
         var navLock = false;   // ignores the hashchange our own assignment triggers
+        var asPollGen = 0;     // generation token of the asset-status poll (invalidated on view change)
+
+        /**
+         * @brief Stop every background poll of the view we are leaving (v5.4.2). The pollers used to keep
+         * firing their requests no matter which page was open - they produced traffic (and, while a heavy
+         * fleet-index build blocked the server, proxy 502s) for panels nobody was looking at.
+         */
+        function stopViewPolls() {
+            if (typeof dlPollTimer !== 'undefined' && dlPollTimer != null) { clearTimeout(dlPollTimer); dlPollTimer = null; }
+            if (typeof wgPollTimer !== 'undefined' && wgPollTimer != null) { clearTimeout(wgPollTimer); wgPollTimer = null; }
+            if (typeof licPollTimer !== 'undefined' && licPollTimer != null) { clearTimeout(licPollTimer); licPollTimer = null; }
+            if (typeof drPollTimer !== 'undefined' && drPollTimer != null) { clearTimeout(drPollTimer); drPollTimer = null; }
+            if (typeof swPollTimer !== 'undefined' && swPollTimer != null) { clearTimeout(swPollTimer); swPollTimer = null; }
+            asPollGen++;
+        }
 
         function renderSubnav(main, activeSub) {
             var sn = document.getElementById('subnav');
@@ -74,6 +89,7 @@
 
         function selectSub(main, sub, fromHash) {
             currentMain = main; currentSub = sub;
+            stopViewPolls();   // v5.4.2: no background requests for the view we just left
             var contents = document.querySelectorAll('.tab-content');
             for (var i = 0; i < contents.length; i++) { contents[i].classList.remove('active'); }
             var target = document.querySelector('.tab-content[data-main="' + main + '"][data-sub="' + sub + '"]');

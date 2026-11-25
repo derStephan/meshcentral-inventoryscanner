@@ -175,7 +175,11 @@
 
         function asPollStatus(round) {
             if (round > 200) { $('asRunInfo').textContent = 'still running - press Refresh later.'; asLoadLog(); return; }
+            var gen = asPollGen;
             setTimeout(function () {
+                // v5.4.2: stop polling once the admin left the asset page (or a new poll generation started) -
+                // background polls for a hidden panel were pure traffic (and died with 502 while the server was busy)
+                if (gen !== asPollGen || currentSub !== 'asset') { return; }
                 post('as_status', {}).then(function (s) {
                     asApp.devices = s.devices || [];
                     asRenderStatus();

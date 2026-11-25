@@ -197,7 +197,8 @@
         function swPollTasks(run) {
             if (swPollTimer != null) { clearTimeout(swPollTimer); swPollTimer = null; }
             if (!run) { loadSwLog(); return; }
-            swPollTimer = setTimeout(function () { loadSwTasks(); loadSwLog(); }, 10000);
+            // v5.4.2: poll only while the Deployment page is open
+            if (currentSub === 'deploy') { swPollTimer = setTimeout(function () { loadSwTasks(); loadSwLog(); }, 10000); }
         }
 
         // ---- chunked upload (urlencoded base64url stays below the server's 100kb body limit) ----

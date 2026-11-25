@@ -73,7 +73,7 @@
                 if (s.error) { showMsg('drMsg', s.error, false); return; }
                 drApp.status = s; renderDrDevices(); loadDrLog();
                 if (drPollTimer != null) { clearTimeout(drPollTimer); drPollTimer = null; }
-                if (s.pending && s.pending.length) { drPollTimer = setTimeout(loadDrStatus, 5000); }
+                if (s.pending && s.pending.length && currentSub === 'reset') { drPollTimer = setTimeout(loadDrStatus, 5000); }
             }).catch(function (ex) { showMsg('drMsg', 'Failed to load reset state: ' + ex.message, false); });
         }
 

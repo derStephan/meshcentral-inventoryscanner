@@ -4002,6 +4002,36 @@ steps.push(function (next) {
     }), user);
 });
 
+// ---- v5.4.2: the fleet index walk is paced and parallel builds coalesce (the reported 502s) ----
+steps.push(function (next) {
+    var dpG = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-idx-'));
+    var gNodes = [];
+    for (var gi = 0; gi < 6; gi++) { gNodes.push({ _id: 'node//g' + gi, meshid: 'mesh//grp1', rname: 'gh' + gi, name: 'G' + gi, osdesc: 'Microsoft Windows 11' }); }
+    // an ASYNC db like the real one - a synchronous mock would finish the build inside the first request
+    var dbG = {
+        GetAllType: function (t, cb) { setImmediate(function () { cb(null, t === 'node' ? gNodes.slice() : meshes.slice()); }); },
+        Get: function (id, cb) { setImmediate(function () { cb(null, gNodes.filter(function (n) { return n._id === id; })); }); }
+    };
+    var oG = factory({ parent: { db: dbG, datapath: dpG, debug: function () { }, config: { settings: {} }, webserver: { meshes: {}, wsagents: {} }, DispatchEvent: function () { } } });
+    oG.softwareInventory = {};
+    for (var gj = 0; gj < 6; gj++) { oG.softwareInventory['g' + gj] = { apps: [{ name: 'Prog' + gj, version: '1.0' }] }; }
+    var walks = 0;
+    oG.scanDeviceSoftware = function (list, cb) { walks += (list || []).length; setImmediate(function () { cb([]); }); };
+    check('fleet index: the device walk goes through obj.pacedEach (the project rule for every device iteration)',
+        /obj\.pacedEach\(live, function \(node, nodeDone\)/.test(pluginSrc()) && pluginSrc().indexOf('for (var ni = 0; ni < live.length; ni++)') < 0);
+    var r1 = null, r2 = null, done1 = false, done2 = false;
+    oG.handleAdminPostReq({ headers: XHDR, body: { action: 'sw_fleet', refresh: '1' } }, mockRes(function (d1) { r1 = d1; done1 = true; maybe(); }), user);
+    // the second request arrives WHILE the first build is still waiting on the database
+    oG.handleAdminPostReq({ headers: XHDR, body: { action: 'sw_fleet', refresh: '1' } }, mockRes(function (d2) { r2 = d2; done2 = true; maybe(); }), user);
+    function maybe() {
+        if (!done1 || !done2) { return; }
+        check('sw_fleet: two parallel builds COALESCE - the fleet is walked once and both answers are the same object',
+            walks === 6 && r1 === r2 && r1.software.length === 6, [walks, r1 && r1.software && r1.software.length]);
+        check('sw_fleet: both waiters are answered exactly once (mockRes guards double answers)', !!r1 && !!r2);
+        next();
+    }
+});
+
 // The runner MUST stay the last statement: every steps.push() above has to be registered before
 // step 0 starts (pre-3.0.1 it sat mid-file and the trailing steps only ran because an earlier
 // step happened to be asynchronous). New steps go ABOVE this block.

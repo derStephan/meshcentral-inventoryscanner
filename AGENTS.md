@@ -132,7 +132,7 @@ Consequences an agent must respect:
 | `lib/wutroubleshoot.js` | per-device Windows Update troubleshooter (v4.6.0): `wuBuildDiagnoseScript`/`wuBuildRepairScript`/`wuHead`, `wuDispatch`, `wuHandleResponse`/`wuTimeout`, reboot-state reporting, `wu_diag`/`wu_repair` handlers, `wu-troubleshoot.json` + `wu-troubleshoot.log` |
 | `lib/devreboot.js` | per-device force restart + user notice (v4.7.0): `rbBuild*Script`/`rbBuildScript`/`rbProbeLines`/`rbCleanMessage`/`rbB64`, `rbDispatch`, `rbHandleResponse`/`rbTimeout`, `reboot_now`/`reboot_notify` handlers, `device-reboot.json` + `device-reboot.log` |
 | `lib/license.js` | license keys/info in the software CSV (v4.8.0): curated `license-table.json` + remote fetch + custom rules (`applyLicenseTableText`/`sanitizeLicenseRules`/`licenseRulesForApp`), read-only `licenseBuildScript`, `licenseAppRules(rows)` (since v5.1.0 fed by `obj.fetchNodeSoftware`, so a program that only exists in the sysinfo doc is matched too - it used to see fewer programs than the CSV listed), `licDispatch`/`licHandleResponse`/`licTimeout`, `licSweepOnce` (one pass over all online Windows devices - used by BOTH the `all=true` route and the scheduler, v5.2.0), `scheduleLicenseCollection` (only when the master switch is on AND `licenseCollectIntervalHours` > 0; default 0 = on demand only), per-node `data/<node>/license.json`, `lic_status`/`lic_collect`/`get_license_table`/`add_license`/`remove_license`, `license-collection.log` |
-| `lib/fleetindex.js` | READ-ONLY fleet index for the two unified views (v4.9.5, issue #8): `buildFleetIndex` walks `obj.collectNodeInventory` (v5.1.0 - before that it read `getStoredSoftware(node,{})` without the sysinfo doc and counted only software CVEs, so the browser disagreed with the CSV) and joins `wgResults` (updatable) + `licenseMapForNode`; `swFleetHandler` (POST `sw_fleet`, 60 s in-memory cache, `?refresh=1`). Since v5.4.0 it also owns the two on-demand detail routes `devDetailsHandler` (`dev_details`) and `swDetailsHandler` (`sw_details`, own 60 s cache per name) - both read-only, both built on `collectNodeInventory`, both reporting license COUNTS/presence and never a value. Per-software CVE attribution uses the software findings only (OS-level findings belong to the device, not to a program); the device badge counts `uniqueFindingIds` = the same distinct ids the CSV/report show. No agent command, no outbound request. |
+| `lib/fleetindex.js` | READ-ONLY fleet index for the two unified views (v4.9.5, issue #8): `buildFleetIndex` walks `obj.collectNodeInventory` **via `obj.pacedEach`** (v5.4.2 - a bare loop hogged the event loop and unrelated requests died at the proxy with 502) and **coalesces parallel builds** (`_fleetIndexWaiters`, v5.4.2) so two views opening at once walk the fleet once; joins `wgResults` (updatable) + `licenseMapForNode`; `swFleetHandler` (POST `sw_fleet`, 60 s in-memory cache, `?refresh=1`). Since v5.4.0 it also owns the two on-demand detail routes `devDetailsHandler` (`dev_details`) and `swDetailsHandler` (`sw_details`, own 60 s cache per name) - both read-only, both built on `collectNodeInventory`, both reporting license COUNTS/presence and never a value. Per-software CVE attribution uses the software findings only (OS-level findings belong to the device, not to a program); the device badge counts `uniqueFindingIds` = the same distinct ids the CSV/report show. No agent command, no outbound request. |
 | `lib/assetmgmt.js` | OPTIONAL outbound asset-management connector (v5.0.0, issue #5): `assetConfig`, `asBuildRequests` (generic JSON body template with `{{placeholders}}` + Jira and Snipe-IT presets, create-or-update via a stored external id), `asExternalId`, `assetHttp` (https-only, injectable), `asCollectDeviceRecord` (since v5.1.0 a thin shaping of `obj.collectNodeInventory` - the push therefore carries the SAME findings/hardware/software as the CSV: `vulnerabilities` = every finding with an id, `coverage` = the blind-spot rows), `asSendDevice`/`asPushHandler`/`asTestHandler`, `asStatusHandler`, `asGetConfigHandler`/`asSaveConfigHandler` (own `assetManagement` settings section, secrets masked + blank-keeps + `__AS_CLEAR__`), `asLog` (status only, never a payload/secret), `scheduleAssetSync` (off unless enabled AND interval > 0), `asset-sync.json` + `asset-sync.log` |
 | `lib/swstore.js` | deploy foundation: installer library index/folders, resumable upload parts, task store load/save/prune, staging into `<filespath>/tmp`, `swDownloadCookie` (agentdownload), name/args/extension sanitizers, `swEnsureStaged` |
 | `lib/swdeploy.js` | deploy engine: `swBuildWindowsScript`/`swBuildLinuxScript`, `swWgetCommand`, queue/pump/`swDispatchNode`/`swHandleResponse`/watchdogs, `swOnNodeConnect`/`swSweepOnce`/`scheduleSwSweep`, `swTaskDoneCheck`, `swCreateTask`/`swTaskView` |
@@ -557,6 +557,15 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   the status poll) inject the cache and do NOT refetch; only the *Refresh details* button inside the block
   re-reads the server (`dlLoadDetails(id, true)` / `swfLoadDetails(..., true)`). Without that cache every poll
   looked like a stuck request loop (reported by the user).
+- **Detail rows are keyed by NAME, and rows are found by walking up to the `<tr>` (v5.4.2):** a row index breaks
+  as soon as a filter or a re-render shifts rows, and a `parentNode.parentNode` chain breaks the moment a button
+  gets a wrapper (`.cellacts`) - both happened and made "Details" silently do nothing (no request at all). Use
+  `rowOf(el)` (climb until `tagName === 'TR'`) and `swfKey(name)`/the `dld-<safeid>` ids for the detail cell.
+- **Background polls belong to the open view only (v5.4.2):** every poller checks `currentSub` before scheduling
+  (`dlPollIfBusy` -> 'devicelist', `wgPollState` -> 'updates', the license poll -> 'license', `drPollTimer` ->
+  'reset', `swPollTasks` -> 'deploy', `asPollStatus` -> its generation token `asPollGen` plus 'asset'), and
+  `selectSub` calls `stopViewPolls()` first. Polls for a hidden panel were pure traffic - and while a heavy
+  fleet-index build occupied the server they were exactly the requests that came back as proxy 502s.
 - **One calm button language in table rows (v5.4.1):** `button.rowbtn` (neutral grey-blue, same box height as
   `button.small`) for looking/configuring, `rowbtn act` (the single accent blue) for buttons that START something
   on a device, `rowbtn warn` (white with red outline) only for the reboot path; disabled states stay pale grey.
@@ -1857,3 +1866,27 @@ v5.4.1 (this release): UI polish round on the #9 rework - seven reported defects
   regenerated in the same commit (201 ids, 63 help texts, 5 links, 11 panels - the removed link panels and the
   export chooser are the visible diff). test-plugin unchanged (679 PASS + 3 SKIP / 99 steps): no route, handler,
   engine or data shape moved. Version 5.4.0 -> 5.4.1.
+v5.4.2 (this release): two reported defects fixed - details did nothing, and four requests died with 502.
+- **Software list > Details did nothing and sent no request.** Two compounding causes, both structural: the
+  detail cell id was the ROW INDEX (`swfd-<i>`), which no longer matches after any filter or re-render, and the
+  row lookup used `b.parentNode.parentNode` - a chain that silently landed on the `<td>` instead of the `<tr>`
+  once the v5.4.1 `.cellacts` wrapper went around the buttons, so `detail` became a table cell, the id lookup
+  returned null and the load aborted before posting. Fixed: detail cells are keyed by the program NAME
+  (`swfKey`), and rows are resolved by climbing to the `<tr>` via the new shared `rowOf(el)` (used by both
+  unified lists). Pinned by render assertions (name-keyed cells, no index-keyed cell left, rowOf used twice).
+- **Four 502s on page load** (`get_license_table`, `lic_status`, `get_locations`, `os_status`). The fleet index
+  walked ALL devices in a bare `for` loop whose worker callbacks run synchronously (the matcher is sync per
+  program) - one long event-loop turn that starved every other socket, so the requests in flight while a list
+  opened died at the proxy; leftover background pollers of the PREVIOUS view kept adding traffic into exactly
+  that window. Two fixes: (1) `buildFleetIndex` now iterates via `obj.pacedEach` (parallelism 2, yields between
+  devices - the project rule for every device walk, which this path had violated since v4.9.5) and COALESCES
+  parallel builds (`_fleetIndexWaiters`), so opening two views at once walks the fleet once; (2) every poller
+  only schedules while its own page is open (`currentSub` guards on the device-list, winget, license, reset,
+  deploy and asset polls) and `selectSub` stops the polls of the view being left (`stopViewPolls`, `asPollGen`
+  for the asset poll). Pinned by a coalescing test (async db, two parallel `sw_fleet` POSTs -> the matcher sees
+  every program exactly once and both answers are the same object) and a source-level pin that the walk uses
+  `pacedEach` (the bare loop is gone).
+- No route response shape, engine, agent script or data file changed. What users see: Details works with one
+  click, and switching pages no longer produces background requests (or 502s) for the page that was left.
+- Tests: +1 step / +3 assertions in test-plugin (682 PASS + 3 SKIP / 100 steps), +4 render assertions in
+  test-views (59 PASS). check.js unchanged green (246). Version 5.4.1 -> 5.4.2.

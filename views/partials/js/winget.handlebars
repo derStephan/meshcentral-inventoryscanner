@@ -145,7 +145,9 @@
             var el = $('wgRunState');
             var running = wgApp.status && wgApp.status.running;
             if (el) { el.textContent = running ? ('batch running - ' + wgApp.status.active + ' active, ' + wgApp.status.queued + ' queued') : ''; }
-            if (running) {
+            if (running && currentSub === 'updates') {
+                // v5.4.2: poll only while the Software-updates page is open; the device list has its own
+                // guarded poll, and a hidden panel must not keep requesting wg_status
                 wgPollTimer = setTimeout(function () {
                     post('wg_status', {}).then(function (s) {
                         wgApp.status = s; wgPollState(); loadWgLog();

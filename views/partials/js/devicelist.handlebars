@@ -96,8 +96,9 @@
         /** @brief Re-read while any engine still has work in flight, so the row states catch up. */
         function dlPollIfBusy() {
             if (dlPollTimer != null) { clearTimeout(dlPollTimer); dlPollTimer = null; }
+            // v5.4.2: only while this page is actually open - a poll for a hidden view is pure traffic
             var busy = (osApp.status && osApp.status.running) || dlApp.devices.some(function (d) { return !!d.wgPending; });
-            if (busy) { dlPollTimer = setTimeout(loadDeviceList, 10000); }
+            if (busy && currentSub === 'devicelist') { dlPollTimer = setTimeout(loadDeviceList, 10000); }
         }
 
         function dlSortValue(d, key) {
@@ -374,10 +375,10 @@
             else if (act === 'dlrefresh') { dlLoadDetails(id, true); }
             else if (act === 'details') {
                 dlApp.open[id] = !dlApp.open[id];
-                var row = b.parentNode && b.parentNode.parentNode;
-                var detail = row && row.nextElementSibling;
+                var tr = rowOf(b);
+                var detail = tr ? tr.nextElementSibling : null;
                 if (detail) { detail.style.display = dlApp.open[id] ? 'table-row' : 'none'; }
                 b.textContent = dlApp.open[id] ? 'Hide' : 'Details';
-                if (dlApp.open[id]) { dlLoadDetails(id); }
+                if (dlApp.open[id]) { dlLoadDetails(id, false); }
             }
         });

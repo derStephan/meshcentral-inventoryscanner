@@ -63,7 +63,7 @@
                     + '<button class="rowbtn" data-swfact="details" data-name="' + esc(s.name) + '" data-pkg="' + esc(pkgId) + '" data-help="swf.details">' + (swfApp.open[low] ? 'Hide' : 'Details') + '</button>'
                     + '</div></td>'
                     + '</tr>';
-                html += '<tr class="swfdetail" style="display:' + (swfApp.open[low] ? 'table-row' : 'none') + '"><td colspan="9" style="background:#f6f8fb" id="swfd-' + i + '"><span class="hint">Loading...</span></td></tr>';
+                html += '<tr class="swfdetail" style="display:' + (swfApp.open[low] ? 'table-row' : 'none') + '"><td colspan="9" style="background:#f6f8fb" id="swfd-' + swfKey(low) + '"><span class="hint">Loading...</span></td></tr>';
             }
             if (html === '') { html = '<tr><td colspan="9" style="color:#888">No installed software collected yet (run an inventory collection first).</td></tr>'; }
             $('swfBody').innerHTML = html;
@@ -72,22 +72,32 @@
             // (before v5.4.1 every re-render refetched them, which looked like a stuck request loop)
             for (var k in swfApp.open) {
                 if (!swfApp.open[k]) { continue; }
-                for (var j = 0; j < swfApp.software.length; j++) {
-                    if (String(swfApp.software[j].name).toLowerCase() !== k) { continue; }
-                    var cell0 = document.getElementById('swfd-' + j);
-                    if (cell0) {
-                        if (swfApp.details[k]) { cell0.innerHTML = swfApp.details[k]; }
-                        else { swfLoadDetails(swfApp.software[j].name, (swfApp.wgMap[k] || {}).id || '', j, false); }
+                var cell0 = document.getElementById('swfd-' + swfKey(k));
+                if (!cell0) { continue; }
+                if (swfApp.details[k]) { cell0.innerHTML = swfApp.details[k]; }
+                else {
+                    for (var j2 = 0; j2 < swfApp.software.length; j2++) {
+                        if (String(swfApp.software[j2].name).toLowerCase() === k) { swfLoadDetails(swfApp.software[j2].name, (swfApp.wgMap[k] || {}).id || '', k, false); break; }
                     }
-                    break;
                 }
             }
         }
 
+        /** @brief A DOM-safe, index-independent key for a detail cell (a row index breaks on filter/re-render). */
+        function swfKey(low) { return String(low).replace(/[^a-z0-9]/g, ''); }
+
+        /** @brief Climb to the row of a clicked button - never assume a fixed parent depth (v5.4.2: the
+         * action buttons live inside a .cellacts wrapper, so a parentNode chain silently landed on the <td>). */
+        function rowOf(el) {
+            var t = el;
+            while (t && t !== document.body && t.tagName !== 'TR') { t = t.parentNode; }
+            return (t && t.tagName === 'TR') ? t : null;
+        }
+
         /** @brief Everything stored about one program, fetched on demand (never on load), then cached. */
-        function swfLoadDetails(name, pkgId, rowIndex, force) {
+        function swfLoadDetails(name, pkgId, key, force) {
             var low = String(name).toLowerCase();
-            var cell = document.getElementById('swfd-' + rowIndex);
+            var cell = document.getElementById('swfd-' + swfKey(key || low));
             if (!cell) { return; }
             if (!force && swfApp.details[low]) { cell.innerHTML = swfApp.details[low]; return; }
             cell.innerHTML = '<span class="hint">Loading the details of this program...</span>';
@@ -198,20 +208,13 @@
             else if (act === 'details') {
                 var low = String(name).toLowerCase();
                 swfApp.open[low] = !swfApp.open[low];
-                var row = b.parentNode && b.parentNode.parentNode;
-                var detail = row && row.nextElementSibling;
+                var tr = rowOf(b);
+                var detail = tr ? tr.nextElementSibling : null;
                 if (detail) { detail.style.display = swfApp.open[low] ? 'table-row' : 'none'; }
                 b.textContent = swfApp.open[low] ? 'Hide' : 'Details';
-                if (swfApp.open[low] && detail) {
-                    var holder = detail.querySelector ? detail.querySelector('[id^="swfd-"]') : null;
-                    var idx = holder ? parseInt(String(holder.id).replace('swfd-', ''), 10) : NaN;
-                    swfLoadDetails(name, pkg, isNaN(idx) ? -1 : idx, false);
-                }
+                if (swfApp.open[low]) { swfLoadDetails(name, pkg, low, false); }
             }
             else if (act === 'swfrefresh') {
-                var c = b;
-                while (c && !(c.id && String(c.id).indexOf('swfd-') === 0)) { c = c.parentNode; }
-                var i2 = c ? parseInt(String(c.id).replace('swfd-', ''), 10) : NaN;
-                if (!isNaN(i2)) { swfLoadDetails(name, pkg, i2, true); }
+                swfLoadDetails(name, pkg, String(name).toLowerCase(), true);
             }
         });

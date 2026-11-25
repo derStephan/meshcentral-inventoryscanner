@@ -188,6 +188,11 @@ try {
     console.log(((a.indexOf('button.rowbtn') >= 0 && a.indexOf('.cellacts') >= 0 && count(a, /class="rowbtn/g) >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v5.4.1: row buttons share one calm style (rowbtn) and wrap inside .cellacts instead of forcing a horizontal scroll');
     console.log(((a.indexOf('global threshold') >= 0 && a.indexOf('What the notify threshold does') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v5.4.1: the per-group notify threshold is explained and the Source column is never blank');
     console.log(((a.indexOf("'selectSub'") >= 0 || a.indexOf('function selectSub') >= 0) && a.indexOf('function selectLinksMain') >= 0 ? 'PASS ' : (failed++, 'FAIL ')) + 'v5.4.1: a link-only main section (Exports) renders its links without stealing the active panel');
+    // v5.4.2: the two reported defects - details must reach their row, and hidden panels must not poll
+    console.log(((a.indexOf('function rowOf') >= 0 && a.indexOf('function swfKey') >= 0 && a.indexOf("swfd-' + swfKey(low)") >= 0 && a.indexOf("swfd-' + i + '") < 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v5.4.2: software detail cells are keyed by NAME (not by row index) and rows are found by climbing to the <tr>');
+    console.log(((a.indexOf('rowOf(b)') >= 0 && count(a, /rowOf\(b\)/g) >= 2) ? 'PASS ' : (failed++, 'FAIL ')) + 'v5.4.2: both unified lists resolve the clicked row via rowOf (the .cellacts wrapper no longer breaks the parent chain)');
+    console.log(((a.indexOf('function stopViewPolls') >= 0 && a.indexOf('stopViewPolls();') >= 0 && a.indexOf('gen !== asPollGen || currentSub !== \'asset\'') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v5.4.2: leaving a view stops its background polls (asset poll guarded by generation + visible sub)');
+    console.log(((a.indexOf("busy && currentSub === 'devicelist'") >= 0 && a.indexOf("running && currentSub === 'updates'") >= 0 && a.indexOf("currentSub === 'license'") >= 0 && a.indexOf("currentSub === 'reset'") >= 0 && a.indexOf("currentSub === 'deploy'") >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v5.4.2: every remaining poller only runs while its own page is open');
 } catch (e) { failed++; console.log('FAIL nav checks: ' + e.message); }
 
 console.log(failed === 0 ? '\ntest-views: ALL PASSED' : '\ntest-views: ' + failed + ' FAILURE(S)');
