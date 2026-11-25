@@ -109,6 +109,7 @@ Consequences an agent must respect:
 | `lib/devreboot.js` | per-device force restart + user notice (v4.7.0): `rbBuild*Script`/`rbBuildScript`/`rbProbeLines`/`rbCleanMessage`/`rbB64`, `rbDispatch`, `rbHandleResponse`/`rbTimeout`, `reboot_now`/`reboot_notify` handlers, `device-reboot.json` + `device-reboot.log` |
 | `lib/license.js` | license keys/info in the software CSV (v4.8.0): curated `license-table.json` + remote fetch + custom rules (`applyLicenseTableText`/`sanitizeLicenseRules`/`licenseRulesForApp`), read-only `licenseBuildScript`, `licDispatch`/`licHandleResponse`/`licTimeout`, per-node `data/<node>/license.json`, `lic_status`/`lic_collect`/`get_license_table`/`add_license`/`remove_license`, `license-collection.log` |
 | `lib/fleetindex.js` | READ-ONLY fleet index for the two unified views (v4.9.5, issue #8): `buildFleetIndex` aggregates stored software (`getStoredSoftware`) + the same `scanNodeSoftware` matcher the CSV/reports use + `wgResults` (updatable) + `licenseMapForNode` into a distinct-software table and a per-device CVE count; `swFleetHandler` (POST `sw_fleet`, 60 s in-memory cache, `?refresh=1`). No agent command, no new outbound request. |
+| `lib/assetmgmt.js` | OPTIONAL outbound asset-management connector (v5.0.0, issue #5): `assetConfig`, `asBuildRequests` (generic JSON body template with `{{placeholders}}` + Jira and Snipe-IT presets, create-or-update via a stored external id), `asExternalId`, `assetHttp` (https-only, injectable), `asCollectDeviceRecord`, `asSendDevice`/`asPushHandler`/`asTestHandler`, `asStatusHandler`, `asGetConfigHandler`/`asSaveConfigHandler` (own `assetManagement` settings section, secrets masked + blank-keeps + `__AS_CLEAR__`), `asLog` (status only, never a payload/secret), `scheduleAssetSync` (off unless enabled AND interval > 0), `asset-sync.json` + `asset-sync.log` |
 | `lib/swstore.js` | deploy foundation: installer library index/folders, resumable upload parts, task store load/save/prune, staging into `<filespath>/tmp`, `swDownloadCookie` (agentdownload), name/args/extension sanitizers, `swEnsureStaged` |
 | `lib/swdeploy.js` | deploy engine: `swBuildWindowsScript`/`swBuildLinuxScript`, `swWgetCommand`, queue/pump/`swDispatchNode`/`swHandleResponse`/watchdogs, `swOnNodeConnect`/`swSweepOnce`/`scheduleSwSweep`, `swTaskDoneCheck`, `swCreateTask`/`swTaskView` |
 | `lib/swdeploy-handlers.js` | `sw_files`, `sw_upload`, `sw_delete_file`, `sw_rescan_library`, `sw_serverfiles`, `sw_devices`, `sw_create_task`, `sw_status`, `sw_retry_task`, `sw_cancel_task` handlers |
@@ -171,6 +172,13 @@ sub-domain admins of a multi-tenant server are refused since v3.0.1):
     Devices, Software, Vulnerabilities, Settings - each with its own row of sub-tabs, replacing the old flat
     tab strip so related functionality is grouped instead of grown side by side. This is presentation only:
     the same panels, routes, ids and handlers, no behaviour or data changed (see Panel behavior below).
+12. **Optional push to an external asset-management system** (v5.0.0, issue #5): the three lists this plugin
+    already aggregates (hardware, software, vulnerabilities) can be transferred to a REST asset system -
+    **generic** (an admin-authored JSON body template with `{{placeholders}}`, which reaches any REST API) plus
+    first-class presets for **Jira** (one issue per device, created then updated) and **Snipe-IT** (one hardware
+    asset per device, created then patched). OFF by default, https only, no automatic push unless an interval is
+    set, credentials managed in Settings and never displayed or logged again. It is the plugin's ONE deliberate
+    off-server exit and is documented as such in SECURITY.md.
 
 ## Verified API facts (do not guess)
 
@@ -320,6 +328,10 @@ POST body `action=`:
 | `get_license_table` | â€” | (v4.8.0) the full license rule table `{entries:[{match,label,rules,source:'table'|'custom'}], licenseTable:{source,origin,updated,url,tableEnabled,entries,custom}}` |
 | `add_license` / `remove_license` | match, label, rules (JSON array) / index | (v4.8.0) custom rule editor; every field validated (`isSafeTableRegex`, type ∈ registry/file/wmi, lengths, ≤8 rules) before storing to `license-custom.json`; custom wins over the table |
 | `sw_fleet` | `refresh` (optional '1') | (v4.9.5, issue #8) READ-ONLY fleet index that powers the two unified views: `{devices, software:[{name, version, versions, publisher, deviceCount, vulnerable, cve, maxSeverity, updatable, hasLicense}], byDevice:{<nodeId>:{cve, maxSeverity}}, generated}`. Built only from data already on the server (stored software + the report/CSV matcher + winget results + local license maps); sends nothing to any agent and makes no new outbound request. Cached ~60 s so switching between the two views does not re-scan. |
+| `as_get_config` / `as_save_config` | full asset-management form | (v5.0.0, issue #5) the connector configuration in its OWN `assetManagement` section of scanner-settings.json (so the Settings-tab save/reset cannot wipe it and vice versa). Validated: https-only endpoint, method whitelist, JSON headers + JSON body template, Jira needs a project key, enabling needs a URL. Secrets (token/password/header value) are NEVER returned in the clear - the GET answers with a mask + `has*` flags; on save a blank secret KEEPS the stored value and `__AS_CLEAR__` erases it. |
+| `as_status` | - | (v5.0.0) `{devices:[{id,host,given,group,last:{time,status,httpCode,externalId,error}|null}], running, config}` - the masked config summary plus the last push per device. |
+| `as_test` | - | (v5.0.0) sends ONE synthetic sample record to the configured target and reports `{ok, httpCode}` - verifies URL/auth/mapping without pushing the fleet. |
+| `as_push` | `nodeIds` (csv, optional; absent = all devices) | (v5.0.0) pushes the aggregated hardware/software/vulnerability record of each device to the target (Jira issue, Snipe-IT hardware asset, or the generic template). Refused while disabled. Server-side only: **no agent command is sent**. Create on the first push, update on later ones via the stored external id. Result per device goes to `asset-sync.json`; the log records status only. |
 | `update_nvd` | â€” | starts `runNvdUpdate(true)` (background) and answers {started:true} / {alreadyRunning:true}; concurrent runs skip via the `nvdUpdateRunning` flag |
 | `get_nvdlog` | â€” | `{lines:[...last 200 of nvd-download.log], size, file}`; `note` if file missing |
 | `get_locations` | â€” | all non-deleted meshes `{locations:[{id,name}]}` (also feeds the Settings tab group table) |
@@ -441,7 +453,8 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
     Vulnerabilities -> Assessment (the CVE table + location panel, the default landing), Reports & NVD & CPE table
       (the two printable reports + CSV exports, "Update NVD database now" + download log via `loadNvdLog`, and
       the CPE mapping table with its config via `loadCpeTable`);
-    Settings -> General (scan/collection/lifecycle/notify options + device groups).
+    Settings -> General (scan/collection/lifecycle/notify options + device groups), Asset management
+      (the optional external connector: target, credentials, mapping, test/push, last push per device, log).
   The two unified views the issue also asked for shipped in v4.9.5 (they were the "deferred" half of v4.9.0):
   `Device list` merges the existing `os_status`/`wg_status`/`dr_status`/`lic_status` with the new read-only
   `sw_fleet` index into one row per device with an action-checkbox batch; `Software list` renders the `sw_fleet`
@@ -1435,7 +1448,7 @@ v4.9.5: issue #8 (second half) - the two unified views.
   no-command policy guard). +5 render assertions in tools/test-views.js (the two new sub-tabs + panels and the
   two loaders). Suite: 563 PASS + 3 SKIP / 89 steps. check.js still node --check's the inline script.
   Version 4.9.0 -> 4.9.5.
-v4.9.6 (this release): completeness audit of the v4.9.x issue-#8 UI work - restore help text the move dropped.
+v4.9.6: completeness audit of the v4.9.x issue-#8 UI work - restore help text the move dropped.
 - Checked the v4.9.0 regroup and the v4.9.5 unified views against the last pre-refactor state (v4.8.0, commit
   343df129). Every control survived: 0 element ids removed, 0 JS id-references broken, 0 ids that used to be
   wired now unwired, 0 duplicate static ids, the five engine panels (assessment/updates/os/deploy/reset) are
@@ -1449,3 +1462,45 @@ v4.9.6 (this release): completeness audit of the v4.9.x issue-#8 UI work - resto
   Settings", the license switches "above" - which is true inside the moved panel).
 - Tests: +2 render assertions in tools/test-views.js pin the restored CPE + License help text so a future
   regroup cannot silently drop them. Suite unchanged otherwise. Version 4.9.5 -> 4.9.6.
+v5.0.0 (this release): issue #5 - optional connector to an external asset-management system.
+- New module `lib/assetmgmt.js` + a new **Settings > Asset management** sub-tab. It transfers the three lists
+  the plugin already aggregates (hardware inventory, software inventory, vulnerabilities) to an external REST
+  system. Designed GENERIC first, with two first-class presets:
+    generic  - the admin writes a JSON body template whose values may contain {{placeholders}} resolved against
+               the aggregated record (device.*, hardware.*, software[], vulnerabilities[], counts.*). A
+               placeholder alone in a value injects the whole typed value (array/number); inside text it is
+               inserted as text. Extra headers are a JSON object. This reaches any REST API (GLPI, NetBox,
+               ServiceNow, Device42, Freshservice, ManageEngine, Lansweeper, ...).
+    jira     - one issue per device: POST /rest/api/3/issue on the first push (project key + issue type + label +
+               an Atlassian-Document-Format description carrying all three lists), PUT /rest/api/3/issue/<id>
+               afterwards, so nothing is duplicated.
+    snipeit  - one hardware asset per device: POST /api/hardware, then PATCH /api/hardware/<id>.
+  The external id is read back from the answer (Jira id/key, Snipe-IT payload.id/id, or for a generic target the
+  admin-configured `externalIdPath`, e.g. "id" or "data.asset.id") and stored per device in `asset-sync.json`.
+- Data protection: this is the plugin's ONE deliberate off-server exit, so it is **disabled by default**, there
+  is **no automatic push** unless `intervalHours` > 0 (default 0), and only a full site admin can configure it.
+  The endpoint must be **https** (rejected when saving AND when building a request). Credentials live in the
+  `assetManagement` section of scanner-settings.json, are **never returned to the browser in the clear** (masked
+  + `has*` flags; a blank field KEEPS the stored secret, `__AS_CLEAR__` erases it) and are **never logged**. The
+  log records device + HTTP status + external id only - never a request/response body. The push reads stored
+  inventory and sends **no agent command**, so it never touches a device and does not interact with the
+  one-runcommands-session-per-agent rule. The body template is JSON data only: placeholders are substituted as
+  values, the template is never evaluated as code. SECURITY.md documents all of this.
+- Own settings section on purpose: `assetManagement` sits beside `vulnerabilityScanner`/`inventoryScanner`/
+  `wingetUpdater`, so the Settings-tab save/reset (which owns only the first two) and the winget save cannot wipe
+  the connector config - and vice versa (a test pins that the other sections survive an asset save).
+- UI: Settings > Asset management with the target/auth/mapping form, a prominent disclosure that this is the only
+  place data leaves the server, "Send a test request" (one synthetic sample), "Push all devices now" and a
+  per-device "Push" in the last-push table - each push asks for explicit confirmation. Devices > Device list also
+  gained a "Push to asset system" batch action for the selected devices (same confirmation).
+- Routes: `as_get_config`, `as_save_config`, `as_status`, `as_test`, `as_push`; `get_log` accepts `asset`.
+  `rescheduleAll` + server_startup now also call `scheduleAssetSync` (which does nothing while disabled).
+- Tests: +2 steps / +33 assertions (598 PASS + 3 SKIP / 91 steps): OFF by default and no agent-facing pump,
+  push refused while disabled, https-only endpoint, enable-needs-URL, Jira-needs-project, invalid JSON template
+  rejected BEFORE storing, other settings sections survive, the secret is stored but never returned in the clear,
+  blank keeps / sentinel clears, all three request builders (create + update, auth headers, template filling with
+  typed array injection), no-agent-command during a real push, one https request per device with the filled body,
+  the external id stored for create-or-update, the log contains neither credential nor payload, "only vulnerable"
+  skips a clean device and RECORDS the skip, as_test, the scheduler registers nothing while disabled/interval 0
+  and only then, and get_log/as_status. Plus 7 render assertions for the panel, its disclosure text, the as_*
+  routes, password fields with an explicit clear, and the per-push consent. Version 4.9.6 -> 5.0.0.

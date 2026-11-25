@@ -21,7 +21,7 @@
  * NVD feed is downloaded.
  *
  * @author derStephan
- * @version 4.9.6
+ * @version 5.0.0
  *
  * Transparency: This plugin was created with the assistance of Qwen 3.6 27B and Qwen 3.8 Flash Next.
  * Audits: 2026-11-06 (NVIDIA Nemotron 3 550B A55B), 2026-11-11 (Claude Opus 5.5, v3.0.1) and 2026-11-14 (Claude Opus 5.5, v4.3.0) via opencode - see AUDIT.md.
@@ -75,6 +75,11 @@ try { MODULE_CODE_VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, 'con
  *                           software table and a per-device CVE count, built only from data already on this
  *                           server (stored software + the same matcher the CSV/reports use + winget + licenses);
  *                           no new agent command, no new outbound request
+ *   lib/assetmgmt.js        OPTIONAL outbound connector to an external asset-management system (issue #5, v5.0.0):
+ *                           pushes the already-aggregated hardware/software/vulnerability lists via REST. OFF by
+ *                           default; https-only; credentials in the Settings (never echoed/logged). Generic JSON
+ *                           body template + first-class presets for Jira and Snipe-IT. Server-side only - issues
+ *                           NO agent command. The plugin's one outbound exit, deliberately configured.
  *   lib/swstore.js          deploy foundation: installer library, upload parts, task store,
  *                           staging in <filespath>/tmp, agentdownload cookie, name/arg quoting
  *   lib/swdeploy.js         deploy engine: install scripts, wget+runcommands dispatch,
@@ -97,7 +102,7 @@ try { MODULE_CODE_VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, 'con
  */
 const modules = [
     'lifecycle', 'settings', 'assessments', 'nvd', 'nvdindex', 'cpetable', 'matching', 'oslifecycle',
-    'osscan', 'inventory', 'collector', 'scheduling', 'winget', 'winget-handlers', 'osupdate', 'devreset', 'wutroubleshoot', 'devreboot', 'license', 'fleetindex',
+    'osscan', 'inventory', 'collector', 'scheduling', 'winget', 'winget-handlers', 'osupdate', 'devreset', 'wutroubleshoot', 'devreboot', 'license', 'fleetindex', 'assetmgmt',
     'swstore', 'swdeploy', 'swdeploy-handlers',
     'reports', 'csv', 'nodes', 'routes', 'browser'
 ];
@@ -214,6 +219,10 @@ module.exports.inventoryscanner = function (parent) {
     obj.customLicensePath = path.join(obj.meshServer.datapath, 'plugins', 'inventoryscanner', 'license-custom.json');
     /** @type {string} license collection audit log (the values themselves go to data/<node>/license.json). */
     obj.licenseLogPath = path.join(obj.meshServer.datapath, 'plugins', 'inventoryscanner', 'license-collection.log');
+    /** @type {string} last asset-management push per device (state file, lib/assetmgmt.js, v5.0.0). */
+    obj.asResultsPath = path.join(obj.meshServer.datapath, 'plugins', 'inventoryscanner', 'asset-sync.json');
+    /** @type {string} asset-management push log - status only, never a payload or a secret (rotated ~5 MB). */
+    obj.asLogPath = path.join(obj.meshServer.datapath, 'plugins', 'inventoryscanner', 'asset-sync.log');
 
     // ---- Feature modules (the list at the top of this file documents who does what) ----
     modules.forEach(function (name) {

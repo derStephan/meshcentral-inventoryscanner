@@ -109,6 +109,13 @@ try {
     // v4.9.6: the CPE + License help text that the v4.9.0 move had dropped must be back (guards the regression).
     console.log(((a.indexOf('Fix a wrong row') >= 0 && a.indexOf('dictionary that tells the scanner') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v4.9.6: CPE mapping help text present again');
     console.log(((a.indexOf('For asset management the software-inventory CSV') >= 0 && a.indexOf('no background license scan') >= 0 && a.indexOf('SoftwareLicensingProduct') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v4.9.6: License keys help text present again');
+    // v5.0.0 issue #5: the optional external asset-management connector (Settings > Asset management)
+    console.log(((a.indexOf('id="tab-asset"') >= 0 && a.indexOf('data-main="settings" data-sub="asset"') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v5.0.0: asset-management panel lives under Settings');
+    console.log(((a.indexOf("key: 'asset'") >= 0 && a.indexOf('function loadAssetSection') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v5.0.0: asset sub-tab + loader present');
+    console.log(((a.indexOf('only place where this plugin sends data OFF the server') >= 0 && a.indexOf('disabled by default') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v5.0.0: the off-server transfer is disclosed prominently in the panel');
+    console.log(((a.indexOf("post('as_get_config'") >= 0 && a.indexOf("post('as_save_config'") >= 0 && a.indexOf("post('as_push'") >= 0 && a.indexOf("post('as_test'") >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v5.0.0: the panel uses the as_* routes');
+    console.log(((a.indexOf('asToken') >= 0 && a.indexOf('type="password"') >= 0 && a.indexOf('clear the stored token') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v5.0.0: credentials are password fields with an explicit clear, never prefilled');
+    console.log((a.indexOf('asPush(null)') >= 0 && a.indexOf('This leaves the server') >= 0 ? 'PASS ' : (failed++, 'FAIL ')) + 'v5.0.0: pushing asks for explicit consent every time');
 } catch (e) { failed++; console.log('FAIL nav checks: ' + e.message); }
 
 console.log(failed === 0 ? '\ntest-views: ALL PASSED' : '\ntest-views: ' + failed + ' FAILURE(S)');

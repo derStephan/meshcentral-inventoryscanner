@@ -19,7 +19,8 @@ without sending inventory data to anyone.
 * **Inventory exports** - hardware and software lists as Excel-safe CSV, for selected devices or for the whole
   fleet with one bookmarkable URL.
 * **Offline CVE scan** - matches installed software against the public NVD feeds stored on your server. No
-  inventory data leaves the machine; the server only downloads the feeds, the mapping table and OS support dates.
+  inventory data leaves the machine while scanning; the server only downloads the feeds, the mapping table and OS
+  support dates. (The single optional exception is the asset-management push below, which is off by default.)
 * **Honest coverage numbers** - every report says how much of the inventory could actually be checked, and names
   the two reasons it could not: no verified CPE mapping (*not assessable*) or out of scope by nature
   (**drivers and firmware** are patched by the hardware vendor and Windows Update, not by NVD application data -
@@ -74,7 +75,18 @@ without sending inventory data to anyone.
    maps each program to where its license lives - a Windows registry value, a file (regex / JSON field / line) or a WMI
    property - so it is **not limited to Microsoft software** (Microsoft keys come from the `SoftwareLicensingProduct`
    class behind a switch). Reading is **opt-in and on demand only** (no background scan), **read-only** as SYSTEM, and the
-   keys stay **on this server** (`data/<node>/license.json`) - never sent anywhere, never in a log.
+    keys stay **on this server** (`data/<node>/license.json`) - never sent anywhere, never in a log.
+* **Push to an external asset-management system (Settings > Asset management, v5.0.0, optional)** - the three
+   lists this plugin already has (hardware, software, vulnerabilities) can be transferred to your asset system
+   over REST. Choose **Generic** and describe the request yourself (HTTP method, extra headers and a JSON body
+   template with placeholders such as the device name, group, OS, serial, the software list and the findings) -
+   that reaches GLPI, NetBox, ServiceNow, Device42, Freshservice, ManageEngine, Lansweeper or anything else with
+   a REST API - or use the built-in presets for **Jira** (one issue per device) and **Snipe-IT** (one hardware
+   asset per device). Both create on the first push and **update** on later pushes, so nothing is duplicated.
+   It is **off by default**, **https only**, needs no automatic schedule (interval 0 = on-demand only), sends
+   **no command to any agent**, and credentials are stored on the server, **never displayed again** and **never
+   logged** (the log records device, HTTP status and external id only). This is the one place where data can
+   leave the server - the panel says so and asks for confirmation on every push.
 
 
 ## Requirements
@@ -83,7 +95,9 @@ without sending inventory data to anyone.
 * You must be a **full site administrator** of the default domain - every screen and endpoint is admin-only (on
   multi-domain servers, administrators of sub-domains are refused because the plugin covers all devices).
 * Outbound HTTPS to `nvd.nist.gov` (feed download, then roughly weekly), `raw.githubusercontent.com` (the
-  maintained mapping table) and `endoflife.date` (OS support dates). All matching runs locally.
+  maintained mapping table) and `endoflife.date` (OS support dates). All matching runs locally. Optionally - only
+  if you configure and enable it - outbound HTTPS to **your own** asset-management system (Settings > Asset
+  management).
 * Several GB of free disk under `<datapath>/nvd/` for the feed data.
 * Agents that have been online at least once, so their software list can be collected.
 * For deploying software (optional, Deploy tab): nothing to open or install on the devices - the package travels
@@ -129,7 +143,8 @@ affected locations in one action, or mark it a false positive (with undo). Every
 the id (the full description stays in the tooltip), so a rating rarely needs a trip to nvd.nist.gov. Since v4.9.0
 the panel uses **two-layer navigation**: four main sections **Devices** (a unified **Device list**, software
 updates, OS updates & reboot, PC reset), **Software** (a fleet-wide **Software list**, deployment, license keys),
-**Vulnerabilities** (assessment, reports / NVD update / CPE table) and **Settings**, each opening its own row of
+**Vulnerabilities** (assessment, reports / NVD update / CPE table) and **Settings** (general options, asset
+management), each opening its own row of
 sub-tabs. The Device list merges every engine's per-device state into one table (tick devices, run an update /
 OS update / OS upgrade / Windows Update repair / license collection, with Restart and Reset kept per-device and
 typed-name confirmed); the Software list shows each program once across the fleet with its CVE, winget-update
@@ -307,9 +322,14 @@ CPE table) always win, and that section states which table file is in force - th
 
 ## Privacy & security
 
-* No inventory data is ever transmitted anywhere; the only outbound requests go to `nvd.nist.gov` (feeds),
+* By default no inventory data is ever transmitted anywhere; the outbound requests go to `nvd.nist.gov` (feeds),
   `raw.githubusercontent.com` (mapping table - https only, size-capped, every regex checked before use) and
   `endoflife.date` (public OS support dates - a fixed list of product names is requested, nothing about your devices).
+* **The one deliberate exception (v5.0.0):** the optional asset-management connector can push your aggregated
+  hardware/software/vulnerability lists to a REST system **you** configure. It is off by default, https only, has
+  no automatic schedule unless you set one, sends no command to any agent, and every push asks for confirmation.
+  Credentials are stored on this server, never shown again in the clear and never written to a log; the log holds
+  device, HTTP status and external id only - never a request or response body.
 * Admin-only: every endpoint and the toolbar export re-check your site-administrator rights server-side; every
   changing request must come from the plugin's own page (request-header check against cross-site requests).
 * The updater writes its client transcript only to folders that standard users cannot write to.

@@ -3191,6 +3191,214 @@ steps.push(function (next) {
     }), user);
 });
 
+// ---- v5.0.0 external asset-management connector (issue #5): opt-in, validation ----
+steps.push(function (next) {
+    var dpA = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-as-'));
+    var aNodes = [
+        { _id: 'node//a1', meshid: 'mesh//grp1', rname: 'ah1', name: 'AssetOne', osdesc: 'Microsoft Windows 11 Pro', ip: '10.0.0.5' },
+        { _id: 'node//a2', meshid: 'mesh//grp1', rname: 'ah2', name: 'AssetTwo', osdesc: 'Ubuntu 24.04 LTS' }
+    ];
+    var dbA = { GetAllType: function (t, cb) { cb(null, t === 'node' ? aNodes.slice() : meshes.slice()); }, Get: function (id, cb) { cb(null, aNodes.filter(function (n) { return n._id === id; })); } };
+    var sentA = [];
+    var agentsA = { 'node//a1': { send: function (m) { sentA.push(m); } }, 'node//a2': { send: function (m) { sentA.push(m); } } };
+    var oA = factory({ parent: { db: dbA, datapath: dpA, debug: function () { }, config: { settings: {} }, webserver: { meshes: {}, wsagents: agentsA }, DispatchEvent: function () { } } });
+
+    var c0 = oA.assetConfig();
+    check('asset: OFF by default - no target, no interval, nothing can leave the server',
+        c0.enabled === false && c0.intervalHours === 0 && c0.targetType === 'generic' && c0.endpointUrl === '' && c0.only === 'all', c0);
+    check('asset: the connector defines no agent-facing pump/dispatch (it never reaches a device)',
+        typeof oA.asPump === 'undefined' && typeof oA.asDispatch === 'undefined' && typeof oA.asBuildScript === 'undefined');
+
+    oA.handleAdminPostReq({ headers: XHDR, body: { action: 'as_push' } }, mockRes(function (ref) {
+        check('as_push: refused while disabled (opt-in, deliberate)', !!ref.error && /disabled/i.test(ref.error), ref);
+        oA.handleAdminPostReq({ headers: XHDR, body: { action: 'as_save_config', enabled: 'true', targetType: 'generic', endpointUrl: 'http://insecure.example.com/ingest', bodyTemplate: '{}' } }, mockRes(function (v1) {
+            check('as_save_config: a non-https endpoint is rejected (credentials must never travel in the clear)', !!v1.error && /https/i.test(v1.error), v1);
+            oA.handleAdminPostReq({ headers: XHDR, body: { action: 'as_save_config', enabled: 'true', targetType: 'generic', endpointUrl: '' } }, mockRes(function (v2) {
+                check('as_save_config: enabling without an endpoint URL is rejected', !!v2.error, v2);
+                oA.handleAdminPostReq({ headers: XHDR, body: { action: 'as_save_config', enabled: 'true', targetType: 'jira', endpointUrl: 'https://acme.atlassian.net', jiraProject: '' } }, mockRes(function (v3) {
+                    check('as_save_config: the Jira preset needs a project key', !!v3.error && /project/i.test(v3.error), v3);
+                    oA.handleAdminPostReq({ headers: XHDR, body: { action: 'as_save_config', enabled: 'true', targetType: 'generic', endpointUrl: 'https://am.example.com/ingest', bodyTemplate: '{ not json' } }, mockRes(function (v4) {
+                        check('as_save_config: an invalid JSON body template is rejected before anything is stored', !!v4.error && /JSON/i.test(v4.error), v4);
+                        check('asset: every rejected save left the connector disabled', oA.assetConfig().enabled === false && sentA.length === 0, sentA.length);
+                        next();
+                    }), user);
+                }), user);
+            }), user);
+        }), user);
+    }), user);
+});
+
+// ---- v5.0.0 asset connector: secrets, request builders, the push itself, log redaction, scheduler ----
+steps.push(function (next) {
+    var dpB = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-as2-'));
+    var bNodes = [
+        { _id: 'node//b1', meshid: 'mesh//grp1', rname: 'bh1', name: 'AssetOne', osdesc: 'Microsoft Windows 11 Pro', ip: '10.0.0.9' },
+        { _id: 'node//b2', meshid: 'mesh//grp1', rname: 'bh2', name: 'AssetTwo', osdesc: 'Ubuntu 24.04 LTS' }
+    ];
+    var bSys = {
+        'sinode//b1': { _id: 'sinode//b1', doc: { hardware: { identifiers: { cpu_name: 'Intel i7', manufacturer: 'Dell', model: 'OptiPlex', serial: 'SN-B1', bios_version: '1.2.3' }, totalMemory: 17179869184 } } },
+        'sinode//b2': { _id: 'sinode//b2', doc: { hardware: { identifiers: { cpu_name: 'AMD EPYC', serial: 'SN-B2' } } } }
+    };
+    var dbB = { GetAllType: function (t, cb) { cb(null, t === 'node' ? bNodes.slice() : meshes.slice()); }, Get: function (id, cb) { if (bSys[id]) { cb(null, [bSys[id]]); return; } cb(null, bNodes.filter(function (n) { return n._id === id; })); } };
+    var sentB = [];
+    var agentsB = { 'node//b1': { send: function (m) { sentB.push(m); } }, 'node//b2': { send: function (m) { sentB.push(m); } } };
+    var oB = factory({ parent: { db: dbB, datapath: dpB, debug: function () { }, config: { settings: {} }, webserver: { meshes: {}, wsagents: agentsB }, DispatchEvent: function () { } } });
+    oB.softwareInventory = {
+        b1: { time: 'x', apps: [{ name: 'Firefox', version: '1.0', publisher: 'Mozilla' }, { name: 'Notepad', version: '11', publisher: 'Microsoft' }] },
+        b2: { time: 'x', apps: [{ name: 'vim', version: '9', publisher: '' }] }
+    };
+    oB.scanDeviceSoftware = function (list, cb) {
+        var out = [];
+        for (var i = 0; i < (list || []).length; i++) {
+            var nm = String((list[i] && (list[i].name || list[i].Name)) || '');
+            if (/firefox/i.test(nm)) out.push({ isCve: true, cve: 'CVE-2024-0001', severity: 'CRITICAL', cvss: 9.8, software: nm, version: String(list[i].version || '') });
+            else out.push({ isCve: false, cve: '', severity: '', software: nm, version: String(list[i].version || '') });
+        }
+        cb(out);
+    };
+    // other sections of the settings file must survive an asset save (the winget trap of v3.5.1)
+    oB.pluginSettings = { wingetUpdater: { enabled: true, excludeNodes: ['node//b2'] }, inventoryScanner: { collectIntervalMinutes: 60 } };
+
+    var SECRETTOKEN = 'SECRETTOKEN-abc123';
+    var captured = [];
+    oB.assetHttp = function (opts, cb) { captured.push(opts); cb(null, { statusCode: 201, text: '{"id":"ext-77","key":"INV-77"}' }); };
+
+    oB.handleAdminPostReq({ headers: XHDR, body: {
+        action: 'as_save_config', enabled: 'true', targetType: 'generic', endpointUrl: 'https://am.example.com/ingest',
+        authMode: 'bearer', token: SECRETTOKEN, method: 'POST', only: 'all', intervalHours: '0',
+        headersJson: '{"X-Tenant":"acme"}', externalIdPath: 'id',
+        bodyTemplate: '{"name":"{{device.given}} {{device.host}}","os":"{{device.os}}","serial":"{{hardware.serial}}","apps":"{{software}}","vulns":"{{vulnerabilities}}","n":"{{counts.software}}"}'
+    } }, mockRes(function (saved) {
+        check('as_save_config: a valid https target is stored and the connector is enabled', saved.config && saved.config.enabled === true && oB.assetConfig().endpointUrl === 'https://am.example.com/ingest', saved.config);
+        check('as_save_config: the OTHER sections of scanner-settings.json survive (wingetUpdater + inventoryScanner)',
+            oB.pluginSettings.wingetUpdater && oB.pluginSettings.wingetUpdater.excludeNodes[0] === 'node//b2' && oB.pluginSettings.inventoryScanner.collectIntervalMinutes === 60, Object.keys(oB.pluginSettings));
+        check('as_save_config: the secret is stored on the server (so the push can authenticate)', oB.assetConfig().token === SECRETTOKEN);
+        check('as_get_config: the secret is NEVER returned in the clear - only a mask + a "is set" flag',
+            saved.config.tokenMask === oB.AS_MASK && saved.config.hasToken === true && JSON.stringify(saved).indexOf(SECRETTOKEN) < 0, saved.config.tokenMask);
+
+        // a blank secret keeps the stored one; the explicit sentinel clears it
+        oB.handleAdminPostReq({ headers: XHDR, body: { action: 'as_save_config', enabled: 'true', targetType: 'generic', endpointUrl: 'https://am.example.com/ingest', authMode: 'bearer', token: '', bodyTemplate: '{}' } }, mockRes(function (keepRes) {
+            check('as_save_config: leaving the secret blank KEEPS the stored value (it is never round-tripped through the browser)', oB.assetConfig().token === SECRETTOKEN, keepRes.config && keepRes.config.hasToken);
+            oB.handleAdminPostReq({ headers: XHDR, body: { action: 'as_save_config', enabled: 'true', targetType: 'generic', endpointUrl: 'https://am.example.com/ingest', authMode: 'bearer', token: oB.AS_CLEAR, bodyTemplate: '{"a":1}' } }, mockRes(function () {
+                check('as_save_config: the clear sentinel erases the stored secret', oB.assetConfig().token === '' && oB.assetConfig()._hasToken === false);
+                // restore for the push test (the section is replaced wholesale on every save)
+                oB.pluginSettings.assetManagement.token = SECRETTOKEN;
+                oB.pluginSettings.assetManagement.headersJson = '{"X-Tenant":"acme"}';
+                oB.pluginSettings.assetManagement.externalIdPath = 'id';
+                oB.pluginSettings.assetManagement.bodyTemplate = '{"name":"{{device.given}} {{device.host}}","os":"{{device.os}}","serial":"{{hardware.serial}}","apps":"{{software}}","vulns":"{{vulnerabilities}}","n":"{{counts.software}}"}';
+
+                // ---- builders (pure) ----
+                var rec = {
+                    device: { id: 'node//b1', host: 'bh1', given: 'AssetOne', group: 'HQ', os: 'Microsoft Windows 11 Pro', platform: 'windows', online: true },
+                    hardware: { cpu: 'Intel i7', manufacturer: 'Dell', model: 'OptiPlex', serial: 'SN-B1', bios: '1.2.3', memoryBytes: 17179869184, os: 'Microsoft Windows 11 Pro', ip: '10.0.0.9' },
+                    software: [{ name: 'Firefox', version: '1.0', publisher: 'Mozilla' }],
+                    vulnerabilities: [{ cve: 'CVE-2024-0001', severity: 'CRITICAL', cvss: 9.8, software: 'Firefox', version: '1.0' }],
+                    counts: { software: 1, vulnerabilities: 1 }
+                };
+                var gcfg = oB.assetConfig();
+                var gb = oB.asBuildRequests(rec, gcfg, null);
+                var g0 = (gb.requests && gb.requests[0]) || null;
+                check('generic builder: method/https URL + the admin headers + the bearer auth are applied',
+                    !gb.error && g0 && g0.method === 'POST' && g0.url === 'https://am.example.com/ingest' &&
+                    g0.headers['X-Tenant'] === 'acme' && g0.headers['Authorization'] === 'Bearer ' + SECRETTOKEN, gb.error || g0);
+                check('generic builder: the template is filled - text interpolation, typed array injection and numbers',
+                    !!g0 && g0.body.name === 'AssetOne bh1' && g0.body.serial === 'SN-B1' &&
+                    Array.isArray(g0.body.apps) && g0.body.apps[0].name === 'Firefox' &&
+                    Array.isArray(g0.body.vulns) && g0.body.vulns[0].cve === 'CVE-2024-0001' &&
+                    g0.body.n === 1, g0 && g0.body);
+
+                var jcfg = { targetType: 'jira', endpointUrl: 'https://acme.atlassian.net/', authMode: 'basic', username: 'admin@acme.com', password: 'apitok', jiraProject: 'IT', jiraIssueType: 'Task', jiraLabel: 'inventory-scanner', jiraSummary: '[Inventory] {{device.host}}' };
+                var jNew = oB.asBuildRequests(rec, jcfg, null);
+                var j0 = (jNew.requests && jNew.requests[0]) || null;
+                check('jira builder: first push CREATES an issue (project + issue type + label + an ADF description)',
+                    !!j0 && j0.method === 'POST' && j0.url === 'https://acme.atlassian.net/rest/api/3/issue' &&
+                    j0.body.fields.project.key === 'IT' && j0.body.fields.issuetype.name === 'Task' &&
+                    j0.body.fields.labels[0] === 'inventory-scanner' && j0.body.fields.summary === '[Inventory] bh1' &&
+                    j0.body.fields.description.type === 'doc', jNew.error || j0);
+                check('jira builder: basic auth is base64(user:password)',
+                    !!j0 && j0.headers['Authorization'] === 'Basic ' + Buffer.from('admin@acme.com:apitok').toString('base64'), j0 && j0.headers);
+                var jUpd = oB.asBuildRequests(rec, jcfg, 'INV-77');
+                var ju0 = (jUpd.requests && jUpd.requests[0]) || null;
+                check('jira builder: a later push UPDATES the stored issue instead of creating a duplicate',
+                    !!ju0 && ju0.method === 'PUT' && ju0.url === 'https://acme.atlassian.net/rest/api/3/issue/INV-77', jUpd.error || ju0);
+
+                var scfg = { targetType: 'snipeit', endpointUrl: 'https://snipe.example.com', authMode: 'bearer', token: 'snipetok', snipeNameTemplate: '{{device.given}}', snipeCategory: 3 };
+                var sNew = oB.asBuildRequests(rec, scfg, null);
+                var s0 = (sNew.requests && sNew.requests[0]) || null;
+                check('snipeit builder: first push POSTs a hardware asset with the mapped fields',
+                    !!s0 && s0.method === 'POST' && s0.url === 'https://snipe.example.com/api/hardware' &&
+                    s0.body.name === 'AssetOne' && s0.body.serial === 'SN-B1' && s0.body.category_id === 3 &&
+                    s0.headers['Authorization'] === 'Bearer snipetok', sNew.error || s0);
+                var sUpd = oB.asBuildRequests(rec, scfg, '4711');
+                var su0 = (sUpd.requests && sUpd.requests[0]) || null;
+                check('snipeit builder: a later push PATCHes the stored asset id (no duplicates)',
+                    !!su0 && su0.method === 'PATCH' && su0.url === 'https://snipe.example.com/api/hardware/4711', sUpd.error || su0);
+
+                var hcfg = { targetType: 'generic', endpointUrl: 'http://plain.example.com', authMode: 'none', method: 'POST', bodyTemplate: '{}' };
+                check('builder: a non-https endpoint is refused even at build time', !!oB.asBuildRequests(rec, hcfg, null).error);
+                var hhdr = oB.asAuthHeaders({ authMode: 'header', headerName: 'X-Api-Key', headerValue: 'k1' });
+                check('auth: the custom-header mode sets exactly the configured header', hhdr['X-Api-Key'] === 'k1' && Object.keys(hhdr).length === 1, hhdr);
+
+                // ---- the push itself ----
+                captured.length = 0;
+                oB.handleAdminPostReq({ headers: XHDR, body: { action: 'as_push' } }, mockRes(function (pushed) {
+                    check('as_push: pushes every device and reports the count', pushed.started === true && pushed.devices === 2 && pushed.errors === 0, pushed);
+                    check('as_push: it issues NO agent command at all (server-side aggregation only)', sentB.length === 0, sentB.length);
+                    check('as_push: one https request per device to the configured endpoint with the filled body',
+                        captured.length === 2 && captured.every(function (c) { return c.url === 'https://am.example.com/ingest' && c.method === 'POST'; }) &&
+                        captured.some(function (c) { return c.body.name === 'AssetOne bh1'; }) && captured.some(function (c) { return c.body.name === 'AssetTwo bh2'; }), captured.map(function (c) { return c.body && c.body.name; }));
+                    check('as_push: the external id from the answer is stored so the next push updates instead of duplicating',
+                        oB.asResults['node//b1'] && oB.asResults['node//b1'].status === 'ok' && oB.asResults['node//b1'].httpCode === 201 &&
+                        oB.asResults['node//b1'].externalId === 'ext-77' && fs.existsSync(oB.asResultsPath), oB.asResults['node//b1']);
+
+                    var logText = fs.readFileSync(oB.asLogPath, 'utf8');
+                    check('asset log: records device + status only - NEVER the credential and NEVER the payload',
+                        logText.indexOf(SECRETTOKEN) < 0 && logText.indexOf('Authorization') < 0 && logText.indexOf('Firefox') < 0 &&
+                        logText.indexOf('Mozilla') < 0 && logText.indexOf('SN-B1') < 0 && logText.indexOf('push ok') >= 0, logText.substring(0, 300));
+
+                    // only=vulnerable skips clean devices
+                    oB.pluginSettings.assetManagement.only = 'vulnerable';
+                    captured.length = 0;
+                    oB.handleAdminPostReq({ headers: XHDR, body: { action: 'as_push', nodeIds: 'node//b2' } }, mockRes(function (sk) {
+                        check('as_push: "only devices with vulnerabilities" skips a clean device without sending anything',
+                            captured.length === 0 && oB.asResults['node//b2'] && oB.asResults['node//b2'].status === 'skipped', oB.asResults['node//b2']);
+                        oB.pluginSettings.assetManagement.only = 'all';
+
+                        // test request + scheduler + log route
+                        captured.length = 0;
+                        oB.handleAdminPostReq({ headers: XHDR, body: { action: 'as_test' } }, mockRes(function (tst) {
+                            check('as_test: sends exactly one request and reports the HTTP status', tst.ok === true && tst.httpCode === 201 && captured.length === 1, tst);
+
+                            var timers = [];
+                            var realLT = oB.longTimeout;
+                            oB.longTimeout = function (fn, ms) { timers.push(ms); };
+                            oB.pluginSettings.assetManagement.enabled = false; oB.pluginSettings.assetManagement.intervalHours = 24;
+                            oB.scheduleAssetSync();
+                            check('scheduler: with the connector DISABLED no sync timer is registered (no automatic push)', timers.length === 0, timers);
+                            oB.pluginSettings.assetManagement.enabled = true; oB.pluginSettings.assetManagement.intervalHours = 0;
+                            oB.scheduleAssetSync();
+                            check('scheduler: interval 0 means on-demand only - still no timer', timers.length === 0, timers);
+                            oB.pluginSettings.assetManagement.intervalHours = 24;
+                            oB.scheduleAssetSync();
+                            check('scheduler: only enabled + interval > 0 registers the cycle (24 h)', timers.length === 1 && timers[0] === 24 * 3600 * 1000, timers);
+                            oB.longTimeout = realLT;
+
+                            oB.handleAdminPostReq({ headers: XHDR, body: { action: 'get_log', type: 'asset' } }, mockRes(function (lg) {
+                                check('get_log asset: the sync log is reachable and named', Array.isArray(lg.lines) && lg.file === 'plugins/inventoryscanner/asset-sync.log', lg.file);
+                                oB.handleAdminPostReq({ headers: XHDR, body: { action: 'as_status' } }, mockRes(function (st) {
+                                    check('as_status: per-device last push + a config summary with masked secrets',
+                                        st.devices.length === 2 && st.config.hasToken === true && JSON.stringify(st).indexOf(SECRETTOKEN) < 0, st.config);
+                                    next();
+                                }), user);
+                            }), user);
+                        }), user);
+                    }), user);
+                }), user);
+            }), user);
+        }), user);
+    }), user);
+});
+
 // The runner MUST stay the last statement: every steps.push() above has to be registered before
 // step 0 starts (pre-3.0.1 it sat mid-file and the trailing steps only ran because an earlier
 // step happened to be asynchronous). New steps go ABOVE this block.

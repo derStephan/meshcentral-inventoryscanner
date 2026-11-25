@@ -417,6 +417,7 @@
                 <button class="dlRun" data-op="osupgrade">OS upgrade</button>
                 <button class="dlRun" data-op="troubleshoot">Windows Update repair</button>
                 <button class="purple dlRun" data-op="licenses">Collect licenses</button>
+                <button class="dlRun" data-op="asset">Push to asset system</button>
                 <span id="dlRunInfo" class="hint"></span>
             </div>
             <div class="table-container">
@@ -460,6 +461,156 @@
             </div>
             <div class="controls"><button class="green" id="swfUpdateAllBtn">Update the selected packages everywhere</button></div>
             <div id="swfMsg"></div>
+        </div>
+
+        <div class="tab-content" id="tab-asset" data-main="settings" data-sub="asset">
+            <div class="info" style="border-left:4px solid #fd7e14;">
+                <strong>This is the only place where this plugin sends data OFF the server.</strong>
+                Everything else (scanning, inventory, CVE matching, reports, CSV) stays local - this connector
+                forwards the lists you already have to an external asset-management system, and only when you
+                deliberately configure a target and switch it on. It is <strong>disabled by default</strong> and
+                there is no automatic push unless you set a sync interval below.
+                <ul style="margin:6px 0 6px 18px;padding:0;">
+                    <li>The endpoint must be <strong>https</strong> - credentials never travel in the clear.</li>
+                    <li>What leaves: the device identity (name, group, OS), the hardware identifiers, the
+                        installed-software list and the vulnerability findings of each pushed device - i.e. the
+                        same data the CSV export contains.</li>
+                    <li>Credentials are stored in <code>scanner-settings.json</code> on this server, are
+                        <strong>never shown back in the clear</strong> and are <strong>never written to a log</strong>;
+                        the log records only device, HTTP status and an external id.</li>
+                    <li>The push runs entirely server-side from stored inventory: it sends
+                        <strong>no command to any agent</strong> and never touches a device.</li>
+                </ul>
+                Choose <em>Generic</em> for any REST system (a JSON body template with placeholders), or use the
+                built-in presets for <strong>Jira</strong> (one issue per device) and <strong>Snipe-IT</strong>
+                (one hardware asset per device). Both create on the first push and update on later pushes.
+            </div>
+
+            <h3>Target</h3>
+            <div class="setgrid">
+                <label for="asEnabled">Enable asset sync</label>
+                <div><input type="checkbox" id="asEnabled">
+                    <div class="hint">Master switch. Off by default; nothing is sent until it is on AND a target is configured.</div></div>
+
+                <label for="asTargetType">Target system</label>
+                <div><select id="asTargetType">
+                        <option value="generic">Generic REST (JSON body template)</option>
+                        <option value="jira">Jira (issue per device)</option>
+                        <option value="snipeit">Snipe-IT (hardware asset per device)</option>
+                    </select></div>
+
+                <label for="asEndpointUrl">Endpoint URL (https)</label>
+                <div><input type="text" id="asEndpointUrl" style="width:420px" placeholder="https://assets.example.com">
+                    <div class="hint">Generic: the exact URL to POST to. Jira: the base URL (e.g. https://yourcompany.atlassian.net).
+                    Snipe-IT: the base URL (e.g. https://snipe.example.com).</div></div>
+
+                <label for="asAuthMode">Authentication</label>
+                <div><select id="asAuthMode">
+                        <option value="none">none</option>
+                        <option value="bearer">Bearer token</option>
+                        <option value="basic">Basic (user + password/API token)</option>
+                        <option value="header">Custom header</option>
+                    </select></div>
+
+                <label for="asUsername">Username</label>
+                <div><input type="text" id="asUsername" style="width:300px">
+                    <div class="hint">For Basic auth (Jira Cloud: your account e-mail).</div></div>
+
+                <label for="asToken">Token</label>
+                <div><input type="password" id="asToken" style="width:300px" autocomplete="new-password">
+                    <label style="font-weight:400;"><input type="checkbox" id="asClearToken"> clear the stored token</label>
+                    <div class="hint" id="asTokenHint">Stored secrets are never displayed. Leave blank to keep the stored value; tick "clear" to erase it.</div></div>
+
+                <label for="asPassword">Password / API token</label>
+                <div><input type="password" id="asPassword" style="width:300px" autocomplete="new-password">
+                    <label style="font-weight:400;"><input type="checkbox" id="asClearPassword"> clear the stored password</label></div>
+
+                <label for="asHeaderName">Custom header name</label>
+                <div><input type="text" id="asHeaderName" style="width:300px" placeholder="X-Api-Key"></div>
+
+                <label for="asHeaderValue">Custom header value</label>
+                <div><input type="password" id="asHeaderValue" style="width:300px" autocomplete="new-password">
+                    <label style="font-weight:400;"><input type="checkbox" id="asClearHeaderValue"> clear the stored value</label></div>
+
+                <label for="asOnly">Which devices to push</label>
+                <div><select id="asOnly">
+                        <option value="all">All devices</option>
+                        <option value="vulnerable">Only devices with vulnerabilities</option>
+                    </select></div>
+
+                <label for="asIntervalHours">Automatic sync every (hours)</label>
+                <div><input type="text" id="asIntervalHours" class="num" value="0">
+                    <div class="hint">0 = no automatic push (on-demand only). Otherwise the server pushes on this cycle.</div></div>
+            </div>
+
+            <div id="asGenericFields">
+                <h3>Generic REST mapping</h3>
+                <div class="setgrid">
+                    <label for="asMethod">HTTP method</label>
+                    <div><select id="asMethod">
+                            <option value="POST">POST</option><option value="PUT">PUT</option><option value="PATCH">PATCH</option>
+                        </select></div>
+                    <label for="asHeadersJson">Extra headers (JSON object)</label>
+                    <div><textarea id="asHeadersJson" rows="3" style="width:520px;font-family:monospace;font-size:12px;">{}</textarea></div>
+                    <label for="asBodyTemplate">Body template (JSON)</label>
+                    <div><textarea id="asBodyTemplate" rows="12" style="width:620px;font-family:monospace;font-size:12px;"></textarea>
+                        <div class="hint" id="asTemplateHint"></div></div>
+                    <label for="asExternalIdPath">External id in the answer</label>
+                    <div><input type="text" id="asExternalIdPath" style="width:260px" placeholder="id">
+                        <div class="hint">Where the target returns its own id (a dotted path, e.g. <code>id</code> or
+                        <code>data.asset.id</code>). Stored per device so the next push UPDATES that record instead
+                        of creating a duplicate. Leave empty if the target has no such id.</div></div>
+                </div>
+            </div>
+
+            <div id="asJiraFields" style="display:none;">
+                <h3>Jira</h3>
+                <div class="setgrid">
+                    <label for="asJiraProject">Project key</label>
+                    <div><input type="text" id="asJiraProject" style="width:160px" placeholder="IT"></div>
+                    <label for="asJiraIssueType">Issue type</label>
+                    <div><input type="text" id="asJiraIssueType" style="width:200px" value="Task"></div>
+                    <label for="asJiraLabel">Label</label>
+                    <div><input type="text" id="asJiraLabel" style="width:220px" value="inventory-scanner">
+                        <div class="hint">Used to recognise issues this plugin created.</div></div>
+                    <label for="asJiraSummary">Summary template</label>
+                    <div><input type="text" id="asJiraSummary" style="width:420px"></div>
+                    <label for="asJiraVulnIssues">Also one issue per vulnerability</label>
+                    <div><input type="checkbox" id="asJiraVulnIssues">
+                        <div class="hint">Off: one issue per device carrying all three lists. On: additionally one issue per finding.</div></div>
+                </div>
+            </div>
+
+            <div id="asSnipeFields" style="display:none;">
+                <h3>Snipe-IT</h3>
+                <div class="setgrid">
+                    <label for="asSnipeNameTemplate">Asset name template</label>
+                    <div><input type="text" id="asSnipeNameTemplate" style="width:420px"></div>
+                    <label for="asSnipeCategory">Category id (optional)</label>
+                    <div><input type="text" id="asSnipeCategory" class="num">
+                        <div class="hint">Numeric Snipe-IT category id; leave empty for none.</div></div>
+                </div>
+            </div>
+
+            <div class="controls" style="margin-top:14px;">
+                <button id="asSaveBtn">Save configuration</button>
+                <button id="asTestBtn">Send a test request</button>
+                <button class="green" id="asPushAllBtn">Push all devices now</button>
+                <span id="asRunInfo" class="hint"></span>
+            </div>
+            <div id="asMsg"></div>
+
+            <h3>Last push per device</h3>
+            <div class="table-container">
+                <table>
+                    <thead><tr><th>Device</th><th>Group</th><th style="width:190px;">Last push</th><th style="width:90px;">Status</th><th style="width:80px;">HTTP</th><th style="width:150px;">External id</th><th style="width:90px;"></th></tr></thead>
+                    <tbody id="asStatusBody"><tr><td colspan="7" style="color:#888">Loading...</td></tr></tbody>
+                </table>
+            </div>
+
+            <h3>Asset sync log</h3>
+            <div><button id="asRefreshLogBtn" class="small">Refresh log</button> <span id="asLogInfo" class="hint"></span></div>
+            <pre id="asLog" style="max-height:220px;overflow:auto;background:#0f1720;color:#cfe3f5;padding:8px;border-radius:6px;font-size:11px;margin-top:6px;white-space:pre-wrap;">(not loaded yet)</pre>
         </div>
 
         <div class="tab-content" id="tab-updates" data-main="devices" data-sub="updates">
@@ -790,19 +941,20 @@
             devices: [ { key: 'devicelist', label: 'Device list' }, { key: 'updates', label: 'Software updates' }, { key: 'os', label: 'OS updates & reboot' }, { key: 'reset', label: 'PC reset' } ],
             software: [ { key: 'softwarelist', label: 'Software list' }, { key: 'deploy', label: 'Deployment' }, { key: 'license', label: 'License keys' } ],
             vulns: [ { key: 'assessment', label: 'Assessment' }, { key: 'data', label: 'Reports, NVD & CPE table' } ],
-            settings: [ { key: 'general', label: 'General' } ]
+            settings: [ { key: 'general', label: 'General' }, { key: 'asset', label: 'Asset management' } ]
         };
         var subTitles = {
             devicelist: 'Devices', softwarelist: 'Installed Software (all devices)',
             updates: 'Software Updates (winget)', os: 'Operating System Updates', reset: 'Reset a Windows PC',
             deploy: 'Deploy Software', license: 'Software License Keys',
-            assessment: 'Vulnerability Assessment', data: 'Vulnerability Data & Tables', settings: 'Settings'
+            assessment: 'Vulnerability Assessment', data: 'Vulnerability Data & Tables', settings: 'Settings',
+            asset: 'External Asset Management'
         };
         var subLoaders = {
             devicelist: function () { loadDeviceList(); }, softwarelist: function () { loadSwFleet(); },
             updates: function () { loadWgTab(); }, os: function () { loadOsStatus(); },
             deploy: function () { loadSwTab(); }, reset: function () { loadDrStatus(); },
-            license: function () { loadLicenseSection(); },
+            license: function () { loadLicenseSection(); }, asset: function () { loadAssetSection(); },
             data: function () { loadCpeTable(); loadNvdLog(); }
         };
         var currentMain = 'vulns', currentSub = 'assessment';
@@ -2734,6 +2886,11 @@
             else if (op === 'osupgrade') { post('os_run', { mode: 'upgrade', nodeIds: ids.join(',') }).then(dlAfterRun).catch(function (e) { showMsg('dlMsg', e.message, false); }); }
             else if (op === 'licenses') { Promise.all(ids.map(function (id) { return post('lic_collect', { nodeId: id }); })).then(function () { dlAfterRun({ started: true }); }).catch(function (e) { showMsg('dlMsg', e.message, false); }); }
             else if (op === 'troubleshoot') { Promise.all(ids.map(function (id) { return post('wu_repair', { nodeId: id }); })).then(function () { dlAfterRun({ started: true }); }).catch(function (e) { showMsg('dlMsg', e.message, false); }); }
+            else if (op === 'asset') {
+                // the only operation that sends data OFF this server -> explicit consent every time
+                if (!window.confirm('Push the inventory of ' + ids.length + ' selected device(s) to the external asset-management system? This leaves the server.')) { return; }
+                post('as_push', { nodeIds: ids.join(',') }).then(dlAfterRun).catch(function (e) { showMsg('dlMsg', e.message, false); });
+            }
         }
 
         function dlGo(op) {
@@ -2838,6 +2995,186 @@
             var cbs = document.querySelectorAll('#swfBody input.swfc'); var on = $('swfSelectUpdatable').checked;
             for (var i = 0; i < cbs.length; i++) { cbs[i].checked = on && cbs[i].getAttribute('data-ready') === '1'; }
         });
+
+        // ---------- external asset management (v5.0.0, issue #5) ----------
+
+        var asApp = { cfg: null, devices: [] };
+        // Placeholder braces are built by concatenation: a literal pair would be eaten by Handlebars.
+        var AS_LB = '{' + '{', AS_RB = '}' + '}';
+
+        function asPlaceholder(name) { return AS_LB + name + AS_RB; }
+
+        function asTemplateExample() {
+            var o = {};
+            o.name = asPlaceholder('device.given') + ' ' + asPlaceholder('device.host');
+            o.group = asPlaceholder('device.group');
+            o.os = asPlaceholder('device.os');
+            o.serial = asPlaceholder('hardware.serial');
+            o.cpu = asPlaceholder('hardware.cpu');
+            o.software = asPlaceholder('software');
+            o.vulnerabilities = asPlaceholder('vulnerabilities');
+            o.softwareCount = asPlaceholder('counts.software');
+            o.vulnerabilityCount = asPlaceholder('counts.vulnerabilities');
+            return JSON.stringify(o, null, 2);
+        }
+
+        function asShowTargetFields() {
+            var t = $('asTargetType').value;
+            $('asGenericFields').style.display = (t === 'generic') ? '' : 'none';
+            $('asJiraFields').style.display = (t === 'jira') ? '' : 'none';
+            $('asSnipeFields').style.display = (t === 'snipeit') ? '' : 'none';
+        }
+
+        function asFillForm(c) {
+            $('asEnabled').checked = !!c.enabled;
+            $('asTargetType').value = c.targetType || 'generic';
+            $('asEndpointUrl').value = c.endpointUrl || '';
+            $('asAuthMode').value = c.authMode || 'none';
+            $('asUsername').value = c.username || '';
+            $('asHeaderName').value = c.headerName || '';
+            $('asOnly').value = c.only || 'all';
+            $('asIntervalHours').value = (c.intervalHours != null) ? c.intervalHours : 0;
+            $('asMethod').value = c.method || 'POST';
+            $('asHeadersJson').value = c.headersJson || '{}';
+            $('asBodyTemplate').value = c.bodyTemplate || asTemplateExample();
+            $('asExternalIdPath').value = c.externalIdPath || '';
+            $('asJiraProject').value = c.jiraProject || '';
+            $('asJiraIssueType').value = c.jiraIssueType || 'Task';
+            $('asJiraLabel').value = c.jiraLabel || 'inventory-scanner';
+            $('asJiraSummary').value = c.jiraSummary || ('[Inventory] ' + asPlaceholder('device.given') + asPlaceholder('device.host'));
+            $('asJiraVulnIssues').checked = !!c.jiraVulnIssues;
+            $('asSnipeNameTemplate').value = c.snipeNameTemplate || (asPlaceholder('device.given') + asPlaceholder('device.host'));
+            $('asSnipeCategory').value = (c.snipeCategory != null) ? c.snipeCategory : '';
+            // secrets: never filled - only whether one is stored
+            $('asToken').value = ''; $('asPassword').value = ''; $('asHeaderValue').value = '';
+            $('asClearToken').checked = false; $('asClearPassword').checked = false; $('asClearHeaderValue').checked = false;
+            $('asTokenHint').textContent = c.hasToken
+                ? 'A token IS stored (never displayed). Leave blank to keep it, or tick "clear" to erase it.'
+                : 'No token stored yet.';
+            var names = ['device.id', 'device.host', 'device.given', 'device.group', 'device.os', 'device.online',
+                'hardware.cpu', 'hardware.manufacturer', 'hardware.model', 'hardware.serial', 'hardware.bios', 'hardware.memoryBytes', 'hardware.ip',
+                'software (array)', 'vulnerabilities (array)', 'counts.software', 'counts.vulnerabilities'];
+            var parts = [];
+            for (var i = 0; i < names.length; i++) { parts.push(asPlaceholder(names[i].replace(' (array)', ''))); }
+            $('asTemplateHint').innerHTML = 'Available placeholders: <code>' + parts.join('</code> <code>') + '</code>. A placeholder alone in a value injects the whole list; inside text it is inserted as text.';
+            asShowTargetFields();
+        }
+
+        function asSecretValue(inputId, clearId) {
+            if ($(clearId) && $(clearId).checked) { return '__AS_CLEAR__'; }
+            return $(inputId).value;   // blank = keep the stored secret (the server keeps it)
+        }
+
+        function loadAssetSection() {
+            post('as_get_config', {}).then(function (d) {
+                if (d.error) { showMsg('asMsg', d.error, false); return; }
+                asApp.cfg = d.config; asFillForm(d.config);
+                return post('as_status', {});
+            }).then(function (s) {
+                if (!s) { return; }
+                asApp.devices = s.devices || [];
+                asRenderStatus();
+                $('asRunInfo').textContent = s.running ? 'a push is running...' : ((asApp.devices.length) + ' device(s) known.');
+            }).catch(function (e) { showMsg('asMsg', 'Failed to load the asset configuration: ' + e.message, false); });
+            asLoadLog();
+        }
+
+        function asRenderStatus() {
+            var html = '';
+            for (var i = 0; i < asApp.devices.length; i++) {
+                var d = asApp.devices[i];
+                var l = d.last;
+                html += '<tr>'
+                    + '<td><b>' + esc(d.given || d.host) + '</b><div class="hint">' + esc(d.host) + '</div></td>'
+                    + '<td>' + esc(d.group) + '</td>'
+                    + '<td>' + (l ? esc(String(l.time || '').replace('T', ' ').substring(0, 19)) : '<span style="color:#888">never</span>') + '</td>'
+                    + '<td>' + (l ? (l.status === 'ok' ? '<span class="badge badge-custom">ok</span>' : (l.status === 'skipped' ? '<span class="badge badge-mixed">skipped</span>' : '<span class="sev sev-HIGH">error</span>')) : '-') + '</td>'
+                    + '<td>' + (l && l.httpCode ? l.httpCode : '-') + '</td>'
+                    + '<td>' + esc(l && l.externalId ? String(l.externalId) : '') + '</td>'
+                    + '<td><button class="small asPushOne" data-id="' + esc(d.id) + '">Push</button></td>'
+                    + '</tr>';
+            }
+            if (html === '') { html = '<tr><td colspan="7" style="color:#888">No devices.</td></tr>'; }
+            $('asStatusBody').innerHTML = html;
+        }
+
+        function asSave() {
+            var body = {
+                enabled: $('asEnabled').checked ? 'true' : 'false',
+                targetType: $('asTargetType').value,
+                endpointUrl: $('asEndpointUrl').value.trim(),
+                authMode: $('asAuthMode').value,
+                username: $('asUsername').value.trim(),
+                headerName: $('asHeaderName').value.trim(),
+                token: asSecretValue('asToken', 'asClearToken'),
+                password: asSecretValue('asPassword', 'asClearPassword'),
+                headerValue: asSecretValue('asHeaderValue', 'asClearHeaderValue'),
+                only: $('asOnly').value,
+                intervalHours: $('asIntervalHours').value.trim(),
+                method: $('asMethod').value,
+                headersJson: $('asHeadersJson').value,
+                bodyTemplate: $('asBodyTemplate').value,
+                externalIdPath: $('asExternalIdPath').value.trim(),
+                jiraProject: $('asJiraProject').value.trim(),
+                jiraIssueType: $('asJiraIssueType').value.trim(),
+                jiraLabel: $('asJiraLabel').value.trim(),
+                jiraSummary: $('asJiraSummary').value.trim(),
+                jiraVulnIssues: $('asJiraVulnIssues').checked ? 'true' : 'false',
+                snipeNameTemplate: $('asSnipeNameTemplate').value.trim(),
+                snipeCategory: $('asSnipeCategory').value.trim()
+            };
+            if ($('asEnabled').checked && !window.confirm('Enable sending inventory data to ' + (body.endpointUrl || '(no URL)') + '? This is the only place where data leaves this server.')) {
+                $('asEnabled').checked = false; body.enabled = 'false';
+            }
+            post('as_save_config', body).then(function (d) {
+                if (d.error) { showMsg('asMsg', d.error, false); return; }
+                showMsg('asMsg', 'Asset-management configuration saved (secrets are stored on this server and never displayed again).', true);
+                if (d.config) { asApp.cfg = d.config; asFillForm(d.config); }
+            }).catch(function (e) { showMsg('asMsg', 'Save failed: ' + e.message, false); });
+        }
+
+        function asTest() {
+            showMsg('asMsg', 'Sending one test request...', true);
+            post('as_test', {}).then(function (d) {
+                if (d.error) { showMsg('asMsg', 'Test failed: ' + d.error, false); return; }
+                showMsg('asMsg', d.ok ? ('Test OK - the target answered HTTP ' + d.httpCode + '.') : ('The target answered HTTP ' + d.httpCode + ' (not 2xx) - check URL, auth and the body/field mapping.'), !!d.ok);
+                asLoadLog();
+            }).catch(function (e) { showMsg('asMsg', 'Test failed: ' + e.message, false); });
+        }
+
+        function asPush(nodeIds) {
+            var body = nodeIds ? { nodeIds: nodeIds } : {};
+            $('asRunInfo').textContent = 'pushing...';
+            post('as_push', body).then(function (d) {
+                if (d.error) { $('asRunInfo').textContent = ''; showMsg('asMsg', d.error, false); return; }
+                if (d.busy) { $('asRunInfo').textContent = ''; showMsg('asMsg', 'A push is already running.', false); return; }
+                $('asRunInfo').textContent = 'pushed ' + d.devices + ' device(s), ' + d.errors + ' error(s).';
+                showMsg('asMsg', 'Push finished: ' + d.devices + ' device(s), ' + d.errors + ' error(s). See the table and the log below.', d.errors === 0);
+                return post('as_status', {}).then(function (s) { asApp.devices = s.devices || []; asRenderStatus(); });
+            }).catch(function (e) { $('asRunInfo').textContent = ''; showMsg('asMsg', 'Push failed: ' + e.message, false); });
+            setTimeout(asLoadLog, 1500);
+        }
+
+        function asLoadLog() {
+            post('get_log', { type: 'asset' }).then(function (data) {
+                if (data.error) { $('asLog').textContent = data.error; return; }
+                $('asLog').textContent = (data.lines && data.lines.length) ? localizeLog(data.lines).join(String.fromCharCode(10)) : (data.note || '(empty)');
+                $('asLogInfo').textContent = (data.note) ? data.note : ((data.lines ? data.lines.length : 0) + ' line(s) - status only, never a payload or a credential');
+            }).catch(function (e) { $('asLog').textContent = 'Failed to load the log: ' + e.message; });
+        }
+
+        function asTargetChange() { asShowTargetFields(); }
+        function asStatusRowClick(e) { var t = e.target; if (t && t.classList && t.classList.contains('asPushOne')) { asPush(t.getAttribute('data-id')); } }
+
+        $('asTargetType').addEventListener('change', asTargetChange);
+        $('asSaveBtn').addEventListener('click', asSave);
+        $('asTestBtn').addEventListener('click', asTest);
+        $('asPushAllBtn').addEventListener('click', function () {
+            if (!window.confirm('Push every device now? Their inventory leaves this server to the configured target.')) { return; }
+            asPush(null);
+        });
+        $('asRefreshLogBtn').addEventListener('click', asLoadLog);
+        $('asStatusBody').addEventListener('click', asStatusRowClick);
 
         // ---------- init ----------
 

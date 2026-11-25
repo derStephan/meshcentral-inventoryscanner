@@ -118,10 +118,24 @@ Please report security vulnerabilities by opening an issue.
   requests are never sent through the inventory channel.
 
 ### Data protection
-- **No inventory data leaves the server.** Outbound requests: `nvd.nist.gov` (feeds),
+- **By default no inventory data leaves the server.** Outbound requests: `nvd.nist.gov` (feeds),
   `raw.githubusercontent.com` (mapping table; configurable, https only) and `endoflife.date` (OS support dates,
   since 3.1.0; a fixed list of ~15 product names, configurable, https only). No NVD API and no CPE dictionary API is
   queried at runtime.
+- **The one deliberate exception (v5.0.0, issue #5): the optional asset-management connector.** It can push the
+  lists this plugin already aggregates (hardware, software, vulnerabilities) to an external REST system. It is
+  **disabled by default**, there is **no automatic push** unless an interval is set (also 0 by default), and it
+  only runs for full site admins who configure a target and switch it on - the panel states plainly that this is
+  the only place where data leaves the server, and every push asks for confirmation. Controls: the endpoint must
+  be **https** (rejected otherwise, also at request-build time); credentials are stored in
+  `scanner-settings.json` on this server, are **never returned to the browser in the clear** (masked, with an
+  explicit "clear" action) and are **never written to a log**; the log records only device, HTTP status and an
+  external id - **never a request/response body**. The push is entirely server-side from stored inventory: it
+  sends **no agent command**, so it cannot reach a device and does not touch the one-session-per-agent rule.
+  What is sent is the same data the admin could already export as CSV. Because the destination is
+  admin-configured, it inherits the same trust model as the other admin-configurable URLs (SSRF is bounded by
+  "a full site admin chose this https host"); the generic body template is JSON **data** only - placeholders are
+  substituted as values and the template is never evaluated as code.
 - Ratings, comments and mappings are stored locally under `<datapath>/nvd/` and
   `<datapath>/plugins/inventoryscanner/`; comments are stored raw and escaped on output.
 - **License keys (v4.8.0)** are treated as sensitive: collection is **opt-in (default off)**, runs **only on
