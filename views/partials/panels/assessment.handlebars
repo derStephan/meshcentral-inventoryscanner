@@ -1,15 +1,15 @@
         <div class="tab-content active" id="tab-assessment" data-main="vulns" data-sub="assessment">
             <div class="info">
-                Tick the <strong>locations</strong> to assess in the row below and press <em>Apply</em>. The table shows all findings of the
-                selected locations; a rating you save applies to <strong>every selected location</strong> in which the finding occurs
-                (no duplicate work per location). Ratings are stored per location and a non-empty comment is required for a rating.
-                <strong>False positives</strong> are excluded from the vulnerability counts and need no comment.
+                Tick the locations to assess in the row above the table - the selection is remembered per browser.
+                A rating you save applies to <strong>every selected location</strong> in which the finding occurs and
+                needs a comment; a <strong>false positive</strong> needs no comment, is excluded from all counts and
+                can be undone. The table sorts by <strong>effective severity</strong>, so your own ratings decide the
+                order (inside one severity the higher CVSS comes first).
                 <br><br>
-                Opening this page (and <em>Apply</em>) reads the <strong>stored</strong> result - no device is
-                touched, so it is instant. <strong>Scan &amp; Review</strong> is the only thing that queries the devices; while it runs
-                the server stays usable (other tabs and the rest of MeshCentral keep answering), and a second panel that presses the
-                button joins the running scan instead of starting another one. Automatic scans keep updating the stored result on their
-                own schedule (Settings tab).
+                Opening this page and <em>Apply</em> read the <strong>stored</strong> result - instant, no device is
+                touched. <em>Scan &amp; Review</em> is the only button that queries the devices; while it runs the
+                server stays usable and a second panel joins the running pass. Scheduled scans keep the stored result
+                fresh on their own.
             </div>
 
             <div class="locbar" id="locationPanel">

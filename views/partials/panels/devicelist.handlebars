@@ -12,47 +12,15 @@
                 restart is only reported.
             </div>
             <div class="info">
-                <strong>force OS updates</strong> runs on every non-excluded Windows and Linux device: on Windows, the built-in
-                Windows Update agent searches, downloads and installs all pending updates (feature upgrades excluded). On Linux,
-                the distribution's package manager runs (<code>apt-get update &amp;&amp; apt-get upgrade</code>, <code>dnf upgrade</code>,
-                <code>yum update</code>, <code>zypper update</code>, <code>pacman -Syu</code> or <code>apk upgrade</code>). A distribution
-                repository that is broken only warns - the device is not reported as failed unless no repository could be refreshed at all.<br>
-                <strong>OS Upgrade</strong> only targets devices whose OS release is <em>provably not current</em> (the current release
-                according to the endoflife.date data is shown in the line above the buttons). There is no built-in fallback version: without
-                fresh data (at most 30 days old) the release state is shown as <em>unknown</em> with the reason, and such devices are
-                not upgraded. An outdated release is <strong>Upgrade urgent</strong> when its own support has ended or ends within the
-                configured window (Settings), otherwise <strong>Upgrade available</strong>; without a known support end it is never called
-                urgent. <em>force OS Upgrade (urgent)</em> covers only the urgent devices, <em>force OS Upgrade (all)</em> every outdated
-                device. On Windows 10/11, Windows Update is pointed at the current release with the documented TargetReleaseVersion policy
-                and installs it; the previous policy is restored afterwards. On Ubuntu, <code>apt-get dist-upgrade</code> runs, followed by
-                <code>do-release-upgrade</code>, which moves one release per run. Other distributions and Windows Server are shown but never
-                upgraded automatically.<br>
-                <strong>Reboot policy:</strong> these OS runs never reboot the device themselves - if the updates
-                need a reboot, that is reported per device and Windows performs it at its own
-                automatic-restart deadline / outside the active hours, or you reboot it yourself.<br>
-                <strong>Windows Update troubleshooter (per Windows device):</strong> <em>Diagnose</em> reads the WU
-                services, whether a reboot is pending (and when Windows will restart automatically), the download
-                cache size and the last <code>WindowsUpdateClient</code> errors - it changes nothing.
-                <em>Troubleshoot</em> applies the repairs the built-in troubleshooter would: it restarts
-                BITS/wuauserv/appidsvc/cryptsvc/msiserver, resets <code>SoftwareDistribution\Download</code> and
-                <code>catroot2</code> and re-asserts the Automatic start types. It does not reboot - any pending
-                reboot is reported with when it will happen. The winget exclusion list applies here too, and an OS
-                batch never runs at the same time as a winget batch or a troubleshooter run on that device.<br>
-                <strong>Reboot / Notify user (per Windows or Linux device):</strong> <em>Notify user</em>
-                shows a message to the logged-on user (Windows <code>msg</code>, Linux <code>wall</code>) without
-                rebooting. <em>Reboot</em> restarts the device on purpose after a short grace, sending that same
-                message through the OS shutdown banner - this and the PC Reset page are the ONLY two places this
-                plugin ever restarts a machine, and both are explicit, per-device and need the device name typed
-                (never automatic, never a batch, never scheduled). Use it to reboot before or after an upgrade.<br>
-                <strong>Software updates (per Windows device):</strong> <em>Dry run</em> lists what winget would
-                update without touching the machine; <em>Update</em> installs the pending packages one at a time,
-                silently, and never reboots. <em>Exclude</em> keeps the device out of every automatic batch and out
-                of "Run now"/"Dry run all" - a run you start for that one device still works on purpose. After any
-                run, <em>Details</em> lists every package of that run with its outcome; a failed package shows the
-                exit code (decimal and hex) and winget's own message.<br>
-                <strong>License collection (per Windows device):</strong> <em>Collect licenses</em> reads the keys
-                named by your rules - read-only, no reboot - and stores them on this server only. The values are
-                never displayed; the row shows how many were found, and the software CSV export contains them.
+                One row per device, built from the data already stored on this server - opening this page sends no
+                command to any device. Hover any button and its explanation appears in the box at the lower right.
+                <br><br>
+                <strong>Reboot</strong> and a <strong>reset</strong> are the only actions that restart a machine: never
+                batched, never automatic, always per device and with the device name typed to confirm. Everything else
+                here (software updates, OS updates, upgrades, Windows Update repair, license collection) never reboots -
+                a needed restart is only reported. The fleet OS buttons, the upgrade reference and the OS update log are
+                at the bottom of this page; <em>Details</em> opens everything stored about one device on demand and is
+                kept in memory while the page is open (the button inside refreshes it).
             </div>
             <div class="controls">
                 <button id="dlRefreshBtn" class="small" data-help="dl.refresh">Refresh</button>

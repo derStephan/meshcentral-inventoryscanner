@@ -8,7 +8,7 @@
         // wg_save_config path reads the whole form from the Updates-tab DOM and would have wiped the updater
         // settings when called from here before that tab was ever opened.
 
-        var dlApp = { devices: [], byId: {}, sortKey: 'device', sortDir: 1, filter: '', open: {} };
+        var dlApp = { devices: [], byId: {}, sortKey: 'device', sortDir: 1, filter: '', open: {}, details: {} };
         var dlPollTimer = null;
 
         function dlSevBadge(n, sev) {
@@ -170,23 +170,23 @@
                     + '<td>' + (d.online ? 'yes' : '<span style="color:#a33">offline</span>') + '</td>'
                     + '<td style="font-size:11px">' + esc(d.os || '') + '<div class="hint">' + pf + '</div></td>'
                     + '<td style="font-size:11px">' + apps
-                    + (win ? '<div style="margin-top:4px;white-space:nowrap"><button class="small" data-dlact="wgdry" data-id="' + esc(d.id) + '" ' + dis + 'data-help="wg.dry">Dry run</button> '
-                        + '<button class="small green" data-dlact="wgrun" data-id="' + esc(d.id) + '" ' + dis + 'data-help="wg.run1">Update</button> '
-                        + '<button class="small' + (d.excluded ? '' : ' red') + '" data-dlact="' + (d.excluded ? 'wgincl' : 'wgexcl') + '" data-id="' + esc(d.id) + '" data-help="' + (d.excluded ? 'wg.incl' : 'wg.excl') + '">' + (d.excluded ? 'Include' : 'Exclude') + '</button></div>' : '')
+                    + (win ? '<div class="cellacts" style="margin-top:4px"><button class="rowbtn" data-dlact="wgdry" data-id="' + esc(d.id) + '" ' + dis + 'data-help="wg.dry">Dry run</button>'
+                        + '<button class="rowbtn act" data-dlact="wgrun" data-id="' + esc(d.id) + '" ' + dis + 'data-help="wg.run1">Update</button>'
+                        + '<button class="rowbtn" data-dlact="' + (d.excluded ? 'wgincl' : 'wgexcl') + '" data-id="' + esc(d.id) + '" data-help="' + (d.excluded ? 'wg.incl' : 'wg.excl') + '">' + (d.excluded ? 'Include' : 'Exclude') + '</button></div>' : '')
                     + '</td>'
                     + '<td style="font-size:11px">' + oss
-                    + '<div style="margin-top:4px;white-space:nowrap"><button class="small green" data-dlact="osupd" data-id="' + esc(d.id) + '" ' + dis + 'data-help="os.devupd">OS updates</button>'
-                    + (d.upgradable ? ' <button class="small purple" data-dlact="osupg" data-id="' + esc(d.id) + '" ' + dis + 'data-help="os.devupg">OS Upgrade</button>' : '')
+                    + '<div class="cellacts" style="margin-top:4px"><button class="rowbtn act" data-dlact="osupd" data-id="' + esc(d.id) + '" ' + dis + 'data-help="os.devupd">OS updates</button>'
+                    + (d.upgradable ? '<button class="rowbtn act" data-dlact="osupg" data-id="' + esc(d.id) + '" ' + dis + 'data-help="os.devupg">OS Upgrade</button>' : '')
                     + '</div></td>'
-                    + '<td style="font-size:11px;white-space:nowrap">'
-                    + (win ? '<button class="small" data-dlact="wudiag" data-id="' + esc(d.id) + '" ' + dis + 'data-help="os.wud">Diagnose</button> '
-                        + '<button class="small red" data-dlact="wurepair" data-id="' + esc(d.id) + '" ' + dis + 'data-help="os.wur">Troubleshoot</button><br>' : '')
-                    + ((win || lin) ? '<button class="small" data-dlact="rbnotify" data-id="' + esc(d.id) + '" ' + dis + 'data-help="os.rbn">Notify user</button> '
-                        + '<button class="small red" data-dlact="rbreboot" data-id="' + esc(d.id) + '" ' + dis + 'data-help="os.rbr">Reboot</button>' : '<span style="color:#888">n/a</span>')
-                    + '</td>'
+                    + '<td style="font-size:11px"><div class="cellacts">'
+                    + (win ? '<button class="rowbtn" data-dlact="wudiag" data-id="' + esc(d.id) + '" ' + dis + 'data-help="os.wud">Diagnose</button>'
+                        + '<button class="rowbtn act" data-dlact="wurepair" data-id="' + esc(d.id) + '" ' + dis + 'data-help="os.wur">Troubleshoot</button>' : '')
+                    + ((win || lin) ? '<button class="rowbtn" data-dlact="rbnotify" data-id="' + esc(d.id) + '" ' + dis + 'data-help="os.rbn">Notify user</button>'
+                        + '<button class="rowbtn warn" data-dlact="rbreboot" data-id="' + esc(d.id) + '" ' + dis + 'data-help="os.rbr">Reboot</button>' : '<span style="color:#888">n/a</span>')
+                    + '</div></td>'
                     + '<td>' + dlSevBadge(d.cve || 0, d.cveSev) + '</td>'
                     + '<td>' + (d.license == null ? '<span style="color:#888">-</span>' : (d.license + ' found')) + '</td>'
-                    + '<td><button class="small" data-dlact="details" data-id="' + esc(d.id) + '" data-help="dl.details">' + (dlApp.open[d.id] ? 'Hide' : 'Details') + '</button></td>'
+                    + '<td><button class="rowbtn" data-dlact="details" data-id="' + esc(d.id) + '" data-help="dl.details">' + (dlApp.open[d.id] ? 'Hide' : 'Details') + '</button></td>'
                     + '</tr>';
                 html += '<tr class="dldetail" style="display:' + (dlApp.open[d.id] ? 'table-row' : 'none') + '"><td colspan="11" style="background:#f6f8fb" id="dld-' + esc(d.id.replace(/[^A-Za-z0-9]/g, '')) + '"><span class="hint">Loading...</span></td></tr>';
             }
@@ -199,24 +199,36 @@
                 heads[h].classList.remove('sorted-asc', 'sorted-desc');
                 if (k === dlApp.sortKey) { heads[h].classList.add(dlApp.sortDir === 1 ? 'sorted-asc' : 'sorted-desc'); }
             }
-            // re-open the details that were open before the re-render
-            for (var id in dlApp.open) { if (dlApp.open[id] && dlApp.byId[id]) { dlLoadDetails(id); } }
+            // re-open the details that were open before the re-render - from the CACHE, not from the server.
+            // (Before v5.4.1 every re-render refetched them, so a polling refresh looked like a stuck loop.)
+            for (var id in dlApp.open) {
+                if (!dlApp.open[id] || !dlApp.byId[id]) { continue; }
+                var cell0 = document.getElementById('dld-' + id.replace(/[^A-Za-z0-9]/g, ''));
+                if (!cell0) { continue; }
+                if (dlApp.details[id]) { cell0.innerHTML = dlApp.details[id]; }
+                else { dlLoadDetails(id, false); }
+            }
         }
 
-        /** @brief Fetch and render everything stored about one device (on demand, never on load). */
-        function dlLoadDetails(id) {
+        /** @brief Fetch (or reuse the cached) detail block of one device. force=true re-reads the server. */
+        function dlLoadDetails(id, force) {
             var cell = document.getElementById('dld-' + id.replace(/[^A-Za-z0-9]/g, ''));
             if (!cell) { return; }
+            if (!force && dlApp.details[id]) { cell.innerHTML = dlApp.details[id]; return; }
             cell.innerHTML = '<span class="hint">Loading the details of this device...</span>';
             post('dev_details', { nodeId: id }).then(function (d) {
                 if (d.error) { cell.innerHTML = '<span style="color:#a33">' + esc(d.error) + '</span>'; return; }
-                cell.innerHTML = dlDetailsHtml(d);
+                var html = dlDetailsHtml(d);
+                dlApp.details[id] = html;   // kept for the lifetime of the open page - details are stored data
+                if (dlApp.open[id]) { cell.innerHTML = html; }
             }).catch(function (e) { cell.innerHTML = '<span style="color:#a33">' + esc(e.message) + '</span>'; });
         }
 
         function dlDetailsHtml(d) {
             var h = '';
             var sec = function (title, body) { return '<div style="margin:6px 0"><b style="color:#0b3d6b">' + title + '</b>' + body + '</div>'; };
+            h += '<div style="margin:0 0 6px 0"><button class="rowbtn" data-dlact="dlrefresh" data-id="' + esc(d.device.id) + '" data-help="dl.refreshdet">Refresh details</button> '
+                + '<span class="hint">read from what the server has stored - refreshed only by this button</span></div>';
             var hw = d.hardware || {};
             h += sec('Hardware', '<div class="hint">' + esc(hw.manufacturer || '') + ' ' + esc(hw.model || '')
                 + (hw.serial ? ' · serial ' + esc(hw.serial) : '') + (hw.cpu ? ' · ' + esc(hw.cpu) : '')
@@ -359,6 +371,7 @@
             else if (act === 'rbnotify') { rbNotify(id); dlPollIfBusy(); }
             else if (act === 'rbreboot') { rbRestart(id); dlPollIfBusy(); }
             else if (act === 'liccollect') { licCollectOne(id); }
+            else if (act === 'dlrefresh') { dlLoadDetails(id, true); }
             else if (act === 'details') {
                 dlApp.open[id] = !dlApp.open[id];
                 var row = b.parentNode && b.parentNode.parentNode;

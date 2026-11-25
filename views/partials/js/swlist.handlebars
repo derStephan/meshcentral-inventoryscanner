@@ -6,7 +6,7 @@
         // changes only the ignore list server-side - the old wg_save_config path reads the whole Updates-tab form
         // from the DOM and would have wiped the updater settings when called from here.
 
-        var swfApp = { software: [], wgMap: {}, devices: 0, open: {} };
+        var swfApp = { software: [], wgMap: {}, devices: 0, open: {}, details: {} };
 
         function loadSwFleet() {
             var ri = $('swfRunInfo'); if (ri) { ri.textContent = 'building the fleet index...'; }
@@ -56,43 +56,56 @@
                     + '<td>' + vuln + '</td>'
                     + '<td style="font-size:11px;white-space:nowrap">' + run + '</td>'
                     + '<td>' + lic + '</td>'
-                    + '<td style="white-space:nowrap">'
-                    + '<button class="small" data-swfact="ignore" data-pkg="' + esc(pkgId) + '" data-name="' + esc(s.name) + '" ' + (noId ? 'disabled ' : '') + 'data-help="swf.ignore"' + why + '>Ignore</button> '
-                    + '<button class="small green" data-swfact="update" data-pkg="' + esc(pkgId) + '" data-name="' + esc(s.name) + '" ' + (noId ? 'disabled ' : '') + 'data-help="swf.update"' + why + '>Update everywhere</button> '
-                    + '<button class="small red" data-swfact="uninstall" data-pkg="' + esc(pkgId) + '" data-name="' + esc(s.name) + '" ' + (noId ? 'disabled ' : '') + 'data-help="swf.uninstall"' + why + '>Uninstall</button> '
-                    + '<button class="small" data-swfact="details" data-name="' + esc(s.name) + '" data-pkg="' + esc(pkgId) + '" data-help="swf.details">' + (swfApp.open[low] ? 'Hide' : 'Details') + '</button>'
-                    + '</td>'
+                    + '<td><div class="cellacts">'
+                    + '<button class="rowbtn" data-swfact="ignore" data-pkg="' + esc(pkgId) + '" data-name="' + esc(s.name) + '" ' + (noId ? 'disabled ' : '') + 'data-help="swf.ignore"' + why + '>Ignore</button>'
+                    + '<button class="rowbtn act" data-swfact="update" data-pkg="' + esc(pkgId) + '" data-name="' + esc(s.name) + '" ' + (noId ? 'disabled ' : '') + 'data-help="swf.update"' + why + '>Update everywhere</button>'
+                    + '<button class="rowbtn warn" data-swfact="uninstall" data-pkg="' + esc(pkgId) + '" data-name="' + esc(s.name) + '" ' + (noId ? 'disabled ' : '') + 'data-help="swf.uninstall"' + why + '>Uninstall</button>'
+                    + '<button class="rowbtn" data-swfact="details" data-name="' + esc(s.name) + '" data-pkg="' + esc(pkgId) + '" data-help="swf.details">' + (swfApp.open[low] ? 'Hide' : 'Details') + '</button>'
+                    + '</div></td>'
                     + '</tr>';
                 html += '<tr class="swfdetail" style="display:' + (swfApp.open[low] ? 'table-row' : 'none') + '"><td colspan="9" style="background:#f6f8fb" id="swfd-' + i + '"><span class="hint">Loading...</span></td></tr>';
             }
             if (html === '') { html = '<tr><td colspan="9" style="color:#888">No installed software collected yet (run an inventory collection first).</td></tr>'; }
             $('swfBody').innerHTML = html;
             var ri = $('swfRunInfo'); if (ri) { ri.textContent = swfApp.software.length + ' distinct program(s) across ' + swfApp.devices + ' device(s).'; }
-            // re-open the details that were open before the re-render
+            // re-open the details that were open before the re-render - from the CACHE, not from the server
+            // (before v5.4.1 every re-render refetched them, which looked like a stuck request loop)
             for (var k in swfApp.open) {
                 if (!swfApp.open[k]) { continue; }
                 for (var j = 0; j < swfApp.software.length; j++) {
-                    if (String(swfApp.software[j].name).toLowerCase() === k) { swfLoadDetails(swfApp.software[j].name, (swfApp.wgMap[k] || {}).id || '', j); break; }
+                    if (String(swfApp.software[j].name).toLowerCase() !== k) { continue; }
+                    var cell0 = document.getElementById('swfd-' + j);
+                    if (cell0) {
+                        if (swfApp.details[k]) { cell0.innerHTML = swfApp.details[k]; }
+                        else { swfLoadDetails(swfApp.software[j].name, (swfApp.wgMap[k] || {}).id || '', j, false); }
+                    }
+                    break;
                 }
             }
         }
 
-        /** @brief Everything stored about one program, fetched on demand (never on load). */
-        function swfLoadDetails(name, pkgId, rowIndex) {
+        /** @brief Everything stored about one program, fetched on demand (never on load), then cached. */
+        function swfLoadDetails(name, pkgId, rowIndex, force) {
+            var low = String(name).toLowerCase();
             var cell = document.getElementById('swfd-' + rowIndex);
             if (!cell) { return; }
+            if (!force && swfApp.details[low]) { cell.innerHTML = swfApp.details[low]; return; }
             cell.innerHTML = '<span class="hint">Loading the details of this program...</span>';
             var body = { name: name };
             if (pkgId) { body.pkgId = pkgId; }
             post('sw_details', body).then(function (d) {
                 if (d.error) { cell.innerHTML = '<span style="color:#a33">' + esc(d.error) + '</span>'; return; }
-                cell.innerHTML = swfDetailsHtml(d);
+                var html = swfDetailsHtml(d, name, pkgId);
+                swfApp.details[low] = html;   // kept for the lifetime of the open page
+                if (swfApp.open[low]) { cell.innerHTML = html; }
             }).catch(function (e) { cell.innerHTML = '<span style="color:#a33">' + esc(e.message) + '</span>'; });
         }
 
-        function swfDetailsHtml(d) {
+        function swfDetailsHtml(d, name, pkgId) {
             var h = '';
             var sec = function (title, body) { return '<div style="margin:6px 0"><b style="color:#0b3d6b">' + title + '</b>' + body + '</div>'; };
+            h += '<div style="margin:0 0 6px 0"><button class="rowbtn" data-swfact="swfrefresh" data-name="' + esc(name || d.name || '') + '" data-pkg="' + esc(pkgId || '') + '" data-help="swf.refreshdet">Refresh details</button> '
+                + '<span class="hint">read from what the server has stored - refreshed only by this button</span></div>';
             var vs = d.versions || [];
             h += sec('Versions (' + vs.length + ')', vs.length === 0 ? '<div class="hint">no version reported</div>'
                 : '<div class="hint">' + vs.map(function (v) { return esc(v.version) + ' on ' + v.count + ' device(s)'; }).join(' · ') + '</div>');
@@ -192,7 +205,13 @@
                 if (swfApp.open[low] && detail) {
                     var holder = detail.querySelector ? detail.querySelector('[id^="swfd-"]') : null;
                     var idx = holder ? parseInt(String(holder.id).replace('swfd-', ''), 10) : NaN;
-                    swfLoadDetails(name, pkg, isNaN(idx) ? -1 : idx);
+                    swfLoadDetails(name, pkg, isNaN(idx) ? -1 : idx, false);
                 }
+            }
+            else if (act === 'swfrefresh') {
+                var c = b;
+                while (c && !(c.id && String(c.id).indexOf('swfd-') === 0)) { c = c.parentNode; }
+                var i2 = c ? parseInt(String(c.id).replace('swfd-', ''), 10) : NaN;
+                if (!isNaN(i2)) { swfLoadDetails(name, pkg, i2, true); }
             }
         });

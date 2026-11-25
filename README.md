@@ -88,7 +88,9 @@ button above the device list.
 
 There are five sections, each with its own sub-pages. **The address bar shows which page you are on** (`#devices/devicelist`
 and so on), so you can copy a link to a view and paste it later - and the browser's back button walks back through
-the pages you visited. Hovering any button shows what it does in a box at the lower right corner.
+the pages you visited. Hovering any button - including the navigation itself - shows what it does in a box at the
+lower right corner. Documents (the two printable reports, the three CSV files) open **directly from the navigation**
+in a new tab, with one click.
 
 ### Devices
 
@@ -99,7 +101,8 @@ name/group/OS, and tick several devices to run one operation on all of them.
 Per device you can: run a **dry run** or the real **software update**, **exclude**/**include** it from the automatic
 batches, run **OS updates** or an **OS upgrade**, **diagnose** or **repair** Windows Update, send a **message to the
 user**, and **reboot** it. **Details** opens everything stored about that machine on demand - hardware, installed
-programs, its findings, the last run of every engine and the license state.
+programs, its findings, the last run of every engine and the license state. Details are fetched once and kept
+while the page is open (sorting, filtering and status updates do not re-fetch them); a button inside refreshes.
 
 Fleet-wide buttons (*force OS updates*, *force OS Upgrade (urgent/all)*) act on every non-excluded device, and the
 OS update log is at the bottom of the page.

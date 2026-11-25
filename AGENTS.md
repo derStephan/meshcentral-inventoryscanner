@@ -499,6 +499,10 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
    table, the NVD update + download log and the license-key config that used to live at the bottom of this tab
    are now sub-panels under Vulnerabilities and Software; they are the SAME fields (ids unchanged), and this
    tab's Save still writes them (the relocated panels reuse one shared `doSaveSettings` path).
+   The group table's **Source column is never blank** (v5.4.1): `set here` / `from config.json` when a per-group
+   notify threshold override exists, otherwise the pale `global threshold` - an empty cell was reported as
+   confusing. The panel explains in one hint block what the per-group threshold does (it overrides the global
+   severity floor for notifications from that group only).
 
 - Navigation is TWO LAYERS with DEEP LINKS (v4.9.0, reworked by issue #9 in v5.4.0): FIVE main sections in the top
   bar (Devices | Software | Vulnerabilities | Exports | Settings) and a second row of sub-tabs that changes with the
@@ -507,14 +511,20 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   `#<main>/<sub>`: the anchors hold the real hash and are NOT prevented, so the `hashchange` event is the single
   driver (`applyHash`) - a copied link restores the view and the browser back button walks through the visited
   views. An unknown or missing hash lands on `vulns/assessment` (the default since v4.9.0).
-    Devices -> Device list (`loadDeviceList`), PC reset (`loadDrStatus`), Device report (link);
+    Devices -> Device list (`loadDeviceList`), PC reset (`loadDrStatus`), Device report (ONE-CLICK link);
     Software -> Software list (`loadSwFleet`), Software updates (`loadWgTab`, the winget CONFIGURATION),
       Deployment (`loadSwTab`), License keys (`loadLicenseSection`, configuration + rules);
     Vulnerabilities -> Assessment (the findings table + the inline location row, the default landing),
-      Vulnerability report (link), CPE table (`loadCpeTable`), NVD database (`loadNvdLog`);
-    Exports -> CSV exports (choose hardware / software / vulnerabilities for all devices);
+      Vulnerability report (ONE-CLICK link), CPE table (`loadCpeTable`), NVD database (`loadNvdLog`);
+    Exports -> NO panel at all (v5.4.1): the section is the row of the three bookmarkable CSV links;
     Settings -> General (scan/collection/lifecycle/notify options + device groups), Asset management
       (the optional external connector: target, credentials, mapping, test/push, last push per device, log).
+  Entries that are really a DOCUMENT (the two printable reports, the three CSV files) are external links in the
+  sub-nav row (one click, new tab, `class="subtab ext"` with a corner marker) instead of panels that only held a
+  link button - the second click was pure friction, and their explanation moved into the hover help of the nav
+  button (`nav.devreport`, `nav.vulnreport`, `nav.exphw/expsw/expvulns`). A link-only main section is resolved by
+  `selectLinksMain(main)`, which paints the link row and KEEPS the active panel; the hash for it is `#exports`.
+  Hover help (v5.4.1) is on the nav buttons as well, not only on action buttons.
   The issue-#9 rework removed the per-device/per-package TABLES that duplicated the unified views: the winget
   device table and the "Packages across all devices" table are gone (their content lives in the Device list and the
   Software list), the whole `OS updates & reboot` register is gone (its per-device actions, its fleet buttons, its
@@ -538,6 +548,21 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
 - **Hover help (issue #9):** every action button carries `data-help="<key>"`; one delegated `mouseover` listener
   (`bindHelpBox`) shows `HELP[key]` in the fixed box at the lower right (`#helpBox`). The texts are the per-action
   breakdown of the info boxes, so the explanation is where the hand is. A new action button must add its key.
+- **No double documentation (v5.4.1):** an info box at the top of a panel carries only what NO button hover can
+  say (what the page is for, safety disclosures, cross-references); everything a specific button does lives in
+  `HELP` only. When a control moves or is removed, its prose moves with it into the hover help - the inventory
+  fixture makes the moved text visible in review.
+- **On-demand details are cached (v5.4.1):** `dev_details` / `sw_details` answers are stored in
+  `dlApp.details[id]` / `swfApp.details[name]` for the lifetime of the open page. Re-renders (sorting, filtering,
+  the status poll) inject the cache and do NOT refetch; only the *Refresh details* button inside the block
+  re-reads the server (`dlLoadDetails(id, true)` / `swfLoadDetails(..., true)`). Without that cache every poll
+  looked like a stuck request loop (reported by the user).
+- **One calm button language in table rows (v5.4.1):** `button.rowbtn` (neutral grey-blue, same box height as
+  `button.small`) for looking/configuring, `rowbtn act` (the single accent blue) for buttons that START something
+  on a device, `rowbtn warn` (white with red outline) only for the reboot path; disabled states stay pale grey.
+  Row action cells wrap in `<div class="cellacts">` (flex-wrap, max-width) instead of `white-space:nowrap` - a
+  nowrap action column forced horizontal table scrolling (reported by the user). Fleet/toolbar buttons outside
+  rows keep the classic green/red/purple semantics.
 
 - Deploy tab (v4.0.0): library table + `<input type=file>` upload (FileReader chunks â†’ `sw_upload`, sequential
   POSTs with resume-on-gap, progress text), source switch plugin-library â‡„ MeshCentral Server Files (two selects,
@@ -1739,7 +1764,7 @@ issue #9, which restructures the navigation and would otherwise mean editing one
   not ready, restored ready - the "missing" case is what caught the disk-walk flaw), test-views 40 PASS
   (+6: partials registered, the probe resolves, and the four inventory guards). No route, handler, engine,
   data shape or agent script changed. Version 5.2.0 -> 5.3.0.
-v5.4.0 (this release): issue #9 - the UI rework on the modular base.
+v5.4.0: issue #9 - the UI rework on the modular base.
 - **Deep links:** the URL hash carries `#<main>/<sub>`; the nav anchors hold the real hash and are not prevented, so
   `hashchange` (`applyHash`) is the single driver. Copying the address of any view and pasting it restores that view,
   and the browser back button walks through the visited views. An unknown/missing hash lands on `vulns/assessment`.
@@ -1803,3 +1828,32 @@ v5.4.0 (this release): issue #9 - the UI rework on the modular base.
   severity-default sort and its tiebreaker, the inline location row, the help box and registry, and the Exports
   selector. The inventory fixture was regenerated in the same commit (206 ids, 65 help texts, 6 links, 14 panels) -
   the diff shows exactly which controls were removed on purpose. Version 5.3.0 -> 5.4.0.
+v5.4.1 (this release): UI polish round on the #9 rework - seven reported defects, no server logic touched.
+- **Double documentation removed:** the per-action explanations sat both in the info box at the top of a panel AND
+  in the hover help, wasting space. Info boxes now carry only what no button hover can say (page purpose, safety
+  disclosures, cross-references); everything button-specific lives in `HELP` alone. The reference semantics that
+  left the device-list info box (OS upgrade targeting rules, unknown-state behaviour, apt repository warnings,
+  per-package outcome columns) were absorbed into the hover texts of exactly those buttons/columns.
+- **Documents are one click now:** Device report, Vulnerability report and the three CSV downloads were panels
+  that held nothing but a link button (two clicks). They are external links in the sub-nav row
+  (`class="subtab ext"`, new tab), explained by the hover help of the nav button; the Exports main section has NO
+  panel at all (`selectLinksMain` paints its link row and keeps the active panel, hash `#exports`).
+- **Calm row buttons:** one language in table rows - `rowbtn` (neutral, same box height as `button.small`),
+  `rowbtn act` (the single accent blue for actions that start something on a device), `rowbtn warn` (red outline
+  only for the reboot path), pale grey when disabled. The previous green/red/purple/grey mix per cell was
+  reported as restless and hard to tell apart.
+- **No horizontal scroll in the software list:** the action cell wrapped its four buttons in nowrap, forcing
+  sideways scrolling; actions now wrap inside `.cellacts` (flex-wrap, max-width) in both unified tables.
+- **The details request loop is gone:** every re-render (sorting, filtering, the 10 s status poll) refetched the
+  open `dev_details`/`sw_details` blocks, which looked like a stuck loop. Answers are now cached per device /
+  program for the lifetime of the open page; re-renders inject the cache, and a *Refresh details* button inside
+  the block is the only way to re-read the server.
+- **Settings group table:** the per-group notify threshold is explained in a hint block (it overrides the global
+  severity floor for notifications from that group only), and the Source column is never blank any more -
+  `set here` / `from config.json` / pale `global threshold` when no per-group override exists (the empty cell was
+  the reported confusion).
+- Tests: +4 render assertions in test-views (55 PASS) pinning the one-click document links + their hover help, the
+  details cache, the rowbtn/.cellacts styling and the group-table explanation; the inventory fixture was
+  regenerated in the same commit (201 ids, 63 help texts, 5 links, 11 panels - the removed link panels and the
+  export chooser are the visible diff). test-plugin unchanged (679 PASS + 3 SKIP / 99 steps): no route, handler,
+  engine or data shape moved. Version 5.4.0 -> 5.4.1.

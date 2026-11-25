@@ -79,6 +79,15 @@
             <h3>Device groups</h3>
             <div class="hint" style="margin-bottom:6px;">"Scan" unchecked for <b>all</b> groups = scan <b>all</b> groups (an empty selection means all).
                 A per-group threshold overrides the global one for notifications from that group.</div>
+            <div class="hint" style="margin-bottom:10px;"><b>What the notify threshold does:</b> after every scan the
+                plugin notifies all site admins about the findings of that run. <em>Global notify threshold</em> (above)
+                is the severity floor for all groups - e.g. HIGH means "report findings of severity HIGH and worse".
+                The per-group selection in this table <b>overrides that floor for one group only</b>: a group with a
+                lot of noise can be set to CRITICAL so it only shouts for the worst findings, while a sensitive group
+                can be set to LOW or UNKNOWN so everything is reported. "Global default" means the group follows the
+                global floor. The <b>Source</b> column says where the value in the select comes from: <em>set here</em>
+                (saved in this plugin's settings), <em>from config.json</em> (the server file) or
+                <em>global threshold</em> (no per-group value - the global floor applies).</div>
             <div class="table-container">
                 <table>
                     <thead><tr><th>Group</th><th>Scan</th><th>Notify threshold</th><th>Source</th></tr></thead>

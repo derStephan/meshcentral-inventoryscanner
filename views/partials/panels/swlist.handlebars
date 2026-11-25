@@ -1,22 +1,14 @@
         <div class="tab-content" id="tab-swlist" data-main="software" data-sub="softwarelist">
             <div class="info">
-                Every distinct installed program across all devices, with how many devices carry it, which
-                findings matched it, whether a license was collected and what the last winget run reported for
-                it. The list is built from the inventory already stored on this server - opening it contacts no
-                device.
+                Every distinct installed program across all devices, with how many carry it, which versions, which
+                findings matched it, whether a license was collected and what the last winget run reported. Built from
+                the inventory already stored on this server - opening it contacts no device. Hover any button and its
+                explanation appears at the lower right; <em>Details</em> opens everything stored about one program on
+                demand and is kept in memory while the page is open.
                 <br><br>
-                The three package actions need a <strong>winget package id</strong>, because winget works by id and
-                not by display name. Rows without one show the buttons disabled: the program is installed (the
-                inventory proves it) but winget does not manage it, so it can neither be updated nor uninstalled
-                this way. <em>Ignore</em> puts the id on the ignore list, so no automatic or batch run upgrades it
-                any more. <em>Update everywhere</em> queues exactly this one package on every non-excluded Windows
-                device. <em>Uninstall everywhere</em> REMOVES it from every device that has it - devices without it
-                report "not installed" rather than a failure - and asks for confirmation; it never runs as a dry run.
-                In the "Last winget run" column, <em>ready</em> counts the devices where an update was available,
-                <em>ok</em> where it was installed, <em>failed</em> where the install failed (the Details view shows
-                the exit code in decimal and hex plus winget's own message) and <em>skipped</em> counts ignored,
-                version-less and not-installed entries. Those numbers come from the stored last runs, so start a
-                <em>Dry run all devices</em> under Software &gt; Software updates to populate them.
+                <em>Ignore</em>, <em>Update everywhere</em> and <em>Uninstall everywhere</em> need a winget package id,
+                because winget manages ids and not display names - rows without one show those buttons disabled.
+                Uninstall removes the program from devices and always asks for confirmation first.
             </div>
             <div class="controls">
                 <input type="text" id="swfFilter" class="filter-input" placeholder="Filter by software or publisher..." style="min-width:260px;">
@@ -33,7 +25,7 @@
                         <th style="cursor:default;width:150px;">Publisher</th>
                         <th style="width:58px;cursor:default">Devices</th>
                         <th style="width:110px;cursor:default">Findings</th>
-                        <th style="width:170px;cursor:default">Last winget run</th>
+                        <th style="width:170px;" data-help="swf.runcol">Last winget run</th>
                         <th style="width:60px;cursor:default">License</th>
                         <th style="width:290px;" class="nosort">Actions</th>
                     </tr></thead>

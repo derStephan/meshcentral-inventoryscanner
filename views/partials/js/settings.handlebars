@@ -75,7 +75,13 @@
                         var sel = trs[j].querySelector('.set-grp-thresh');
                         var srcCell = trs[j].querySelector('.grp-src');
                         if (sel && s.notify && s.notify[mid]) { sel.value = s.notify[mid]; }
-                        if (srcCell) { srcCell.textContent = (perGroup[mid] === 'file') ? 'set here' : ((perGroup[mid] === 'config.json') ? 'from config.json' : ''); }
+                        // the source column is never empty: an absent per-group value means the group follows
+                        // the global threshold (that was the confusing blank column before v5.4.1)
+                        if (srcCell) {
+                            if (perGroup[mid] === 'file') { srcCell.textContent = 'set here'; }
+                            else if (perGroup[mid] === 'config.json') { srcCell.textContent = 'from config.json'; }
+                            else { srcCell.innerHTML = '<span style="color:#8a949e">global threshold</span>'; }
+                        }
                     }
                 });
             }).catch(function (e) { showMsg('settingsMsg', 'Failed to load settings: ' + e.message, false); });

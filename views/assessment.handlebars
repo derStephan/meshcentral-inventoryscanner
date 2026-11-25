@@ -66,6 +66,22 @@
         .subnav a.subtab.active { background: #2f6fa8; color: #fff; }
         .tab-content { display: none; }
         .tab-content.active { display: block; }
+        /* v5.4.1: one calm button language inside table rows - neutral for looking/configuring, one accent
+           blue for actions that START something on a device, red outline only for the reboot path. All share
+           the height of button.small (6px padding, 18px line) so a row never jumps. */
+        button.rowbtn { padding: 5px 10px; font-size: 12px; line-height: 18px; border-radius: 4px; cursor: pointer; font-weight: 600;
+                        background: #f2f5f9; color: #243447; border: 1px solid #c7d2de; }
+        button.rowbtn:hover { background: #e4ebf3; }
+        button.rowbtn:disabled { background: #eef0f2; color: #9aa4ad; border-color: #dfe3e7; cursor: not-allowed; }
+        button.rowbtn.act { background: #4a90d9; border-color: #4a90d9; color: #fff; }
+        button.rowbtn.act:hover { background: #357abd; }
+        button.rowbtn.act:disabled { background: #c9d6e2; border-color: #c9d6e2; color: #f4f7fa; cursor: not-allowed; }
+        button.rowbtn.warn { background: #fff; border-color: #dc3545; color: #b02a37; }
+        button.rowbtn.warn:hover { background: #fdecee; }
+        button.rowbtn.warn:disabled { background: #eef0f2; color: #9aa4ad; border-color: #dfe3e7; cursor: not-allowed; }
+        .cellacts { display: flex; flex-wrap: wrap; gap: 4px; max-width: 240px; }
+        .subnav a.subtab.ext { border: 1px solid #2f6fa8; }
+        .subnav a.subtab.ext::after { content: " \2197"; font-size: 10px; }
         .locbar { background: #f7fafd; border: 1px solid #d8e0ec; border-radius: 6px; padding: 10px 12px; margin-bottom: 14px; }
         .locbar-head { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
         .locbar-title { font-weight: 700; font-size: 13px; color: #0b3d6b; }
@@ -96,11 +112,11 @@
 <body>
     <div class="topnav">
         <div class="mainnav" id="mainnav">
-            <a href="#devices/devicelist" class="maintab" data-main="devices">Devices</a>
-            <a href="#software/softwarelist" class="maintab" data-main="software">Software</a>
-            <a href="#vulns/assessment" class="maintab active" data-main="vulns">Vulnerabilities</a>
-            <a href="#exports/files" class="maintab" data-main="exports">Exports</a>
-            <a href="#settings/general" class="maintab" data-main="settings">Settings</a>
+            <a href="#devices/devicelist" class="maintab" data-main="devices" data-help="nav.devices">Devices</a>
+            <a href="#software/softwarelist" class="maintab" data-main="software" data-help="nav.software">Software</a>
+            <a href="#vulns/assessment" class="maintab active" data-main="vulns" data-help="nav.vulns">Vulnerabilities</a>
+            <a href="#exports" class="maintab" data-main="exports" data-help="nav.exports">Exports</a>
+            <a href="#settings/general" class="maintab" data-main="settings" data-help="nav.settings">Settings</a>
         </div>
         <div class="subnav" id="subnav"></div>
     </div>
@@ -113,11 +129,8 @@
         </div>
 {{> panels/assessment }}
 {{> panels/settings }}
-{{> panels/vulnreport }}
 {{> panels/cpe }}
 {{> panels/nvd }}
-{{> panels/devreport }}
-{{> panels/exports }}
 {{> panels/license }}
 {{> panels/devicelist }}
 {{> panels/swlist }}
@@ -151,7 +164,6 @@
 {{> js/devicelist }}
 {{> js/swlist }}
 {{> js/asset }}
-{{> js/exports }}
 {{> js/help }}
 {{> js/init }}
     })();

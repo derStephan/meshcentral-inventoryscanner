@@ -1,25 +1,42 @@
         // ---------- tabs ----------
         //
-        // Two-layer navigation with deep links (issue #9): the URL hash carries `#<main>/<sub>`, so copying the
-        // address of any view and pasting it into a new tab lands on exactly that view, and the browser's back
-        // button walks through the views you visited. The anchors carry the real hash and are NOT prevented -
-        // the hashchange event is the single driver, which is what makes back/forward work.
+        // Two-layer navigation with deep links (issue #9, reworked in v5.4.1): the URL hash carries
+        // `#<main>/<sub>`, the anchors hold the real hash and are NOT prevented, so hashchange is the single
+        // driver - a copied link restores the view and the browser back button walks through them.
+        // v5.4.1: entries that are really a DOCUMENT (the two printable reports, the three CSV files) are plain
+        // external links in the sub-nav row (one click, new tab) instead of a panel that only held a link
+        // button (which cost a second click). Their explanation lives in the hover help of the nav button, like
+        // every other button on the page. The Exports section has no panel at all - it IS the row of links.
 
         var navTree = {
-            devices: [ { key: 'devicelist', label: 'Device list' }, { key: 'reset', label: 'PC reset' }, { key: 'devreport', label: 'Device report' } ],
-            software: [ { key: 'softwarelist', label: 'Software list' }, { key: 'updates', label: 'Software updates' }, { key: 'deploy', label: 'Deployment' }, { key: 'license', label: 'License keys' } ],
-            vulns: [ { key: 'assessment', label: 'Assessment' }, { key: 'vulnreport', label: 'Vulnerability report' }, { key: 'cpe', label: 'CPE table' }, { key: 'nvd', label: 'NVD database' } ],
-            exports: [ { key: 'files', label: 'CSV exports' } ],
-            settings: [ { key: 'general', label: 'General' }, { key: 'asset', label: 'Asset management' } ]
+            devices: {
+                panels: [ { key: 'devicelist', label: 'Device list', help: 'nav.devicelist' }, { key: 'reset', label: 'PC reset', help: 'nav.reset' } ],
+                links: [ { href: base + '&action=deviceReport', label: 'Device report', help: 'nav.devreport' } ]
+            },
+            software: {
+                panels: [ { key: 'softwarelist', label: 'Software list', help: 'nav.softwarelist' }, { key: 'updates', label: 'Software updates', help: 'nav.updates' }, { key: 'deploy', label: 'Deployment', help: 'nav.deploy' }, { key: 'license', label: 'License keys', help: 'nav.license' } ],
+                links: []
+            },
+            vulns: {
+                panels: [ { key: 'assessment', label: 'Assessment', help: 'nav.assessment' }, { key: 'cpe', label: 'CPE table', help: 'nav.cpe' }, { key: 'nvd', label: 'NVD database', help: 'nav.nvd' } ],
+                links: [ { href: base + '&action=report', label: 'Vulnerability report', help: 'nav.vulnreport' } ]
+            },
+            exports: {
+                panels: [],
+                links: [ { href: base + '&action=export&type=hardware', label: 'Hardware CSV', help: 'nav.exphw' }, { href: base + '&action=export&type=software', label: 'Software CSV', help: 'nav.expsw' }, { href: base + '&action=export&type=vulns', label: 'Vulnerabilities CSV', help: 'nav.expvulns' } ]
+            },
+            settings: {
+                panels: [ { key: 'general', label: 'General', help: 'nav.general' }, { key: 'asset', label: 'Asset management', help: 'nav.asset' } ],
+                links: []
+            }
         };
         var subTitles = {
             devicelist: 'Devices', softwarelist: 'Installed Software (all devices)',
             updates: 'Software Updates (winget)', reset: 'Reset a Windows PC',
-            devreport: 'Device Inventory Report',
             deploy: 'Deploy Software', license: 'Software License Keys',
-            assessment: 'Vulnerability Assessment', vulnreport: 'Vulnerability Report',
+            assessment: 'Vulnerability Assessment',
             cpe: 'CPE Mapping Table', nvd: 'NVD Database',
-            files: 'CSV Exports', settings: 'Settings', asset: 'External Asset Management'
+            exports: 'CSV Exports', settings: 'Settings', asset: 'External Asset Management'
         };
         var subLoaders = {
             devicelist: function () { loadDeviceList(); }, softwarelist: function () { loadSwFleet(); },
@@ -34,12 +51,25 @@
         function renderSubnav(main, activeSub) {
             var sn = document.getElementById('subnav');
             if (!sn) { return; }
-            var subs = navTree[main] || [];
+            var entry = navTree[main] || { panels: [], links: [] };
             var html = '';
-            for (var k = 0; k < subs.length; k++) {
-                html += '<a href="#' + main + '/' + subs[k].key + '" class="subtab' + (subs[k].key === activeSub ? ' active' : '') + '" data-main="' + main + '" data-sub="' + subs[k].key + '">' + subs[k].label + '</a>';
+            var k;
+            for (k = 0; k < entry.panels.length; k++) {
+                html += '<a href="#' + main + '/' + entry.panels[k].key + '" class="subtab' + (entry.panels[k].key === activeSub ? ' active' : '') + '" data-main="' + main + '" data-sub="' + entry.panels[k].key + '" data-help="' + entry.panels[k].help + '">' + entry.panels[k].label + '</a>';
+            }
+            for (k = 0; k < entry.links.length; k++) {
+                html += '<a href="' + entry.links[k].href + '" target="_blank" rel="noopener" class="subtab ext" data-help="' + entry.links[k].help + '">' + entry.links[k].label + '</a>';
             }
             sn.innerHTML = html;
+        }
+
+        function paintChrome(main, sub) {
+            var mains = document.querySelectorAll('.maintab');
+            for (var m = 0; m < mains.length; m++) { mains[m].classList.toggle('active', mains[m].getAttribute('data-main') === main); }
+            var sm = document.getElementById('statusMeta');
+            if (sm) { sm.style.display = ((main === 'vulns' && sub === 'assessment') || main === 'settings') ? '' : 'none'; }
+            var pt = document.getElementById('pageTitle');
+            if (pt && subTitles[sub || main]) { pt.textContent = subTitles[sub || main]; }
         }
 
         function selectSub(main, sub, fromHash) {
@@ -48,20 +78,23 @@
             for (var i = 0; i < contents.length; i++) { contents[i].classList.remove('active'); }
             var target = document.querySelector('.tab-content[data-main="' + main + '"][data-sub="' + sub + '"]');
             if (target) { target.classList.add('active'); }
-            var mains = document.querySelectorAll('.maintab');
-            for (var m = 0; m < mains.length; m++) { mains[m].classList.toggle('active', mains[m].getAttribute('data-main') === main); }
             renderSubnav(main, sub);
-            // the NVD/scan part of the status line belongs to the assessment and the settings views
-            var sm = document.getElementById('statusMeta');
-            if (sm) { sm.style.display = ((main === 'vulns' && sub === 'assessment') || main === 'settings') ? '' : 'none'; }
-            var pt = document.getElementById('pageTitle');
-            if (pt && subTitles[sub]) { pt.textContent = subTitles[sub]; }
-            if (!fromHash) {
-                var want = '#' + main + '/' + sub;
-                if (String(location.hash) !== want) { navLock = true; location.hash = want; setTimeout(function () { navLock = false; }, 0); }
-            }
+            paintChrome(main, sub);
+            if (!fromHash) { setHash('#' + main + '/' + sub); }
             var fn = subLoaders[sub];
             if (fn) { try { fn(); } catch (e) { } }
+        }
+
+        /** @brief A main section that only carries external links (Exports): show its link row, keep the panel. */
+        function selectLinksMain(main, fromHash) {
+            currentMain = main; currentSub = '';
+            renderSubnav(main, '');
+            paintChrome(main, main);
+            if (!fromHash) { setHash('#' + main); }
+        }
+
+        function setHash(want) {
+            if (String(location.hash) !== want) { navLock = true; location.hash = want; setTimeout(function () { navLock = false; }, 0); }
         }
 
         /** @brief Resolve the URL hash to a view; an unknown or missing hash lands on the assessment. */
@@ -69,11 +102,12 @@
             if (navLock) { return; }
             var parts = String(location.hash || '').replace(/^#/, '').split('/');
             var main = parts[0] || '', sub = parts[1] || '';
-            if (!navTree[main]) { main = 'vulns'; }
-            var subs = navTree[main] || [];
+            if (!navTree[main]) { main = 'vulns'; sub = ''; }
+            var entry = navTree[main];
+            if (entry.panels.length === 0) { selectLinksMain(main, true); return; }
             var known = false;
-            for (var i = 0; i < subs.length; i++) { if (subs[i].key === sub) { known = true; } }
-            if (!known) { sub = subs.length ? subs[0].key : 'assessment'; }
+            for (var i = 0; i < entry.panels.length; i++) { if (entry.panels[i].key === sub) { known = true; } }
+            if (!known) { sub = entry.panels[0].key; }
             selectSub(main, sub, true);
         }
         window.addEventListener('hashchange', applyHash);

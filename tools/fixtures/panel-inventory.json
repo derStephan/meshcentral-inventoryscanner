@@ -71,8 +71,6 @@
   "drMsg",
   "drRefreshBtn",
   "drRunState",
-  "exportGo",
-  "exportType",
   "filterSeverity",
   "filterStatus",
   "filterText",
@@ -182,15 +180,12 @@
   "tab-cpe",
   "tab-deploy",
   "tab-devicelist",
-  "tab-devreport",
-  "tab-exports",
   "tab-license",
   "tab-nvd",
   "tab-reset",
   "tab-settings",
   "tab-swlist",
   "tab-updates",
-  "tab-vulnreport",
   "updateNvdInfo",
   "updateNvdNowBtn",
   "vulnDataMsg",
@@ -211,8 +206,8 @@
  ],
  "prose": [
   {
-   "head": "Tick the locations to assess in the row below and press Apply . The table shows ",
-   "len": 835
+   "head": "Tick the locations to assess in the row above the table - the selection is remem",
+   "len": 697
   },
   {
    "head": "Values saved here go into scanner-settings.json inside the plugin's data folder ",
@@ -263,8 +258,8 @@
    "len": 163
   },
   {
-   "head": "The printable vulnerability report : one overview page plus one page per locatio",
-   "len": 416
+   "head": "What the notify threshold does: after every scan the plugin notifies all site ad",
+   "len": 774
   },
   {
    "head": "Every NVD CVE names the affected software with a technical code, a CPE like cpe:",
@@ -289,14 +284,6 @@
   {
    "head": "Fetches missing years and refreshes the current year immediately (rate-limited, ",
    "len": 143
-  },
-  {
-   "head": "The printable device inventory report : one page per location listing every devi",
-   "len": 500
-  },
-  {
-   "head": "The three inventory lists as Excel-safe CSV (UTF-8 with BOM, formula injection n",
-   "len": 437
   },
   {
    "head": "Master switch for the License keys section below. Off by default; nothing reads ",
@@ -331,12 +318,12 @@
    "len": 688
   },
   {
-   "head": "force OS updates runs on every non-excluded Windows and Linux device: on Windows",
-   "len": 3717
+   "head": "One row per device, built from the data already stored on this server - opening ",
+   "len": 746
   },
   {
-   "head": "Every distinct installed program across all devices, with how many devices carry",
-   "len": 1370
+   "head": "Every distinct installed program across all devices, with how many carry it, whi",
+   "len": 707
   },
   {
    "head": "This is the only place where this plugin sends data OFF the server. Everything e",
@@ -379,8 +366,8 @@
    "len": 51
   },
   {
-   "head": "Automatic software updates via winget on Windows devices. This page holds the co",
-   "len": 1252
+   "head": "The winget updater configuration : master switch, the device groups that are upd",
+   "len": 968
   },
   {
    "head": "Every change on this page (switches, groups, ignore list) is saved immediately; ",
@@ -473,7 +460,6 @@
  ],
  "links": [
   "action=deviceReport",
-  "action=export",
   "action=export&type=hardware",
   "action=export&type=software",
   "action=export&type=vulns",
@@ -481,9 +467,7 @@
  ],
  "panels": [
   "devices/devicelist",
-  "devices/devreport",
   "devices/reset",
-  "exports/files",
   "settings/asset",
   "settings/general",
   "software/deploy",
@@ -492,7 +476,6 @@
   "software/updates",
   "vulns/assessment",
   "vulns/cpe",
-  "vulns/nvd",
-  "vulns/vulnreport"
+  "vulns/nvd"
  ]
 }
