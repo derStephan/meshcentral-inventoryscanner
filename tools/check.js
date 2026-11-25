@@ -20,7 +20,22 @@ const { execFileSync } = require('child_process');
 const root = path.join(__dirname, '..');
 const pluginDir = root; // flat layout: plugin files live at repository root (web installer requirement)
 const viewsDir = path.join(pluginDir, 'views');
+const partialsDir = path.join(viewsDir, 'partials');
 let failed = 0;
+
+/**
+ * @brief Replace every {{> name }} tag with the partial's file content (recursively), so a script that is
+ * composed of partials can still be syntax-checked here WITHOUT a handlebars dependency - check.js must
+ * run anywhere. An unresolvable reference is left as-is; the partial inventory guard below reports it.
+ */
+function inlinePartials(text, depth) {
+    if (depth > 6) { return text; }
+    return text.replace(/\{\{\s*>\s*([A-Za-z0-9_.\-/]+)[^}]*\}\}/g, function (_m, name) {
+        const f = path.join(partialsDir, name + '.handlebars');
+        if (!fs.existsSync(f)) { return _m; }
+        return inlinePartials(fs.readFileSync(f, 'utf8'), depth + 1);
+    });
+}
 
 function report(name, ok, extra) {
     console.log((ok ? 'PASS ' : 'FAIL ') + name + (ok || extra === undefined ? '' : ' -> ' + extra));
@@ -89,14 +104,18 @@ for (const vf of fs.readdirSync(viewsDir).filter(function (f) { return f.endsWit
     }
     blocks.forEach(function (js, bi) {
         const label = vf + ' script #' + (bi + 1);
+        // Since the view modularisation the panel script is composed of partials included INSIDE the IIFE,
+        // so the raw block is not valid JS on its own - inline the partials first (no handlebars needed).
+        const composed = inlinePartials(js, 0);
+        report(label + ': every {{> partial }} inside the script resolved to a file', composed.indexOf('{{>') < 0);
         // Allowed inside a <script>: the server token {{shortName}} and a partial tag {{> name }}
         // (since the view modularisation the panel JS is composed of partials included INSIDE the IIFE).
-        const stray = js.replace(/\{\{shortName\}\}/g, '').replace(/\{\{\s*>\s*[A-Za-z0-9_.\-/]+[^}]*\}\}/g, '').indexOf('{{');
+        const stray = composed.replace(/\{\{shortName\}\}/g, '').replace(/\{\{\s*>\s*[A-Za-z0-9_.\-/]+[^}]*\}\}/g, '').indexOf('{{');
         report(label + ': no stray {{ (only {{shortName}} and {{> partial }})', stray < 0,
-            stray >= 0 ? js.substring(Math.max(0, stray - 40), stray + 40) : undefined);
+            stray >= 0 ? composed.substring(Math.max(0, stray - 40), stray + 40) : undefined);
         const tmp = path.join(os.tmpdir(), 'invscanner-inline-check-' + Date.now() + '-' + bi + '.js');
-        fs.writeFileSync(tmp, js, 'utf8');
-        jsCheck(tmp, label + ' syntax');
+        fs.writeFileSync(tmp, composed, 'utf8');
+        jsCheck(tmp, label + ' syntax (partials inlined)');
         try { fs.unlinkSync(tmp); } catch (e) { }
     });
 }
@@ -108,7 +127,6 @@ if (!fs.existsSync(path.join(viewsDir, 'assessment.handlebars'))) { report('asse
 //     it PER RENDER as `<plugin>/views/partials/` (glob `**/*.handlebars`, posix, so sub-folders become
 //     namespaces: partials/panels/x.handlebars => `{{> panels/x }}`). Same symmetry guard as lib/ <-> the
 //     entry's modules list: every reference resolves to a file, and no file is an unreferenced orphan.
-const partialsDir = path.join(viewsDir, 'partials');
 function allViewFiles(dir, prefix) {
     let out = [];
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -137,6 +155,19 @@ for (const r of [...partialRefs].sort()) {
 }
 for (const p of partialNames) {
     report('partial views/partials/' + p + '.handlebars is referenced (no orphan)', partialRefs.has(p));
+}
+// Every JS fragment must be syntactically valid ON ITS OWN - that is the point of the split: an error is
+// reported for the fragment that has it, not for one 2,400-line blob. Fragments hold complete declarations
+// and are included inside the shell's IIFE, so wrapping them in a function is the faithful check.
+for (const p of partialNames.filter(function (x) { return x.indexOf('js/') === 0; })) {
+    const frag = fs.readFileSync(path.join(partialsDir, p + '.handlebars'), 'utf8');
+    const tmp = path.join(os.tmpdir(), 'invscanner-frag-' + Date.now() + '-' + p.replace(/[\/.]/g, '_') + '.js');
+    fs.writeFileSync(tmp, "(function () {\n'use strict';\n" + frag + '\n})();\n', 'utf8');
+    jsCheck(tmp, 'partial ' + p + ' is valid JS on its own');
+    try { fs.unlinkSync(tmp); } catch (e) { }
+    const stray = frag.replace(/\{\{shortName\}\}/g, '').indexOf('{{');
+    report('partial ' + p + ' has no stray {{ (Handlebars would eat it)', stray < 0,
+        stray >= 0 ? frag.substring(Math.max(0, stray - 40), stray + 40) : undefined);
 }
 
 // 3. JSON files

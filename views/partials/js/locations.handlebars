@@ -1,0 +1,60 @@
+        // ---------- floating location selector ----------
+
+        function locCheckboxes() {
+            return document.querySelectorAll('.loc-cb');
+        }
+
+        function selectedLocationIds() {
+            var out = [];
+            var cbs = locCheckboxes();
+            for (var i = 0; i < cbs.length; i++) {
+                if (cbs[i].checked) { out.push(cbs[i].value); }
+            }
+            return out;
+        }
+
+        function updateLocCount() {
+            var cbs = locCheckboxes();
+            var n = 0;
+            for (var i = 0; i < cbs.length; i++) { if (cbs[i].checked) { n++; } }
+            $('locCountTxt').textContent = (n === cbs.length) ? 'all' : String(n);
+            $('locAll').checked = (n === cbs.length) && (cbs.length > 0);
+            try { localStorage.setItem('invscanner_locations', JSON.stringify(selectedLocationIds())); } catch (e) { }
+        }
+
+        function restoreLocationSelection() {
+            try {
+                var raw = localStorage.getItem('invscanner_locations');
+                if (!raw) { return; }
+                var saved = JSON.parse(raw);
+                if (!Array.isArray(saved)) { return; }
+                var cbs = locCheckboxes();
+                for (var i = 0; i < cbs.length; i++) {
+                    cbs[i].checked = (saved.indexOf(cbs[i].value) >= 0);
+                }
+            } catch (e) { }
+        }
+
+        $('locationToggle').addEventListener('click', function () {
+            $('locationPanel').classList.toggle('hidden');
+        });
+        $('locClose').addEventListener('click', function () {
+            $('locationPanel').classList.add('hidden');
+        });
+        $('locAll').addEventListener('change', function () {
+            var cbs = locCheckboxes();
+            for (var i = 0; i < cbs.length; i++) { cbs[i].checked = this.checked; }
+            updateLocCount();
+        });
+        (function () {
+            var cbs = locCheckboxes();
+            for (var i = 0; i < cbs.length; i++) {
+                cbs[i].addEventListener('change', updateLocCount);
+            }
+        })();
+        $('locApply').addEventListener('click', function () {
+            updateLocCount();
+            $('locationPanel').classList.add('hidden');
+            loadCached();   // v4.4.0: choosing locations is not a scan - "Scan & Review" does that
+        });
+

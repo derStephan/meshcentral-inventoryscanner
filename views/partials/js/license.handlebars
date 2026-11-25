@@ -1,0 +1,84 @@
+        // ---------- license keys (v4.8.0, issue #7) ----------
+
+        var licApp = { status: null, table: null };
+        var licPollTimer = null;
+
+        function loadLicenseSection() {
+            post('get_license_table', {}).then(function (t) {
+                licApp.table = t; renderLicCustom();
+                var ts = (t && t.licenseTable) || {};
+                $('licTableSourceInfo').textContent = (ts.entries != null) ? ('curated table: ' + ts.entries + ' rule set(s) (' + (ts.origin || ts.source || 'none') + ')' + (ts.custom != null ? (', ' + ts.custom + ' custom') : '')) : '';
+            }).catch(function () { });
+            post('lic_status', {}).then(function (s) {
+                if (s.error) { return; }
+                licApp.status = s; renderLicDevices(); loadLicLog();
+                if (licPollTimer != null) { clearTimeout(licPollTimer); licPollTimer = null; }
+                if (s.running || (s.devices || []).some(function (x) { return x.pending; })) { licPollTimer = setTimeout(function () { post('lic_status', {}).then(function (s2) { if (!s2.error) { licApp.status = s2; renderLicDevices(); loadLicLog(); } }); }, 5000); }
+            }).catch(function () { });
+        }
+
+        function renderLicCustom() {
+            var e = (licApp.table && licApp.table.entries) || [];
+            var html = '';
+            for (var i = 0; i < e.length; i++) {
+                var rulesTxt = (e[i].rules || []).map(function (r) { return r.type + (r.path ? (' ' + r.path) : '') + (r.class ? (' ' + r.class) : '') + (r.value ? ('=' + r.value) : '') + (r.property ? ('.' + r.property) : ''); }).join('; ');
+                html += '<tr><td><code>' + esc(e[i].match) + '</code></td><td>' + esc(e[i].label || '') + '</td><td style="font-size:11px">' + esc(rulesTxt) + '</td>';
+                html += '<td>' + (e[i].source === 'custom' ? '<button class="small red licDel" data-idx="' + i + '">Remove</button>' : '<span class="hint">' + esc(e[i].source) + '</span>') + '</td></tr>';
+            }
+            if (html === '') { html = '<tr><td colspan="4" style="color:#888">No custom rules yet.</td></tr>'; }
+            $('licCustomBody').innerHTML = html;
+        }
+
+        function renderLicDevices() {
+            var s = licApp.status || { devices: [] };
+            $('licRunInfo').textContent = (s.running ? 'collection running… ' : '') + (s.enabled === false ? 'collection is OFF - enable it above.' : '');
+            var html = '';
+            for (var i = 0; i < (s.devices || []).length; i++) {
+                var d = s.devices[i];
+                var c = d.collected;
+                var ct = c ? (esc(fmtLocal(c.time)) + '<br>' + c.found + ' key(s)' + (c.ms ? (', ' + c.ms + ' MS') : '') + (c.error ? (' <span style="color:#a33">' + esc(c.error) + '</span>') : '')) : '<span style="color:#888">not collected</span>';
+                html += '<tr><td>' + esc(d.given || d.host || d.id) + '</td><td>' + esc(d.group) + '</td>';
+                html += '<td>' + (d.online ? 'yes' : '<span style="color:#a33">no</span>') + '</td><td style="font-size:11px">' + ct + '</td>';
+                html += '<td>' + (d.pending ? '<span class="hint">collecting…</span>' : ('<button class="small licOne" data-id="' + esc(d.id) + '" ' + (d.online ? '' : 'disabled ') + '>Collect</button>')) + '</td></tr>';
+            }
+            if (html === '') { html = '<tr><td colspan="5" style="color:#888">No Windows devices.</td></tr>'; }
+            $('licDeviceBody').innerHTML = html;
+        }
+
+        function loadLicLog() {
+            post('get_log', { type: 'license' }).then(function (data) {
+                if (data.error) { $('licLog').textContent = data.error; return; }
+                $('licLog').textContent = (data.lines && data.lines.length) ? localizeLog(data.lines).join(String.fromCharCode(10)) : '(empty)';
+                $('licLogInfo').textContent = data.note || ((data.lines || []).length + ' lines · ' + (data.file || ''));
+            }).catch(function (ex) { $('licLog').textContent = 'Failed: ' + ex.message; });
+        }
+
+        $('licCollectAllBtn').addEventListener('click', function () {
+            if (!window.confirm('Read software license keys from ALL online Windows devices? This runs a read-only extraction on each (registry / files / WMI) and stores the results on this server only.')) { return; }
+            post('lic_collect', { all: 'true' }).then(function (d) {
+                if (d.error) { showMsg('licMsg', d.error, false); return; }
+                showMsg('licMsg', 'Collecting on ' + d.devices + ' device(s) - see the table and the log.', true);
+                setTimeout(loadLicenseSection, 2500);
+            }).catch(function (ex) { showMsg('licMsg', 'Collect failed: ' + ex.message, false); });
+        });
+        $('licDeviceBody').addEventListener('click', function (e) {
+            var b = e.target; while (b && b !== this && !(b.classList && b.classList.contains('licOne'))) { b = b.parentNode; }
+            if (!b || b === this) { return; }
+            var id = b.getAttribute('data-id');
+            post('lic_collect', { nodeId: id }).then(function (d) { if (d.error) { showMsg('licMsg', d.error, false); return; } showMsg('licMsg', 'Collecting on ' + id + '…', true); setTimeout(loadLicenseSection, 2500); }).catch(function (ex) { showMsg('licMsg', ex.message, false); });
+        });
+        $('licCustomBody').addEventListener('click', function (e) {
+            var el = e.target; if (!el || !el.classList || !el.classList.contains('licDel')) { return; }
+            post('remove_license', { index: el.getAttribute('data-idx') }).then(function (d) { if (d.error) { showMsg('licMsg', d.error, false); return; } showMsg('licMsg', 'Custom rule removed.', true); loadLicenseSection(); }).catch(function (ex) { showMsg('licMsg', ex.message, false); });
+        });
+        $('addLicBtn').addEventListener('click', function () {
+            var match = $('licMatch').value.trim(), label = $('licLabel').value.trim(), rules = $('licRules').value.trim();
+            if (!match) { showMsg('licMsg', 'A match regex is required.', false); return; }
+            post('add_license', { match: match, label: label, rules: rules }).then(function (d) {
+                if (d.error) { showMsg('licMsg', d.error, false); return; }
+                $('licMatch').value = ''; $('licLabel').value = ''; $('licRules').value = '';
+                showMsg('licMsg', 'Custom rule added.', true); loadLicenseSection();
+            }).catch(function (ex) { showMsg('licMsg', 'Add failed: ' + ex.message, false); });
+        });
+        $('refreshLicLogBtn').addEventListener('click', loadLicLog);
+

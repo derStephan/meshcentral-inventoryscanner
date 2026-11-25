@@ -1,0 +1,79 @@
+        // ---------- scan ----------
+
+        function effSeverity(row) {
+            if (row.assessment && row.assessment.flagged) { return 'false positive'; }
+            if (row.mixed) { return String(row.severity || 'UNKNOWN').toUpperCase(); }
+            if (row.assessment && row.assessment.assessment) { return String(row.assessment.assessment).toUpperCase(); }
+            return String(row.severity || 'UNKNOWN').toUpperCase();
+        }
+
+        function rowRating(row) {
+            if (row.mixed) { return 'MIXED'; }
+            if (row.assessment && row.assessment.flagged) { return 'UNKNOWN'; }
+            if (row.assessment && row.assessment.assessment) { return row.assessment.assessment; }
+            return '';
+        }
+
+        function rowComment(row) {
+            if (row.mixed) { return ''; }
+            if (row.assessment && row.assessment.comment) { return row.assessment.comment; }
+            return '';
+        }
+
+        function scan() {
+            var ids = selectedLocationIds();
+            if (ids.length === 0) {
+                showMsg('msg', 'Select at least one location in the floating location panel.', false);
+                return;
+            }
+            hideMsg('msg');
+            $('scanBtn').disabled = true;
+            $('scanStatus').textContent = 'Scanning ' + ids.length + ' location(s) - the server stays usable, other tabs work...';
+            get('scan', { mesh: ids.join(',') }).then(function (data) {
+                $('scanBtn').disabled = false;
+                $('scanStatus').textContent = '';
+                if (data.error) { showMsg('msg', data.error, false); return; }
+                showRows(data, ids, 'Live result from the devices' + (data.seconds ? (' (' + data.seconds + ' s)') : '') + '.');
+            }).catch(function (e) {
+                $('scanBtn').disabled = false;
+                $('scanStatus').textContent = '';
+                showMsg('msg', 'Scan failed: ' + e.message, false);
+            });
+        }
+
+        function showRows(data, ids, note) {
+            state.rows = data.cves || [];
+            renderTable();
+            var n = state.rows.length;
+            showMsg('msg', n + ' unique finding(s) across ' + (data.meshes ? data.meshes.length : ids.length) +
+                ' location(s). ' + (data.flaggedCount || 0) + ' flagged as false positive.' + (note ? (' ' + note) : ''), true);
+        }
+
+        // v4.4.0: opening the page reads the stored snapshot instead of scanning every device again.
+        function loadCached() {
+            var ids = selectedLocationIds();
+            if (ids.length === 0) {
+                showMsg('msg', 'Select at least one location in the floating location panel.', false);
+                return;
+            }
+            hideMsg('msg');
+            $('scanStatus').textContent = 'Reading the last scan result...';
+            get('scan', { mesh: ids.join(','), cached: '1' }).then(function (data) {
+                $('scanStatus').textContent = '';
+                if (data.error) { showMsg('msg', data.error, false); return; }
+                if (data.scanning) { $('scanStatus').textContent = 'A live scan is already running - waiting for it...'; setTimeout(loadCached, 5000); return; }
+                var miss = (data.missing || []).length;
+                var note = (data.cves || []).length === 0
+                    ? 'Nothing has been scanned yet - press "Scan & Review" to read the devices.'
+                    : ('Cached result' + (data.cacheTime ? (' of ' + fmtLocal(data.cacheTime)) : '') +
+                       (miss ? (' - ' + miss + ' selected location(s) have no stored result yet') : '') +
+                       '. Press "Scan & Review" to refresh it from the devices.');
+                showRows(data, ids, note);
+            }).catch(function (e) {
+                $('scanStatus').textContent = '';
+                showMsg('msg', 'Could not read the stored result: ' + e.message, false);
+            });
+        }
+
+        $('scanBtn').addEventListener('click', scan);
+

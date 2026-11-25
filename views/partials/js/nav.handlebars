@@ -1,0 +1,68 @@
+        // ---------- tabs ----------
+
+        var navTree = {
+            devices: [ { key: 'devicelist', label: 'Device list' }, { key: 'updates', label: 'Software updates' }, { key: 'os', label: 'OS updates & reboot' }, { key: 'reset', label: 'PC reset' } ],
+            software: [ { key: 'softwarelist', label: 'Software list' }, { key: 'deploy', label: 'Deployment' }, { key: 'license', label: 'License keys' } ],
+            vulns: [ { key: 'assessment', label: 'Assessment' }, { key: 'data', label: 'Reports, NVD & CPE table' } ],
+            settings: [ { key: 'general', label: 'General' }, { key: 'asset', label: 'Asset management' } ]
+        };
+        var subTitles = {
+            devicelist: 'Devices', softwarelist: 'Installed Software (all devices)',
+            updates: 'Software Updates (winget)', os: 'Operating System Updates', reset: 'Reset a Windows PC',
+            deploy: 'Deploy Software', license: 'Software License Keys',
+            assessment: 'Vulnerability Assessment', data: 'Vulnerability Data & Tables', settings: 'Settings',
+            asset: 'External Asset Management'
+        };
+        var subLoaders = {
+            devicelist: function () { loadDeviceList(); }, softwarelist: function () { loadSwFleet(); },
+            updates: function () { loadWgTab(); }, os: function () { loadOsStatus(); },
+            deploy: function () { loadSwTab(); }, reset: function () { loadDrStatus(); },
+            license: function () { loadLicenseSection(); }, asset: function () { loadAssetSection(); },
+            data: function () { loadCpeTable(); loadNvdLog(); }
+        };
+        var currentMain = 'vulns', currentSub = 'assessment';
+
+        function renderSubnav(main, activeSub) {
+            var sn = document.getElementById('subnav');
+            if (!sn) { return; }
+            var subs = navTree[main] || [];
+            var html = '';
+            for (var k = 0; k < subs.length; k++) {
+                html += '<a href="#" class="subtab' + (subs[k].key === activeSub ? ' active' : '') + '" data-main="' + main + '" data-sub="' + subs[k].key + '">' + subs[k].label + '</a>';
+            }
+            sn.innerHTML = html;
+            var links = sn.querySelectorAll('.subtab');
+            for (var q = 0; q < links.length; q++) {
+                links[q].addEventListener('click', function (e) { e.preventDefault(); selectSub(this.getAttribute('data-main'), this.getAttribute('data-sub')); });
+            }
+        }
+
+        function selectSub(main, sub) {
+            currentMain = main; currentSub = sub;
+            var contents = document.querySelectorAll('.tab-content');
+            for (var i = 0; i < contents.length; i++) { contents[i].classList.remove('active'); }
+            var target = document.querySelector('.tab-content[data-main="' + main + '"][data-sub="' + sub + '"]');
+            if (target) { target.classList.add('active'); }
+            var mains = document.querySelectorAll('.maintab');
+            for (var m = 0; m < mains.length; m++) { mains[m].classList.toggle('active', mains[m].getAttribute('data-main') === main); }
+            renderSubnav(main, sub);
+            var lp = document.getElementById('locationPanel');
+            if (lp) { lp.classList.toggle('hidden', !(main === 'vulns' && sub === 'assessment')); }
+            var sm = document.getElementById('statusMeta');
+            if (sm) { sm.style.display = ((main === 'vulns' && sub === 'assessment') || main === 'settings') ? '' : 'none'; }
+            var pt = document.getElementById('pageTitle');
+            if (pt && subTitles[sub]) { pt.textContent = subTitles[sub]; }
+            var fn = subLoaders[sub];
+            if (fn) { try { fn(); } catch (e) { } }
+        }
+
+        var maintabs = document.querySelectorAll('.maintab');
+        for (var mi = 0; mi < maintabs.length; mi++) {
+            maintabs[mi].addEventListener('click', function (e) {
+                e.preventDefault();
+                var main = this.getAttribute('data-main');
+                var subs = navTree[main] || [];
+                selectSub(main, subs.length ? subs[0].key : '');
+            });
+        }
+

@@ -1,0 +1,39 @@
+        <div class="tab-content" id="tab-devicelist" data-main="devices" data-sub="devicelist">
+            <div class="info">
+                One row per device (merged live from the update, OS, reset and license engines plus the fleet
+                index - it sends nothing new). Tick the devices, then pick <strong>one</strong> operation to run on
+                them. Non-destructive operations run as a batch; <strong>Restart</strong> and <strong>Reset</strong>
+                open their own panel and always need the per-device typed-name confirmation - they are never batched.
+            </div>
+            <div class="controls">
+                <button id="dlRefreshBtn" class="small">Refresh</button>
+                <span class="exportlabel">Export:</span>
+                <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=export&amp;type=hardware" target="_blank" rel="noopener">Hardware CSV</a>
+                <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=export&amp;type=software" target="_blank" rel="noopener">Software CSV</a>
+                <label class="dlselall"><input type="checkbox" id="dlSelectAll"> select all</label>
+            </div>
+            <div class="controls">
+                <span class="hint">Run on the selected devices:</span>
+                <button class="green dlRun" data-op="appupdates">Software updates</button>
+                <button class="dlRun" data-op="osupdate">OS updates</button>
+                <button class="dlRun" data-op="osupgrade">OS upgrade</button>
+                <button class="dlRun" data-op="troubleshoot">Windows Update repair</button>
+                <button class="purple dlRun" data-op="licenses">Collect licenses</button>
+                <button class="dlRun" data-op="asset">Push to asset system</button>
+                <span id="dlRunInfo" class="hint"></span>
+            </div>
+            <div class="table-container">
+                <table>
+                    <thead><tr>
+                        <th style="width:26px;"></th><th style="cursor:default">Device</th><th style="cursor:default">Group</th>
+                        <th style="width:70px;">Online</th><th style="width:60px;">OS</th>
+                        <th style="width:96px;">App updates</th><th style="width:120px;">OS state</th>
+                        <th style="width:84px;">Reboot</th><th style="width:84px;">Reset</th>
+                        <th style="width:88px;">Vulnerabilities</th><th style="width:70px;">License</th>
+                        <th style="width:150px;">Device actions</th>
+                    </tr></thead>
+                    <tbody id="dlDeviceBody"><tr><td colspan="13" style="color:#888">Loading...</td></tr></tbody>
+                </table>
+            </div>
+            <div id="dlMsg"></div>
+        </div>

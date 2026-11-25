@@ -1,0 +1,75 @@
+        <div class="tab-content" id="tab-license" data-main="software" data-sub="license">
+            <h3>License keys (installed program &rarr; where its license is stored)</h3>
+            <div class="setgrid">
+                <label for="setLicCollect">Collect software license keys (opt-in)</label>
+                <div><input type="checkbox" id="setLicCollect">
+                    <div class="hint">Master switch for the License keys section below. Off by default; nothing reads
+                    licenses until you turn it on AND press Collect - or set an automatic interval below.</div></div>
+
+                <label for="setLicInterval">Collect licenses automatically every (hours)</label>
+                <div><input type="text" id="setLicInterval" class="num">
+                    <select id="setLicIntervalSrc" class="srcsel"></select>
+                    <div class="hint">0 = off (on demand only, the default). Otherwise the server runs the same
+                    read-only collection on every ONLINE Windows device on this cycle - 24 = daily, 168 = weekly.
+                    Offline devices are skipped and keep their last result. The run never writes to a device, never
+                    reboots it, and the keys stay on this server (they are never logged and never sent anywhere by
+                    this feature). Devices that are busy with another task are skipped for that cycle.</div></div>
+
+                <label for="setLicMsKeys">Include Microsoft product keys</label>
+                <div><input type="checkbox" id="setLicMsKeys">
+                    <div class="hint">Also read the Microsoft partial product key(s) from the WMI SoftwareLicensingProduct class on each Windows device.</div></div>
+                <label for="setLicTableEnabled">Update license mapping table from repository</label>
+                <div><input type="checkbox" id="setLicTableEnabled">
+                    <select id="setLicTableEnabledSrc" class="srcsel"></select>
+                    <div class="hint">Curated table shipped in <code>license-table.json</code> and refreshed from its URL with the NVD cycle. Off: only your custom rules apply.</div></div>
+                <label for="setLicTableUrl">License table URL</label>
+                <div><input type="text" id="setLicTableUrl" style="width:420px">
+                    <select id="setLicTableUrlSrc" class="srcsel"></select>
+                    <div class="hint">https only; the rule table that maps a program name to where its license is stored.</div></div>
+            </div>
+            <div class="info">
+                For asset management the software-inventory CSV can also carry a <strong>License</strong> and
+                <strong>License Source</strong> column. Like the CPE table, a rule table maps an installed program
+                name to one or more <strong>extraction rules</strong>: a Windows registry value, a file read (with an
+                optional regex whose group 1 is the key, a JSON field, or a line number), or a WMI class property.
+                Rows labelled <em>Table</em> come from the curated <code>license-table.json</code> (refreshed from its
+                URL); <em>Custom</em> rows are yours and win. Microsoft keys come from the <em>Include Microsoft
+                product keys</em> switch above, not from a rule.<br>
+                Reading runs as SYSTEM and is <strong>read-only</strong> (registry values / files / WMI properties
+                only); the result is stored on this server under the device's data folder - nothing is sent anywhere
+                and no key is ever written to a log. Turn on <em>Collect software license keys</em> above, then either
+                press <em>Collect</em> or set an automatic interval above (0 = off, on demand only - the default).
+                The CSV export (Software type) then includes the found keys.
+                <br><br>
+                <strong>Rules JSON</strong> example:
+                <code>[{"type":"registry","path":"HKLM:\\SOFTWARE\\Vendor\\App","value":"LicenseKey"}]</code>
+                &middot; file: <code>[{"type":"file","path":"C:\\ProgramData\\App\\lic.dat","regex":"KEY=([A-Z0-9-]+)"}]</code>
+                &middot; WMI: <code>[{"type":"wmi","class":"SoftwareLicensingProduct","property":"PartialProductKey","filter":"LicenseStatus=1"}]</code>
+            </div>
+            <div class="hint" id="licTableSourceInfo"></div>
+            <div class="controls">
+                <button id="licCollectAllBtn" class="purple">Collect licenses (all online Windows)</button>
+                <span id="licRunInfo" class="hint"></span>
+            </div>
+            <div class="table-container"><table>
+                <thead><tr><th>Device</th><th>Group</th><th style="width:70px;">Online</th><th style="width:260px;">Collected</th><th style="width:120px;">Actions</th></tr></thead>
+                <tbody id="licDeviceBody"><tr><td colspan="5" style="color:#888">Loading...</td></tr></tbody>
+            </table></div>
+            <h4 style="font-size:13px;color:#0b3d6b;margin:14px 0 6px 0;">Custom rules (you can add your own)</h4>
+            <div class="table-container"><table>
+                <thead><tr><th style="cursor:default">Regex (display name)</th><th style="cursor:default">Label</th><th style="cursor:default">Rules</th><th style="width:120px;"></th></tr></thead>
+                <tbody id="licCustomBody"><tr><td colspan="4" style="color:#888">Loading...</td></tr></tbody>
+            </table></div>
+            <div class="controls">
+                <input id="licMatch" type="text" placeholder="Regex, e.g. ^Adobe Illustrator" style="min-width:200px;">
+                <input id="licLabel" type="text" placeholder="Label, e.g. Adobe Illustrator CC" style="min-width:160px;">
+                <input id="licRules" type="text" placeholder='Rules JSON, e.g. [{"type":"registry","path":"HKLM:\\...","value":"LicenseKey"}]' style="min-width:360px;">
+                <button id="addLicBtn">Add</button>
+            </div>
+            <div id="licMsg"></div>
+            <h4 style="font-size:13px;color:#0b3d6b;margin:14px 0 6px 0;">License collection log</h4>
+            <div><button id="refreshLicLogBtn" class="small">Refresh log</button> <span id="licLogInfo" class="hint"></span></div>
+            <pre id="licLog" style="max-height:200px;overflow:auto;background:#0f1720;color:#cfe3f5;padding:8px;border-radius:6px;font-size:11px;margin-top:6px;white-space:pre-wrap;">(not loaded yet)</pre>
+            <div class="controls" style="margin-top:16px;"><button id="saveSettingsBtn3">Save license settings</button></div>
+            <div id="licenseMsg"></div>
+        </div>

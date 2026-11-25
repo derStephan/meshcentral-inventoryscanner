@@ -142,6 +142,33 @@ try {
     console.log(((a.indexOf("post('as_get_config'") >= 0 && a.indexOf("post('as_save_config'") >= 0 && a.indexOf("post('as_push'") >= 0 && a.indexOf("post('as_test'") >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v5.0.0: the panel uses the as_* routes');
     console.log(((a.indexOf('asToken') >= 0 && a.indexOf('type="password"') >= 0 && a.indexOf('clear the stored token') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v5.0.0: credentials are password fields with an explicit clear, never prefilled');
     console.log((a.indexOf('asPush(null)') >= 0 && a.indexOf('This leaves the server') >= 0 ? 'PASS ' : (failed++, 'FAIL ')) + 'v5.0.0: pushing asks for explicit consent every time');
+
+    // v5.3.0: the frozen panel inventory. Every static id, help text, report/export link and nav panel that
+    // existed when the fixture was generated must still be reachable - a restructure cannot silently drop a
+    // control or a help block (the v4.9.6 lesson: id-less prose went missing and no test noticed). Removing
+    // something ON PURPOSE means updating tools/fixtures/panel-inventory.json in the same commit, which makes
+    // the loss visible in review instead of silent at runtime.
+    const inv = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'panel-inventory.json'), 'utf8'));
+    // same normalisation the fixture was built with: tags replaced by a space, whitespace collapsed
+    const norm = a.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+    const missIds = inv.ids.filter((x) => a.indexOf('id="' + x + '"') < 0);
+    console.log((missIds.length === 0 ? 'PASS ' : (failed++, 'FAIL ')) + 'inventory: all ' + inv.ids.length + ' static element ids are still present'
+        + (missIds.length ? ' -> MISSING: ' + missIds.join(', ') : ''));
+    const missProse = inv.prose.filter((p) => {
+        const t = norm.indexOf(p.head);
+        return t < 0;
+    });
+    console.log((missProse.length === 0 ? 'PASS ' : (failed++, 'FAIL ')) + 'inventory: all ' + inv.prose.length + ' info/hint help texts are still present'
+        + (missProse.length ? ' -> MISSING: ' + missProse.map((p) => p.head.substring(0, 50)).join(' | ') : ''));
+    const missLinks = inv.links.filter((l) => a.indexOf(l.replace('&', '&amp;')) < 0 && a.indexOf(l) < 0);
+    console.log((missLinks.length === 0 ? 'PASS ' : (failed++, 'FAIL ')) + 'inventory: all ' + inv.links.length + ' report/export links are still present'
+        + (missLinks.length ? ' -> MISSING: ' + missLinks.join(', ') : ''));
+    const missPanels = inv.panels.filter((p) => {
+        const mm = p.split('/');
+        return a.indexOf('data-main="' + mm[0] + '" data-sub="' + mm[1] + '"') < 0;
+    });
+    console.log((missPanels.length === 0 ? 'PASS ' : (failed++, 'FAIL ')) + 'inventory: all ' + inv.panels.length + ' navigation panels are still present'
+        + (missPanels.length ? ' -> MISSING: ' + missPanels.join(', ') : ''));
 } catch (e) { failed++; console.log('FAIL nav checks: ' + e.message); }
 
 console.log(failed === 0 ? '\ntest-views: ALL PASSED' : '\ntest-views: ' + failed + ' FAILURE(S)');

@@ -1,0 +1,15 @@
+        // ---------- filters ----------
+
+        $('filterText').addEventListener('input', function () {
+            state.filterText = this.value;
+            renderTable();
+        });
+        $('filterSeverity').addEventListener('change', function () {
+            state.filterSeverity = this.value;
+            renderTable();
+        });
+        $('filterStatus').addEventListener('change', function () {
+            state.filterStatus = this.value;
+            renderTable();
+        });
+

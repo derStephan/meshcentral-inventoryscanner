@@ -1,0 +1,62 @@
+        <div class="tab-content" id="tab-deploy" data-main="software" data-sub="deploy">
+            <div class="info">
+                Install an <strong>MSI / MSP / EXE / DEB / RPM / shell / BIN installer</strong> on selected devices. Upload a package from this PC
+                (it lands in the plugin's own library on the server), pick a file from <strong>MeshCentral's Server Files</strong>
+                (the per-group folders of the Files tab), or place a file in <code>&lt;datapath&gt;/plugins/inventoryscanner/software/files/</code>
+                and press <em>Rescan</em>. Choose devices one by one <strong>or whole locations</strong>, optionally add command-line
+                parameters. The server copies the package into its temp area and every device fetches it over the agent's own
+                authenticated download channel - the <strong>SHA-256 is verified on the device before anything runs</strong>. Offline devices
+                are <strong>queued and install automatically as soon as they reconnect</strong>. Installs run as SYSTEM (Windows) / root
+                (Linux), silently, and <strong>no device is ever rebooted</strong> (exit code 3010/1641 shows as "ok - reboot pending").
+                Every answer (state + exit code) appears per device, in the device's event list and in the deploy log below.
+            </div>
+
+            <h3>Installer library</h3>
+            <div class="controls">
+                <input type="file" id="swFileInput">
+                <button id="swUploadBtn" class="green">Upload to library</button>
+                <span id="swUploadInfo" class="hint"></span>
+                <button id="swRescanBtn" class="small">Rescan server folder</button>
+            </div>
+            <div class="table-container"><table>
+                <thead><tr><th style="width:280px;">Name</th><th style="width:60px;">Type</th><th style="width:100px;">Size</th><th style="width:140px;">SHA-256</th><th style="width:150px;">Added</th><th>By</th><th style="width:90px;"></th></tr></thead>
+                <tbody id="swLibBody"><tr><td colspan="7" style="color:#888">Loading...</td></tr></tbody>
+            </table></div>
+
+            <h3>New deployment</h3>
+            <div class="controls">
+                <label>Source:
+                    <select id="swSource">
+                        <option value="library">Plugin library (uploaded)</option>
+                        <option value="serverfile">MeshCentral Server Files (Files tab)</option>
+                    </select>
+                </label>
+                <select id="swFileSel" style="min-width:260px;"></select>
+                <select id="swSfFolder" style="min-width:200px;display:none;"></select>
+                <select id="swSfFile" style="min-width:260px;display:none;"></select>
+            </div>
+            <div class="controls">
+                <label>Command-line parameters: <input id="swArgs" type="text" style="min-width:420px" placeholder="optional, e.g. /qn REBOOT=ReallySuppress  (appended to msiexec / dpkg -i / rpm -Uvh; passed to the program for exe/sh/bin)"></label>
+            </div>
+            <div class="hint" style="margin-bottom:6px;">Tick <b>whole locations</b> or single devices (both combine - a device inside a ticked location is not counted twice). Windows and Linux devices are supported; phones and devices without a reported OS are listed as not supported and never touched.</div>
+            <div class="table-container" style="max-height:300px;overflow:auto;"><table>
+                <thead><tr><th style="width:320px;">Location</th><th>Devices</th></tr></thead>
+                <tbody id="swTargetBody"><tr><td colspan="2" style="color:#888">Loading...</td></tr></tbody>
+            </table></div>
+            <div class="controls">
+                <button id="swDeployBtn" class="purple">Deploy (now or on next connect)</button>
+                <span id="swSelInfo" class="hint"></span>
+            </div>
+            <div id="swMsg"></div>
+
+            <h3>Tasks</h3>
+            <div><button id="swRefreshBtn" class="small">Refresh</button> <span id="swRunInfo" class="hint"></span></div>
+            <div class="table-container"><table>
+                <thead><tr><th>Package</th><th style="width:70px;">Type</th><th>Arguments</th><th style="width:330px;">Result</th><th style="width:170px;">Actions</th></tr></thead>
+                <tbody id="swTaskBody"><tr><td colspan="5" style="color:#888">Loading...</td></tr></tbody>
+            </table></div>
+
+            <h3>Deploy log</h3>
+            <div><button id="refreshSwLogBtn" class="small">Refresh log</button> <span id="swLogInfo" class="hint"></span></div>
+            <pre id="swLog" style="max-height:260px;overflow:auto;background:#0f1720;color:#cfe3f5;padding:8px;border-radius:6px;font-size:11px;margin-top:6px;white-space:pre-wrap;">(not loaded yet)</pre>
+        </div>

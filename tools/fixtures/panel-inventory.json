@@ -1,0 +1,423 @@
+{
+ "_comment": "Frozen inventory of the rendered admin panel. tools/test-views.js asserts every entry is still present. Regenerate with `node tools/gen-panel-inventory.js` and commit it in the SAME change when something is removed on purpose.",
+ "generatedFrom": "views/assessment.handlebars + views/partials/**",
+ "ids": [
+  "addCpeBtn",
+  "addLicBtn",
+  "asAuthMode",
+  "asBodyTemplate",
+  "asClearHeaderValue",
+  "asClearPassword",
+  "asClearToken",
+  "asEnabled",
+  "asEndpointUrl",
+  "asExternalIdPath",
+  "asGenericFields",
+  "asHeaderName",
+  "asHeaderValue",
+  "asHeadersJson",
+  "asIntervalHours",
+  "asJiraFields",
+  "asJiraIssueType",
+  "asJiraLabel",
+  "asJiraProject",
+  "asJiraSummary",
+  "asJiraVulnIssues",
+  "asLog",
+  "asLogInfo",
+  "asMethod",
+  "asMsg",
+  "asOnly",
+  "asPassword",
+  "asPushAllBtn",
+  "asRefreshLogBtn",
+  "asRunInfo",
+  "asSaveBtn",
+  "asSnipeCategory",
+  "asSnipeFields",
+  "asSnipeNameTemplate",
+  "asStatusBody",
+  "asTargetType",
+  "asTemplateHint",
+  "asTestBtn",
+  "asToken",
+  "asTokenHint",
+  "asUsername",
+  "cpeFilter",
+  "cpeMsg",
+  "cpeProduct",
+  "cpeRegex",
+  "cpeTableBody",
+  "cpeTableSourceInfo",
+  "cpeVendor",
+  "dlDeviceBody",
+  "dlMsg",
+  "dlRefreshBtn",
+  "dlRunInfo",
+  "dlSelectAll",
+  "drDevBody",
+  "drLog",
+  "drLogInfo",
+  "drMinBuild",
+  "drMsg",
+  "drRefreshBtn",
+  "drRunState",
+  "filterSeverity",
+  "filterStatus",
+  "filterText",
+  "groupTableBody",
+  "invFloat",
+  "licCollectAllBtn",
+  "licCustomBody",
+  "licDeviceBody",
+  "licLabel",
+  "licLog",
+  "licLogInfo",
+  "licMatch",
+  "licMsg",
+  "licRules",
+  "licRunInfo",
+  "licTableSourceInfo",
+  "licenseMsg",
+  "locAll",
+  "locApply",
+  "locClose",
+  "locCountTxt",
+  "locList",
+  "locationPanel",
+  "locationToggle",
+  "mainnav",
+  "msg",
+  "nvdLog",
+  "nvdLogInfo",
+  "osCurrentInfo",
+  "osDevBody",
+  "osLifecycleInfo",
+  "osLog",
+  "osLogInfo",
+  "osMsg",
+  "osRefreshBtn",
+  "osRunState",
+  "osUpdBtn",
+  "osUpgBtn",
+  "osUpgUrgentBtn",
+  "osUrgentDaysInfo",
+  "pageTitle",
+  "refreshDrLogBtn",
+  "refreshLicLogBtn",
+  "refreshNvdLogBtn",
+  "refreshOsLogBtn",
+  "refreshSwLogBtn",
+  "refreshWgLogBtn",
+  "resetSettingsBtn",
+  "results",
+  "saveSettingsBtn",
+  "saveSettingsBtn2",
+  "saveSettingsBtn3",
+  "scanBtn",
+  "scanStatus",
+  "setAnyAge",
+  "setAnyAgeSrc",
+  "setAutoMatch",
+  "setCollectInterval",
+  "setCollectIntervalSrc",
+  "setCollectOnConnect",
+  "setCpeTableEnabled",
+  "setCpeTableUrl",
+  "setCpeTableUrlSrc",
+  "setDistroManaged",
+  "setInterval",
+  "setIntervalSrc",
+  "setLicCollect",
+  "setLicInterval",
+  "setLicIntervalSrc",
+  "setLicMsKeys",
+  "setLicTableEnabled",
+  "setLicTableEnabledSrc",
+  "setLicTableUrl",
+  "setLicTableUrlSrc",
+  "setNotifyOnScan",
+  "setNotifyRepeat",
+  "setNotifyThreshold",
+  "setOsLifecycleEnabled",
+  "setOsLifecycleUrl",
+  "setOsLifecycleUrlSrc",
+  "setOsUrgentDays",
+  "setOsUrgentDaysSrc",
+  "setUpdateHours",
+  "setUpdateHoursSrc",
+  "settingsMsg",
+  "statusMeta",
+  "subnav",
+  "swArgs",
+  "swDeployBtn",
+  "swFileInput",
+  "swFileSel",
+  "swLibBody",
+  "swLog",
+  "swLogInfo",
+  "swMsg",
+  "swRefreshBtn",
+  "swRescanBtn",
+  "swRunInfo",
+  "swSelInfo",
+  "swSfFile",
+  "swSfFolder",
+  "swSource",
+  "swTargetBody",
+  "swTaskBody",
+  "swUploadBtn",
+  "swUploadInfo",
+  "swfBody",
+  "swfFilter",
+  "swfMsg",
+  "swfRefreshBtn",
+  "swfRunInfo",
+  "swfSelectUpdatable",
+  "swfUpdateAllBtn",
+  "tab-assessment",
+  "tab-asset",
+  "tab-deploy",
+  "tab-devicelist",
+  "tab-license",
+  "tab-os",
+  "tab-reset",
+  "tab-settings",
+  "tab-swlist",
+  "tab-updates",
+  "tab-vulndata",
+  "updateNvdInfo",
+  "updateNvdNowBtn",
+  "vulnDataMsg",
+  "wgDevBody",
+  "wgDryAllBtn",
+  "wgEnabled",
+  "wgGroupBody",
+  "wgIgAdd",
+  "wgIgBody",
+  "wgIgId",
+  "wgIgNote",
+  "wgLog",
+  "wgLogInfo",
+  "wgMsg",
+  "wgPinSync",
+  "wgPkgBody",
+  "wgPkgInfo",
+  "wgPkgRefresh",
+  "wgRunBtn",
+  "wgRunState",
+  "wgSaveBtn"
+ ],
+ "prose": [
+  {
+   "head": "Select the locations to assess via the floating panel on the right. The table sh",
+   "len": 860
+  },
+  {
+   "head": "Values saved here go into scanner-settings.json inside the plugin's data folder ",
+   "len": 490
+  },
+  {
+   "head": "Measured from the end of the last scan; restart-proof. 24 = daily, 168 = weekly,",
+   "len": 120
+  },
+  {
+   "head": "\"any version\" CPE matches older than N years are hidden; 0 = never.",
+   "len": 67
+  },
+  {
+   "head": "1440 = daily, 0 = periodic collection off (offline devices keep their last list)",
+   "len": 81
+  },
+  {
+   "head": "Staggered randomly (5s to 5min) so reconnecting fleets do not cause a load spike",
+   "len": 81
+  },
+  {
+   "head": "Programs without a table entry are matched against the CPE product names that ac",
+   "len": 279
+  },
+  {
+   "head": "Packages installed from the distribution (dpkg/rpm/apk/pacman, maintained by Ubu",
+   "len": 451
+  },
+  {
+   "head": "Support/end-of-life dates of OS releases are downloaded from the public endoflif",
+   "len": 241
+  },
+  {
+   "head": "https, ending with \"/\" (the product slug + \".json\" is appended). Only change thi",
+   "len": 95
+  },
+  {
+   "head": "OS Updates tab: an outdated release counts as \"Upgrade urgent\" once its support ",
+   "len": 344
+  },
+  {
+   "head": "Notification becomes a to-do list: findings stay listed as \"(severity, open)\" un",
+   "len": 166
+  },
+  {
+   "head": "\"Scan\" unchecked for all groups = scan all groups (an empty selection means all)",
+   "len": 163
+  },
+  {
+   "head": "CSV export (all devices): Hardware &middot; Software &middot; Vulnerabilities",
+   "len": 77
+  },
+  {
+   "head": "Fetches missing years and refreshes the current year immediately (rate-limited, ",
+   "len": 143
+  },
+  {
+   "head": "Every NVD CVE names the affected software with a technical code, a CPE like cpe:",
+   "len": 961
+  },
+  {
+   "head": "The curated table is maintained as cpe-table.json in this plugin's GitHub reposi",
+   "len": 246
+  },
+  {
+   "head": "https only. Only change this if you maintain your own table copy.",
+   "len": 65
+  },
+  {
+   "head": "Master switch for the License keys section below. Off by default; nothing reads ",
+   "len": 165
+  },
+  {
+   "head": "0 = off (on demand only, the default). Otherwise the server runs the same read-o",
+   "len": 441
+  },
+  {
+   "head": "Also read the Microsoft partial product key(s) from the WMI SoftwareLicensingPro",
+   "len": 114
+  },
+  {
+   "head": "Curated table shipped in license-table.json and refreshed from its URL with the ",
+   "len": 125
+  },
+  {
+   "head": "https only; the rule table that maps a program name to where its license is stor",
+   "len": 83
+  },
+  {
+   "head": "For asset management the software-inventory CSV can also carry a License and Lic",
+   "len": 1304
+  },
+  {
+   "head": "One row per device (merged live from the update, OS, reset and license engines p",
+   "len": 345
+  },
+  {
+   "head": "Every distinct installed program across all devices, with how many carry it and ",
+   "len": 285
+  },
+  {
+   "head": "This is the only place where this plugin sends data OFF the server. Everything e",
+   "len": 1226
+  },
+  {
+   "head": "Master switch. Off by default; nothing is sent until it is on AND a target is co",
+   "len": 89
+  },
+  {
+   "head": "Generic: the exact URL to POST to. Jira: the base URL (e.g. https://yourcompany.",
+   "len": 152
+  },
+  {
+   "head": "For Basic auth (Jira Cloud: your account e-mail).",
+   "len": 49
+  },
+  {
+   "head": "Stored secrets are never displayed. Leave blank to keep the stored value; tick \"",
+   "len": 99
+  },
+  {
+   "head": "0 = no automatic push (on-demand only). Otherwise the server pushes on this cycl",
+   "len": 82
+  },
+  {
+   "head": "Where the target returns its own id (a dotted path, e.g. id or data.asset.id ). ",
+   "len": 209
+  },
+  {
+   "head": "Used to recognise issues this plugin created.",
+   "len": 45
+  },
+  {
+   "head": "Off: one issue per device carrying all three lists. On: additionally one issue p",
+   "len": 91
+  },
+  {
+   "head": "Numeric Snipe-IT category id; leave empty for none.",
+   "len": 51
+  },
+  {
+   "head": "Automatic software updates via winget on Windows devices. Nothing runs automatic",
+   "len": 966
+  },
+  {
+   "head": "Every change on this tab (switches, groups, ignore list, exclusions, \"+ ignore\" ",
+   "len": 180
+  },
+  {
+   "head": "Every Windows device with its winget actions. Excluded machines stay out of all ",
+   "len": 469
+  },
+  {
+   "head": "Every winget package your devices reported in their most recent run - aggregate ",
+   "len": 431
+  },
+  {
+   "head": "force OS updates runs on every non-excluded Windows and Linux device: on Windows",
+   "len": 2775
+  },
+  {
+   "head": "Install an MSI / MSP / EXE / DEB / RPM / shell / BIN installer on selected devic",
+   "len": 962
+  },
+  {
+   "head": "Tick whole locations or single devices (both combine - a device inside a ticked ",
+   "len": 240
+  },
+  {
+   "head": "This is the one feature that restarts a device. It resets a single Windows PC wi",
+   "len": 1151
+  },
+  {
+   "head": "Every package of this run with its outcome - failed rows carry the exit code and",
+   "len": 185
+  },
+  {
+   "head": "' + devs.length + ' device(s)",
+   "len": 29
+  },
+  {
+   "head": "' + esc(fmtLocal(t.created)) + ' by ' + esc(t.createdBy || '?') + (t.sourceType ",
+   "len": 125
+  }
+ ],
+ "links": [
+  "action=deviceReport",
+  "action=export&type=hardware",
+  "action=export&type=hardware",
+  "action=export&type=software",
+  "action=export&type=software",
+  "action=export&type=vulns",
+  "action=report"
+ ],
+ "panels": [
+  "devices/devicelist",
+  "devices/os",
+  "devices/reset",
+  "devices/updates",
+  "settings/asset",
+  "settings/general",
+  "software/deploy",
+  "software/license",
+  "software/softwarelist",
+  "vulns/assessment",
+  "vulns/data"
+ ]
+}

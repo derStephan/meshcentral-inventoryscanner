@@ -1,0 +1,94 @@
+        <div class="tab-content" id="tab-settings" data-main="settings" data-sub="general">
+            <h3>Scheduled scanning &amp; collection</h3>
+            <div class="info">
+                Values saved here go into <code>scanner-settings.json</code> inside the plugin's data folder and
+                <strong>override the same keys in the server's config.json</strong> - immediately and without a
+                restart. config.json is never written by the plugin and remains the fallback
+                ("from config.json" / "built-in default"). Use a field's <em>revert</em> option or the
+                <em>Reset all</em> button to hand control back to config.json. The configuration for vulnerability
+                data (NVD, CPE table) and for license keys lives under their own navigation items.
+            </div>
+            <div class="setgrid">
+                <label for="setInterval">Scan interval (hours)</label>
+                <div><input type="text" id="setInterval" class="num">
+                    <select id="setIntervalSrc" class="srcsel"></select>
+                    <div class="hint">Measured from the end of the last scan; restart-proof. 24 = daily, 168 = weekly, 720 = monthly, 0 = scheduled scans off.</div></div>
+
+                <label for="setAnyAge">Suppress version-less CVEs older than (years)</label>
+                <div><input type="text" id="setAnyAge" class="num">
+                    <select id="setAnyAgeSrc" class="srcsel"></select>
+                    <div class="hint">"any version" CPE matches older than N years are hidden; 0 = never.</div></div>
+
+                <label for="setCollectInterval">Collect inventory every (minutes)</label>
+                <div><input type="text" id="setCollectInterval" class="num">
+                    <select id="setCollectIntervalSrc" class="srcsel"></select>
+                    <div class="hint">1440 = daily, 0 = periodic collection off (offline devices keep their last list).</div></div>
+
+                <label for="setCollectOnConnect">Collect when an agent connects</label>
+                <div><input type="checkbox" id="setCollectOnConnect">
+                    <div class="hint">Staggered randomly (5s to 5min) so reconnecting fleets do not cause a load spike.</div></div>
+
+                <label for="setAutoMatch">Auto-map unknown software names to CPE products</label>
+                <div><input type="checkbox" id="setAutoMatch">
+                    <div class="hint">Programs without a table entry are matched against the CPE product names that actually exist in the
+                    downloaded NVD data (name cleaned, publisher as vendor evidence, versions always re-checked). Offline, no configuration
+                    needed; switch off to use only the curated + custom tables.</div></div>
+
+                <label for="setDistroManaged">Linux distribution packages: trust the distribution while the OS is supported</label>
+                <div><input type="checkbox" id="setDistroManaged">
+                    <div class="hint">Packages installed from the distribution (dpkg/rpm/apk/pacman, maintained by Ubuntu/Debian/Red Hat/...)
+                    get their security fixes as backports into the SAME upstream version, so an NVD version check only produces false
+                    alarms. With this on they are reported as "patched by the distribution" while the OS release is supported, and as
+                    end-of-life (finding OS-EOL) once it is not. Third-party repositories (Docker, NVIDIA, ...) are still checked normally.</div></div>
+
+                <label for="setOsLifecycleEnabled">Fetch OS support dates</label>
+                <div><input type="checkbox" id="setOsLifecycleEnabled">
+                    <span id="osLifecycleInfo" class="hint"></span>
+                    <div class="hint">Support/end-of-life dates of OS releases are downloaded from the public endoflife.date API with every NVD
+                    refresh and cached; nothing about your devices is sent. Off or offline: the support state is "unknown" and no OS-EOL finding is raised.</div></div>
+
+                <label for="setOsLifecycleUrl">Lifecycle API URL</label>
+                <div><input type="text" id="setOsLifecycleUrl" style="width:420px">
+                    <select id="setOsLifecycleUrlSrc" class="srcsel"></select>
+                    <div class="hint">https, ending with "/" (the product slug + ".json" is appended). Only change this for a mirror.</div></div>
+
+                <label for="setOsUrgentDays">OS upgrade is urgent this many days before support ends</label>
+                <div><input type="text" id="setOsUrgentDays" class="num">
+                    <select id="setOsUrgentDaysSrc" class="srcsel"></select>
+                    <div class="hint">OS Updates tab: an outdated release counts as "Upgrade urgent" once its support (endoflife.date)
+                    has ended or fewer days than this are left, otherwise as "Upgrade available". 365 = default, 0 = only after support ended.
+                    Windows Home/Pro releases get 24 months of support, so with 365 a Pro release becomes urgent about a year after it came out.</div></div>
+
+                <label for="setNotifyOnScan">Notify admins after scans</label>
+                <div><input type="checkbox" id="setNotifyOnScan"></div>
+
+                <label for="setNotifyThreshold">Global notify threshold</label>
+                <div><select id="setNotifyThreshold">
+                        <option value="CRITICAL">Critical and above</option>
+                        <option value="HIGH">High and above</option>
+                        <option value="MEDIUM">Medium and above</option>
+                        <option value="LOW">Low and above</option>
+                        <option value="UNKNOWN">Everything</option>
+                    </select></div>
+
+                <label for="setNotifyRepeat">Repeat unrated findings every scan</label>
+                <div><input type="checkbox" id="setNotifyRepeat">
+                    <div class="hint">Notification becomes a to-do list: findings stay listed as "(severity, open)" until they are rated or flagged. New ones are always reported once as "(severity, new)".</div></div>
+            </div>
+
+            <h3>Device groups</h3>
+            <div class="hint" style="margin-bottom:6px;">"Scan" unchecked for <b>all</b> groups = scan <b>all</b> groups (an empty selection means all).
+                A per-group threshold overrides the global one for notifications from that group.</div>
+            <div class="table-container">
+                <table>
+                    <thead><tr><th>Group</th><th>Scan</th><th>Notify threshold</th><th>Source</th></tr></thead>
+                    <tbody id="groupTableBody"><tr><td colspan="4" style="color:#888">Loading...</td></tr></tbody>
+                </table>
+            </div>
+
+            <div class="controls" style="margin-top:16px;">
+                <button id="saveSettingsBtn">Save Settings</button>
+                <button id="resetSettingsBtn" class="red">Reset all to config.json</button>
+            </div>
+            <div id="settingsMsg"></div>
+        </div>

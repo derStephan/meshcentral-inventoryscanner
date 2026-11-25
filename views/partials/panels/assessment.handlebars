@@ -1,0 +1,42 @@
+        <div class="tab-content active" id="tab-assessment" data-main="vulns" data-sub="assessment">
+            <div class="info">
+                Select the <strong>locations</strong> to assess via the floating panel on the right. The table shows all findings of the
+                selected locations; a rating you save applies to <strong>every selected location</strong> in which the finding occurs
+                (no duplicate work per location). Ratings are stored per location and a non-empty comment is required for a rating.
+                <strong>False positives</strong> are excluded from the vulnerability counts and need no comment.
+                <br><br>
+                Opening this page (and <em>Apply</em> in the location panel) reads the <strong>stored</strong> result - no device is
+                touched, so it is instant. <strong>Scan &amp; Review</strong> is the only thing that queries the devices; while it runs
+                the server stays usable (other tabs and the rest of MeshCentral keep answering), and a second panel that presses the
+                button joins the running scan instead of starting another one. Automatic scans keep updating the stored result on their
+                own schedule (Settings tab).
+            </div>
+            <div class="controls">
+                <button id="scanBtn">Scan &amp; Review</button>
+                <button id="locationToggle" class="location-toggle">Locations (<span id="locCountTxt">all</span>)</button>
+                <span id="scanStatus"></span>
+            </div>
+
+            <div class="filter-row">
+                <input type="text" id="filterText" class="filter-input" placeholder="Filter by CVE, software, device, location...">
+                <select id="filterSeverity" class="filter-select">
+                    <option value="">All Severities</option>
+                    <option value="CRITICAL">Critical</option>
+                    <option value="HIGH">High</option>
+                    <option value="MEDIUM">Medium</option>
+                    <option value="LOW">Low</option>
+                    <option value="UNKNOWN">Unknown</option>
+                    <option value="false positive">False Positive</option>
+                </select>
+                <select id="filterStatus" class="filter-select">
+                    <option value="">All Statuses</option>
+                    <option value="CVE">CVE</option>
+                    <option value="false positive">False Positive</option>
+                    <option value="rated">Rated</option>
+                    <option value="unrated">Unrated</option>
+                </select>
+            </div>
+
+            <div id="msg"></div>
+            <div class="table-container" id="results"></div>
+        </div>

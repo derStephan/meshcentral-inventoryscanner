@@ -1525,11 +1525,19 @@ steps.push(function (next) {
     var base = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-rst-'));
     var pd = path.join(base, 'plugins', 'inventoryscanner');
     fs.mkdirSync(path.join(pd, 'lib'), { recursive: true });
-    fs.mkdirSync(path.join(pd, 'views'), { recursive: true });
     var srcDir = path.join(__dirname, '..');
     ['inventoryscanner.js', 'cpe-table.json'].forEach(function (f) { fs.copyFileSync(path.join(srcDir, f), path.join(pd, f)); });
     fs.readdirSync(path.join(srcDir, 'lib')).forEach(function (f) { fs.copyFileSync(path.join(srcDir, 'lib', f), path.join(pd, 'lib', f)); });
-    fs.copyFileSync(path.join(srcDir, 'views', 'assessment.handlebars'), path.join(pd, 'views', 'assessment.handlebars'));
+    // the whole views/ tree, exactly like the installer unpacks it - since v5.3.0 the panel is composed of
+    // handlebars partials under views/partials/, and an unresolved partial is a render error
+    (function copyTree(rel) {
+        var s = path.join(srcDir, rel), d = path.join(pd, rel);
+        fs.mkdirSync(d, { recursive: true });
+        fs.readdirSync(s, { withFileTypes: true }).forEach(function (e) {
+            if (e.isDirectory()) { copyTree(path.join(rel, e.name)); }
+            else { fs.copyFileSync(path.join(s, e.name), path.join(d, e.name)); }
+        });
+    })('views');
     fs.writeFileSync(path.join(pd, 'config.json'), fs.readFileSync(path.join(srcDir, 'config.json'), 'utf8').replace(/"version":\s*"[^"]+"/, '"version": "0.0.1"'));
     var events = [];
     var ms3 = { db: db, datapath: base, debug: function () { }, args: { launch: '1234' }, DispatchEvent: function (t, s, e) { events.push(e); },
@@ -1562,6 +1570,18 @@ steps.push(function (next) {
             var lg = fs.readFileSync(path.join(inst.nvdDataPath, 'nvd-download.log'), 'utf8');
             check('restart: logged in the Settings-tab log (nvd-download.log), not in the winget log', lg.indexOf('restarting the MeshCentral server to load it') >= 0 && lg.indexOf('restarting MeshCentral now to activate plugin version 0.0.2') >= 0 &&
                 !(fs.existsSync(inst.wingetLogPath) && fs.readFileSync(inst.wingetLogPath, 'utf8').indexOf('restarting') >= 0));
+            // v5.3.0: the panel is composed of handlebars partials, and the installer unpacks views/ LAST -
+            // an unresolved partial is a render error, so the tree must not be declared ready without them.
+            var partFile = path.join(pd, 'views', 'partials', 'panels', 'reset.handlebars');
+            var partBackup = fs.readFileSync(partFile, 'utf8');
+            check('restart: a complete tree INCLUDING every partial is ready', inst.upgradeTreeReady('0.0.2') === true);
+            fs.writeFileSync(partFile, '');
+            check('restart: an EMPTY partial makes the tree incomplete', inst.upgradeTreeReady('0.0.2') === false);
+            fs.writeFileSync(partFile, partBackup);
+            fs.renameSync(partFile, partFile + '.missing');
+            check('restart: a MISSING partial makes the tree incomplete too', inst.upgradeTreeReady('0.0.2') === false);
+            fs.renameSync(partFile + '.missing', partFile);
+            check('restart: restoring the partial makes the tree ready again', inst.upgradeTreeReady('0.0.2') === true);
             next();
         }, 2500);
     }, 300);

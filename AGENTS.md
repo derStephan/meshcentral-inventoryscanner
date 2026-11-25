@@ -17,7 +17,18 @@ Sub-folders INSIDE the repository (views/, tools/, lib/) are unpacked as-is and 
   lib/<module>.js              the actual functionality, one module per feature area, see "Architecture" below
   config.json                  plugin manifest: installer metadata (and MeshCentral-side config file)
   cpe-table.json               THE maintained mapping table: downloaded by running servers, edit = no release needed
-  views/assessment.handlebars  admin panel (incl. its inline <script> - the panel logic lives HERE)
+  views/assessment.handlebars  admin panel SHELL (v5.3.0): head/CSS, two-layer nav, container, the floating
+                               location panel and the IIFE brackets of the inline <script>; every panel and every
+                               JS area is a partial included from views/partials/
+  views/partials/panels/*.handlebars  one file per panel (assessment, settings, vulndata, license, devicelist,
+                               swlist, asset, updates, os, deploy, reset) - included as {{> panels/<name> }}
+  views/partials/js/*.handlebars      one file per JS area (prelude, core, state, nav, winget, os, deploy,
+                               locations, scan, findings, filters, cpe, settings, reset, license, devicelist,
+                               swlist, asset, init) - included INSIDE the shell's IIFE, so the closure and all
+                               its helpers stay exactly as they were; each fragment holds complete declarations
+                               only and is syntax-checked on its own by tools/check.js
+  views/partials/probe.handlebars     the canary that proves partials resolve on a real server (CI asserts its
+                               marker in the panel response); renders as an HTML comment only
   views/report.handlebars      printable vulnerability report (overview + one page per location)
   views/deviceReport.handlebars printable device inventory report (host names, one page per location)
 tools/                         self-contained verification for agents (no MeshCentral server needed)
@@ -102,7 +113,7 @@ Consequences an agent must respect:
 
 | File | Owns (functions/state of that area) |
 |---|---|
-| `lib/lifecycle.js` | `server_startup` (incl. the code hot-swap), `fixOwnPluginUrl`, `checkAndRepairNvdTimer` (v5.2.0: REPORTS a stale feed + notifies admins, arms no timer itself - the due-aware `scheduleUpdate()` from `server_startup` does that once) |
+| `lib/lifecycle.js` | `server_startup` (incl. the code hot-swap), `fixOwnPluginUrl`, `upgradeTreeReady` (since v5.3.0 also requires every REFERENCED handlebars partial to exist and be non-empty - the installer unpacks alphabetically with `views/` last, and an unresolved partial is a render error), `checkAndRepairNvdTimer` (v5.2.0: REPORTS a stale feed + notifies admins, arms no timer itself - the due-aware `scheduleUpdate()` from `server_startup` does that once) |
 | `lib/settings.js` | `effectiveSectionConfig`, the `scanner-settings.json` overlay, `rescheduleAll` (v5.2.0: also re-arms the NVD feed timer and the license schedule - the generation bump invalidates them), `get/save/revert_setting` handlers |
 | `lib/assessments.js` | `assessments` store, `getMeshAssessment`, `save_assessment` / `flag_false_positive` / `unflag_false_positive` handlers, `isFindingId` |
 | `lib/nvd.js` | feed download + `.meta` check, `runNvdUpdate` (`nvdUpdateRunning` guard), `ensureNvdData`, `scheduleUpdate` (**due-aware since v5.2.0**: the delay is measured from `lastUpdate`, a stale/missing feed runs after `NVD_MIN_DELAY_MS` (60 s) and a FAILED run retries after `NVD_RETRY_MS` (6 h) - never a tight loop against the rate-limited NVD), feed loading, `nvdLog`, NVD log tailing |
@@ -222,6 +233,17 @@ Based on official MeshCentral source (`pluginHandler.js`, `webserver.js`, `db.js
   purpose (reverse proxies rewrite Host).
 - **Views:** `res.render('<name>', data)` â†” `views/<name>.handlebars` â€” **case-sensitive** on Linux.
   Only core Handlebars helpers exist (`each if unless with @index @last @key`); no `Object.keys`, no custom helpers.
+- **Handlebars PARTIALS work for plugin views (verified v5.3.0, proven live in CI).** `pluginHandler.handleAdminReq`
+  does `serv.app.set('views', <pluginPath>/<pin>/views)` before calling the plugin, and `webserver.js` creates the
+  engine with `exphbs.engine({ defaultLayout: false })` - i.e. WITHOUT a `partialsDir`. `express-handlebars@8.0.5`
+  derives it **per render** from the views path Express resolved:
+  `this.partialsDir = this.config.partialsDir || path.join(viewsPath, "partials/")`, and `_getDir` globs
+  `**/*.handlebars` (posix) with `_getTemplateName` stripping only the extension - so sub-folders become
+  namespaces: `views/partials/panels/x.handlebars` is `{{> panels/x }}`. Two consequences an agent must respect:
+  (1) `_getDir` RETHROWS glob errors, so `views/partials/` must exist - `upgradeTreeReady` therefore checks every
+  REFERENCED partial (not just the files on disk) before an upgrade restart is triggered; (2) partials are cached
+  in `_fsCache`/the Express view cache, so a partial change needs the same restart as a view change (unchanged
+  behaviour). The CI container test asserts the `inv-partial-probe` marker in the real panel response.
 - **Device-list buttons:** MeshCentral has no plugin API for buttons and no `mainmenuicons` key (verified
   against upstream `views/default.handlebars`; the only consumed `customui` keys are devicesbarbuttons,
   desktopbuttons, terminalbuttons, filesbuttons). This plugin therefore does NOT rely on customui config:
@@ -418,6 +440,25 @@ moves to `falsePositiveCves` and is excluded from severity counting; a group rat
 for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like normal findings.
 
 ## Panel behavior (views/assessment.handlebars inline JS)
+
+- **View composition (v5.3.0):** the panel is no longer one 3,240-line file. `views/assessment.handlebars` is a
+  ~165-line SHELL (head/CSS, the two-layer nav, the container, `#invFloat`, the floating location panel and the
+  `(function () { … })();` brackets) that includes 11 panel partials and 19 JS partials. The JS fragments are
+  included **inside** the IIFE, so there is still exactly ONE closure and every helper (`$`, `esc`, `post`,
+  `showMsg`, `selectSub`, …) resolves exactly as before - no namespace object, no global leak, no reordering.
+  Rules for editing: a JS fragment must contain **complete declarations only** (never an unbalanced brace - the
+  brackets belong to the shell), each fragment keeps its `// ---------- area ----------` banner, and no fragment
+  may contain a literal `{{` (Handlebars would eat it) except `{{shortName}}`; `tools/check.js` syntax-checks
+  every fragment on its own AND the composed script (it inlines the partials itself, so it still needs no
+  dependency). The rendered output is unchanged: the split was proven by rendering the old and the new shell with
+  the same data and comparing the static id set (205), the composed script text, all 47 info/hint help blocks and
+  all report/export links.
+- **Frozen panel inventory (`tools/fixtures/panel-inventory.json`):** every static element id, every info/hint
+  help text, every report/export link and every `data-main`/`data-sub` panel of the rendered page is listed there,
+  and `tools/test-views.js` asserts all of them are still present. This is the guard against the v4.9.6 class of
+  bug (a restructure silently dropped id-less help prose). Removing something **on purpose** (e.g. issue #9 drops
+  a column) means regenerating the fixture in the same commit - `node tools/gen-panel-inventory.js` - so the loss
+  is a visible, reviewed diff instead of a silent one.
 
 - **No scan on load (v4.4.0)**: opening the page (and *Apply* in the location panel) calls
   `scan&cached=1`, which reads the stored snapshot - instant, no device traffic - and says whose result it
@@ -1135,6 +1176,12 @@ MeshCentral install folder) and root `/*.txt` + `/*.csv` are gitignored as a gua
   contain none), JSON validity of config files, and view-nameâ†”render-name consistency over
   the WHOLE JS tree (the `res.render()` calls live in `lib/routes.js`/`lib/reports.js` since v3.5.1).
   Must run anywhere (no dependencies).
+  Since v5.3.0 it also owns the view-modularisation guards, still without any dependency: every `{{> partial }}`
+  reference resolves to a file in `views/partials/` and no partial file is an unreferenced orphan (the same
+  symmetry rule as `lib/` â†” the modules list; handlebars comments are stripped first, because documentation
+  legitimately quotes the partial syntax), each `js/*` fragment is `node --check`ed **on its own** (wrapped in a
+  function) and screened for a stray `{{`, and the composed panel script is checked by INLINING the partials
+  itself - so the combined-syntax guard survived the split without needing handlebars.
 - `tools/test-plugin.js`: 555 behavioral assertions (88 steps; on Windows with PowerShell AND a POSIX shell present) against the real module (mocked MeshCentral DB/webserver):
   the module wiring itself (every lib file attaches, a fresh instance exposes the same function surface, no
   module-level locals in `lib/`), locations grouping & counting, manual-rating severity override, FP exclusion, host-name preference, coverage
@@ -1175,7 +1222,12 @@ MeshCentral install folder) and root `/*.txt` + `/*.csv` are gitignored as a gua
   `inventoryscanner.js` alone, that file has no implementation any more. The upgrade test copies the whole
   plugin tree including `lib/`, exactly like the installer unpacks it.
 - `tools/test-views.js`: compiles all three views and renders them with mock data **and empty data**; without
-  handlebars it SKIPs locally but FAILS when the `CI` environment variable is set (v4.3.0).
+  handlebars it SKIPs locally but FAILS when the `CI` environment variable is set (v4.3.0). Since v5.3.0 it
+  registers `views/partials/**` with the express-handlebars naming rule before rendering, asserts the panel
+  resolves a partial at all, and checks the rendered page against the frozen inventory
+  `tools/fixtures/panel-inventory.json` (every static id, every info/hint help text, every report/export link,
+  every `data-main`/`data-sub` panel). Regenerate that fixture with `node tools/gen-panel-inventory.js` whenever
+  something is removed ON PURPOSE, and commit both together.
 
 If you change data shapes, UPDATE these tests â€” they are the contract.
 
@@ -1590,7 +1642,7 @@ v5.1.0: refactor - ONE canonical inventory collection, so browser, CSV, reports 
   report count; that CSV/push/fleet-index list the same programs; that the hardware serial + CPU are identical
   in the hardware CSV and the push; and that a sysinfo-only program reaches both the software CSV and the
   license run. These assertions fail on any future drift between the views. Version 5.0.1 -> 5.1.0.
-v5.2.0 (this release): optional license collection schedule + the NVD feed timer actually runs.
+v5.2.0: optional license collection schedule + the NVD feed timer actually runs.
 - **License collection can now run automatically** (requested): a new `licenseCollectIntervalHours` setting
   (0..8760, **default 0 = off**, on demand only as before) in the `inventoryScanner` section, editable in
   Software > License keys with the usual source select + revert. It needs the existing master switch
@@ -1628,3 +1680,41 @@ v5.2.0 (this release): optional license collection schedule + the NVD feed timer
   validates/reverts the new interval. Plus 2 render assertions for the new field and its honest description.
   The old "license is never scheduled" assertion was deliberately replaced (the invariant changed by request).
   Version 5.1.0 -> 5.2.0.
+v5.3.0 (this release): the panel view is modularised - STRUCTURE ONLY, no behaviour change. Preparation for
+issue #9, which restructures the navigation and would otherwise mean editing one 3,240-line file.
+- Verified first (upstream sources, then proven live): MeshCentral's `pluginHandler.handleAdminReq` does
+  `serv.app.set('views', <pluginPath>/<pin>/views)` per request and `webserver.js` builds the engine with
+  `exphbs.engine({ defaultLayout: false })` - no `partialsDir`; `express-handlebars@8.0.5` derives it PER RENDER
+  as `path.join(viewsPath, "partials/")` and globs `**/*.handlebars` with posix paths, so sub-folders become
+  namespaces. A spike commit (probe partial + a CI container assertion on its marker) proved it against a real
+  server BEFORE this split relied on it: `PASS the panel resolves a handlebars partial from views/partials/`.
+- `views/assessment.handlebars` went from 3,240 lines to a ~165-line SHELL (head/CSS, two-layer nav, container,
+  `#invFloat`, the floating location panel, the `<script>` + IIFE brackets). It now includes 11 panel partials
+  (`views/partials/panels/*`) and 19 JS partials (`views/partials/js/*`). The split was done MECHANICALLY by a
+  script that copies verbatim line ranges (panels delimited by their 8-space `<div class="tab-content">` block,
+  JS by the existing `// ---------- area ----------` banners) - no line was rewritten by hand.
+- The JS fragments are included INSIDE the one IIFE, so there is still exactly ONE closure: every helper (`$`,
+  `esc`, `post`, `showMsg`, `selectSub`, ...) resolves as before, there is no namespace object and no global
+  leak, and no declaration order changed. Each fragment holds complete declarations only (the brackets stay in
+  the shell), so it is independently parseable.
+- Proven equivalent, not assumed: the pre-split file and the new shell were rendered with the same data and
+  compared - identical static id set (205, none missing, none added), the composed inline script text identical
+  after whitespace normalisation, no leftover partial tag in the output, all 47 info/hint help blocks present,
+  all report/export links present, and the WHOLE document equal after whitespace normalisation.
+- `upgradeTreeReady` hardened: it now requires every REFERENCED partial to exist and be non-empty before an
+  upgrade restart is triggered. Walking the disk cannot detect that (it only sees what already exists) and the
+  installer unpacks alphabetically with `views/` LAST, so the shell could be complete while a partial it
+  references is still missing - an unresolved partial is a render error, i.e. a dead panel. Handlebars comments
+  are stripped before collecting references, because the probe partial documents the syntax in a comment.
+- Tooling (still dependency-free where it must be): `check.js` gained the partial symmetry guard (every
+  reference resolves, no orphan file), a per-fragment `node --check` (wrapped in a function) plus a per-fragment
+  stray-`{{` screen, and it composes the panel script by INLINING the partials itself so the combined-syntax
+  guard survived without needing handlebars. New `tools/gen-panel-inventory.js` writes the frozen inventory
+  `tools/fixtures/panel-inventory.json` (ids, help texts, links, nav panels) that `test-views.js` now asserts -
+  the permanent guard against the v4.9.6 class of silent loss. Removing something on purpose means
+  regenerating the fixture in the same commit.
+- Tests: check.js 242 PASS (30 partials x 3 checks + the symmetry guards), test-plugin 661 PASS + 3 SKIP / 98
+  steps (+4 for the partial-aware upgrade gate: complete tree ready, empty partial not ready, MISSING partial
+  not ready, restored ready - the "missing" case is what caught the disk-walk flaw), test-views 40 PASS
+  (+6: partials registered, the probe resolves, and the four inventory guards). No route, handler, engine,
+  data shape or agent script changed. Version 5.2.0 -> 5.3.0.

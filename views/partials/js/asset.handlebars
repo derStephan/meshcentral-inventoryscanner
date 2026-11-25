@@ -1,0 +1,215 @@
+        // ---------- external asset management (v5.0.0, issue #5) ----------
+
+        var asApp = { cfg: null, devices: [] };
+        // Placeholder braces are built by concatenation: a literal pair would be eaten by Handlebars.
+        var AS_LB = '{' + '{', AS_RB = '}' + '}';
+
+        function asPlaceholder(name) { return AS_LB + name + AS_RB; }
+
+        function asTemplateExample() {
+            var o = {};
+            o.name = asPlaceholder('device.given') + ' ' + asPlaceholder('device.host');
+            o.group = asPlaceholder('device.group');
+            o.os = asPlaceholder('device.os');
+            o.ip = asPlaceholder('device.ip');
+            o.serial = asPlaceholder('hardware.serial');
+            o.manufacturer = asPlaceholder('hardware.manufacturer');
+            o.model = asPlaceholder('hardware.model');
+            o.cpu = asPlaceholder('hardware.cpu');
+            o.memory = asPlaceholder('hardware.memoryText');
+            o.software = asPlaceholder('software');
+            o.vulnerabilities = asPlaceholder('vulnerabilities');
+            o.coverage = asPlaceholder('coverage');
+            o.softwareCount = asPlaceholder('counts.software');
+            o.vulnerabilityCount = asPlaceholder('counts.vulnerabilities');
+            return JSON.stringify(o, null, 2);
+        }
+
+        function asShowTargetFields() {
+            var t = $('asTargetType').value;
+            $('asGenericFields').style.display = (t === 'generic') ? '' : 'none';
+            $('asJiraFields').style.display = (t === 'jira') ? '' : 'none';
+            $('asSnipeFields').style.display = (t === 'snipeit') ? '' : 'none';
+        }
+
+        function asFillForm(c) {
+            $('asEnabled').checked = !!c.enabled;
+            $('asTargetType').value = c.targetType || 'generic';
+            $('asEndpointUrl').value = c.endpointUrl || '';
+            $('asAuthMode').value = c.authMode || 'none';
+            $('asUsername').value = c.username || '';
+            $('asHeaderName').value = c.headerName || '';
+            $('asOnly').value = c.only || 'all';
+            $('asIntervalHours').value = (c.intervalHours != null) ? c.intervalHours : 0;
+            $('asMethod').value = c.method || 'POST';
+            $('asHeadersJson').value = c.headersJson || '{}';
+            $('asBodyTemplate').value = c.bodyTemplate || asTemplateExample();
+            $('asExternalIdPath').value = c.externalIdPath || '';
+            $('asJiraProject').value = c.jiraProject || '';
+            $('asJiraIssueType').value = c.jiraIssueType || 'Task';
+            $('asJiraLabel').value = c.jiraLabel || 'inventory-scanner';
+            $('asJiraSummary').value = c.jiraSummary || ('[Inventory] ' + asPlaceholder('device.given') + asPlaceholder('device.host'));
+            $('asJiraVulnIssues').checked = !!c.jiraVulnIssues;
+            $('asSnipeNameTemplate').value = c.snipeNameTemplate || (asPlaceholder('device.given') + asPlaceholder('device.host'));
+            $('asSnipeCategory').value = (c.snipeCategory != null) ? c.snipeCategory : '';
+            // secrets: never filled - only whether one is stored
+            $('asToken').value = ''; $('asPassword').value = ''; $('asHeaderValue').value = '';
+            $('asClearToken').checked = false; $('asClearPassword').checked = false; $('asClearHeaderValue').checked = false;
+            $('asTokenHint').textContent = c.hasToken
+                ? 'A token IS stored (never displayed). Leave blank to keep it, or tick "clear" to erase it.'
+                : 'No token stored yet.';
+            var names = ['device.id', 'device.host', 'device.given', 'device.group', 'device.os', 'device.online', 'device.ip',
+                'hardware.cpu', 'hardware.manufacturer', 'hardware.model', 'hardware.serial', 'hardware.bios', 'hardware.biosVendor',
+                'hardware.memoryBytes', 'hardware.memoryText', 'hardware.windowsBuild', 'hardware.gpus', 'hardware.memoryBanks',
+                'hardware.storage', 'hardware.board', 'hardware.system', 'hardware.tpm', 'hardware.network',
+                'software (array)', 'vulnerabilities (array)', 'coverage (array)',
+                'counts.software', 'counts.vulnerabilities', 'counts.coverage', 'counts.findings', 'counts.uniqueFindingIds', 'counts.maxSeverity'];
+            var parts = [];
+            for (var i = 0; i < names.length; i++) { parts.push(asPlaceholder(names[i].replace(' (array)', ''))); }
+            $('asTemplateHint').innerHTML = 'Available placeholders: <code>' + parts.join('</code> <code>') + '</code>. A placeholder alone in a value injects the whole list; inside text it is inserted as text.'
+                + ' <br><code>software</code> = the installed programs (name, version, publisher, location, date) - the same rows the software CSV has.'
+                + ' <code>vulnerabilities</code> = every actionable finding (a CVE, WINDOWS-UPDATES or OS-EOL) - the same rows the vulnerability CSV has.'
+                + ' <code>coverage</code> = the honest blind spots of the same scan (not assessable, distribution-managed, driver/firmware).';
+            asShowTargetFields();
+        }
+
+        function asSecretValue(inputId, clearId) {
+            if ($(clearId) && $(clearId).checked) { return '__AS_CLEAR__'; }
+            return $(inputId).value;   // blank = keep the stored secret (the server keeps it)
+        }
+
+        function loadAssetSection() {
+            post('as_get_config', {}).then(function (d) {
+                if (d.error) { showMsg('asMsg', d.error, false); return; }
+                asApp.cfg = d.config; asFillForm(d.config);
+                return post('as_status', {});
+            }).then(function (s) {
+                if (!s) { return; }
+                asApp.devices = s.devices || [];
+                asRenderStatus();
+                $('asRunInfo').textContent = s.running ? 'a push is running...' : ((asApp.devices.length) + ' device(s) known.');
+            }).catch(function (e) { showMsg('asMsg', 'Failed to load the asset configuration: ' + e.message, false); });
+            asLoadLog();
+        }
+
+        function asRenderStatus() {
+            var html = '';
+            for (var i = 0; i < asApp.devices.length; i++) {
+                var d = asApp.devices[i];
+                var l = d.last;
+                html += '<tr>'
+                    + '<td><b>' + esc(d.given || d.host) + '</b><div class="hint">' + esc(d.host) + '</div></td>'
+                    + '<td>' + esc(d.group) + '</td>'
+                    + '<td>' + (l ? esc(String(l.time || '').replace('T', ' ').substring(0, 19)) : '<span style="color:#888">never</span>') + '</td>'
+                    + '<td>' + (l ? (l.status === 'ok' ? '<span class="badge badge-custom">ok</span>' : (l.status === 'skipped' ? '<span class="badge badge-mixed">skipped</span>' : '<span class="sev sev-HIGH">error</span>')) : '-') + '</td>'
+                    + '<td>' + (l && l.httpCode ? l.httpCode : '-') + '</td>'
+                    + '<td>' + esc(l && l.externalId ? String(l.externalId) : '') + '</td>'
+                    + '<td><button class="small asPushOne" data-id="' + esc(d.id) + '">Push</button></td>'
+                    + '</tr>';
+            }
+            if (html === '') { html = '<tr><td colspan="7" style="color:#888">No devices.</td></tr>'; }
+            $('asStatusBody').innerHTML = html;
+        }
+
+        function asSave() {
+            var body = {
+                enabled: $('asEnabled').checked ? 'true' : 'false',
+                targetType: $('asTargetType').value,
+                endpointUrl: $('asEndpointUrl').value.trim(),
+                authMode: $('asAuthMode').value,
+                username: $('asUsername').value.trim(),
+                headerName: $('asHeaderName').value.trim(),
+                token: asSecretValue('asToken', 'asClearToken'),
+                password: asSecretValue('asPassword', 'asClearPassword'),
+                headerValue: asSecretValue('asHeaderValue', 'asClearHeaderValue'),
+                only: $('asOnly').value,
+                intervalHours: $('asIntervalHours').value.trim(),
+                method: $('asMethod').value,
+                headersJson: $('asHeadersJson').value,
+                bodyTemplate: $('asBodyTemplate').value,
+                externalIdPath: $('asExternalIdPath').value.trim(),
+                jiraProject: $('asJiraProject').value.trim(),
+                jiraIssueType: $('asJiraIssueType').value.trim(),
+                jiraLabel: $('asJiraLabel').value.trim(),
+                jiraSummary: $('asJiraSummary').value.trim(),
+                jiraVulnIssues: $('asJiraVulnIssues').checked ? 'true' : 'false',
+                snipeNameTemplate: $('asSnipeNameTemplate').value.trim(),
+                snipeCategory: $('asSnipeCategory').value.trim()
+            };
+            if ($('asEnabled').checked && !window.confirm('Enable sending inventory data to ' + (body.endpointUrl || '(no URL)') + '? This is the only place where data leaves this server.')) {
+                $('asEnabled').checked = false; body.enabled = 'false';
+            }
+            post('as_save_config', body).then(function (d) {
+                if (d.error) { showMsg('asMsg', d.error, false); return; }
+                showMsg('asMsg', 'Asset-management configuration saved (secrets are stored on this server and never displayed again).', true);
+                if (d.config) { asApp.cfg = d.config; asFillForm(d.config); }
+            }).catch(function (e) { showMsg('asMsg', 'Save failed: ' + e.message, false); });
+        }
+
+        function asTest() {
+            showMsg('asMsg', 'Sending one test request...', true);
+            post('as_test', {}).then(function (d) {
+                if (d.error) { showMsg('asMsg', 'Test failed: ' + d.error, false); return; }
+                showMsg('asMsg', d.ok ? ('Test OK - the target answered HTTP ' + d.httpCode + '.') : ('The target answered HTTP ' + d.httpCode + ' (not 2xx) - check URL, auth and the body/field mapping.'), !!d.ok);
+                asLoadLog();
+            }).catch(function (e) { showMsg('asMsg', 'Test failed: ' + e.message, false); });
+        }
+
+        function asPush(nodeIds) {
+            var body = nodeIds ? { nodeIds: nodeIds } : {};
+            $('asRunInfo').textContent = 'starting the push...';
+            post('as_push', body).then(function (d) {
+                if (d.error) { $('asRunInfo').textContent = ''; showMsg('asMsg', d.error, false); return; }
+                if (d.busy) { $('asRunInfo').textContent = ''; showMsg('asMsg', 'A push is already running.', false); return; }
+                if (d.background) {
+                    // the push runs server-side in the background (like the other batch engines) - follow it by polling
+                    $('asRunInfo').textContent = 'pushing ' + d.devices + ' device(s) in the background...';
+                    showMsg('asMsg', 'Push started for ' + d.devices + ' device(s). The table below fills in as they complete.', true);
+                    asPollStatus(0);
+                    return;
+                }
+                $('asRunInfo').textContent = 'pushed ' + d.devices + ' device(s), ' + (d.errors || 0) + ' error(s).';
+                asPollStatus(0);
+            }).catch(function (e) { $('asRunInfo').textContent = ''; showMsg('asMsg', 'Push failed: ' + e.message, false); });
+        }
+
+        function asPollStatus(round) {
+            if (round > 200) { $('asRunInfo').textContent = 'still running - press Refresh later.'; asLoadLog(); return; }
+            setTimeout(function () {
+                post('as_status', {}).then(function (s) {
+                    asApp.devices = s.devices || [];
+                    asRenderStatus();
+                    if (s.running) { asPollStatus(round + 1); return; }
+                    var ok = 0, err = 0, skip = 0;
+                    for (var i = 0; i < asApp.devices.length; i++) {
+                        var l = asApp.devices[i].last;
+                        if (!l) { continue; }
+                        if (l.status === 'ok') { ok++; } else if (l.status === 'skipped') { skip++; } else if (l.status === 'error') { err++; }
+                    }
+                    $('asRunInfo').textContent = 'push finished: ' + ok + ' ok, ' + err + ' error(s), ' + skip + ' skipped.';
+                    asLoadLog();
+                }).catch(function () { asPollStatus(round + 1); });
+            }, 3000);
+        }
+
+        function asLoadLog() {
+            post('get_log', { type: 'asset' }).then(function (data) {
+                if (data.error) { $('asLog').textContent = data.error; return; }
+                $('asLog').textContent = (data.lines && data.lines.length) ? localizeLog(data.lines).join(String.fromCharCode(10)) : (data.note || '(empty)');
+                $('asLogInfo').textContent = (data.note) ? data.note : ((data.lines ? data.lines.length : 0) + ' line(s) - status only, never a payload or a credential');
+            }).catch(function (e) { $('asLog').textContent = 'Failed to load the log: ' + e.message; });
+        }
+
+        function asTargetChange() { asShowTargetFields(); }
+        function asStatusRowClick(e) { var t = e.target; if (t && t.classList && t.classList.contains('asPushOne')) { asPush(t.getAttribute('data-id')); } }
+
+        $('asTargetType').addEventListener('change', asTargetChange);
+        $('asSaveBtn').addEventListener('click', asSave);
+        $('asTestBtn').addEventListener('click', asTest);
+        $('asPushAllBtn').addEventListener('click', function () {
+            if (!window.confirm('Push every device now? Their inventory leaves this server to the configured target.')) { return; }
+            asPush(null);
+        });
+        $('asRefreshLogBtn').addEventListener('click', asLoadLog);
+        $('asStatusBody').addEventListener('click', asStatusRowClick);
+

@@ -1,0 +1,82 @@
+        // ---------- unified software list (v4.9.5, issue #8) ----------
+
+        var swfApp = { software: [], wgMap: {}, devices: 0 };
+
+        function loadSwFleet() {
+            var ri = $('swfRunInfo'); if (ri) { ri.textContent = 'building the fleet index...'; }
+            Promise.all([post('sw_fleet', {}), post('wg_programs', {})])
+                .then(function (rs) {
+                    var data = rs[0] || {};
+                    if (data.error) { showMsg('swfMsg', data.error, false); return; }
+                    var map = {};
+                    var pkgs = (rs[1] && rs[1].packages) || [];
+                    for (var i = 0; i < pkgs.length; i++) { if (pkgs[i] && pkgs[i].name) { map[String(pkgs[i].name).toLowerCase()] = { id: pkgs[i].id, ready: pkgs[i].ready || 0 }; } }
+                    swfApp.software = data.software || []; swfApp.wgMap = map; swfApp.devices = data.devices || 0;
+                    renderSwFleet();
+                })
+                .catch(function (e) { if (ri) { ri.textContent = ''; } showMsg('swfMsg', 'Failed to build the software index: ' + e.message, false); });
+        }
+
+        function renderSwFleet() {
+            var f = String($('swfFilter').value || '').toLowerCase();
+            var html = '';
+            for (var i = 0; i < swfApp.software.length; i++) {
+                var s = swfApp.software[i];
+                var low = String(s.name).toLowerCase();
+                if (f !== '' && low.indexOf(f) < 0 && String(s.publisher || '').toLowerCase().indexOf(f) < 0) { continue; }
+                var w = swfApp.wgMap[low];
+                var upd = w ? '<span class="badge badge-custom">winget</span>' : (s.updatable ? '<span style="color:#888">avail</span>' : '<span style="color:#888">-</span>');
+                var vuln = s.vulnerable ? dlSevBadge(s.cve || 1, s.maxSeverity) : '<span style="color:#888">none</span>';
+                var lic = s.hasLicense ? '<span class="badge badge-custom">yes</span>' : '<span style="color:#888">-</span>';
+                var ver = esc(s.version || '') + (s.versions > 1 ? ' <span class="badge badge-varies" title="' + s.versions + ' versions installed">+' + (s.versions - 1) + '</span>' : '');
+                html += '<tr>'
+                    + '<td><input type="checkbox" class="swfc" value="' + esc(low) + '" data-pkg="' + esc(w ? w.id : '') + '" data-ready="' + (w && w.ready ? '1' : '0') + '"></td>'
+                    + '<td><b>' + esc(s.name) + '</b></td>'
+                    + '<td>' + ver + '</td>'
+                    + '<td>' + esc(s.publisher || '') + '</td>'
+                    + '<td>' + s.deviceCount + '</td>'
+                    + '<td>' + vuln + '</td>'
+                    + '<td>' + upd + '</td>'
+                    + '<td>' + lic + '</td>'
+                    + '<td>' + (w ? '<button class="small green swfUpd" data-pkg="' + esc(w.id) + '" data-name="' + esc(s.name) + '">Update everywhere</button>' : '<span style="color:#888">no winget id</span>') + '</td>'
+                    + '</tr>';
+            }
+            if (html === '') { html = '<tr><td colspan="9" style="color:#888">No installed software collected yet (run an inventory collection first).</td></tr>'; }
+            $('swfBody').innerHTML = html;
+            var ri = $('swfRunInfo'); if (ri) { ri.textContent = swfApp.software.length + ' distinct program(s) across ' + swfApp.devices + ' device(s).'; }
+        }
+
+        function swfUpdateOne(pkgId, name) {
+            if (!pkgId) { showMsg('swfMsg', 'That package has no winget id and cannot be updated this way.', false); return; }
+            post('wg_run', { pkgId: pkgId, mode: 'update' }).then(function (d) {
+                if (d.busy) { showMsg('swfMsg', 'A winget batch is already running.', false); return; }
+                if (d.error) { showMsg('swfMsg', d.error, false); return; }
+                showMsg('swfMsg', 'Update of ' + name + ' started on every in-scope device (follow the winget tab).', true);
+            }).catch(function (e) { showMsg('swfMsg', e.message, false); });
+        }
+
+        function swfUpdateAll() {
+            var cbs = document.querySelectorAll('#swfBody input.swfc:checked');
+            var seen = {}, n = 0;
+            for (var i = 0; i < cbs.length; i++) {
+                var pkg = cbs[i].getAttribute('data-pkg');
+                if (!pkg || seen[pkg]) { continue; }
+                seen[pkg] = 1;
+                post('wg_run', { pkgId: pkg, mode: 'update' }).then(function () { }).catch(function () { });
+                n++;
+            }
+            if (n === 0) { showMsg('swfMsg', 'Tick at least one winget-managed package.', false); }
+            else { showMsg('swfMsg', n + ' package update batch(es) started on every in-scope device.', true); }
+        }
+
+        function swfRowClick(e) { var t = e.target; if (t && t.classList && t.classList.contains('swfUpd')) { swfUpdateOne(t.getAttribute('data-pkg'), t.getAttribute('data-name')); } }
+
+        $('swfRefreshBtn').addEventListener('click', function () { post('sw_fleet', { refresh: '1' }).catch(function () { }); loadSwFleet(); });
+        $('swfFilter').addEventListener('input', renderSwFleet);
+        $('swfUpdateAllBtn').addEventListener('click', swfUpdateAll);
+        $('swfBody').addEventListener('click', swfRowClick);
+        $('swfSelectUpdatable').addEventListener('click', function () {
+            var cbs = document.querySelectorAll('#swfBody input.swfc'); var on = $('swfSelectUpdatable').checked;
+            for (var i = 0; i < cbs.length; i++) { cbs[i].checked = on && cbs[i].getAttribute('data-ready') === '1'; }
+        });
+

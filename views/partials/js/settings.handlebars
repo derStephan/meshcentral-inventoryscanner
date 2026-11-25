@@ -1,0 +1,178 @@
+        // ---------- Settings tab ----------
+
+        var VALID_SEVERITIES = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'UNKNOWN'];
+
+        // Where does an effective value come from? 'file' wins over 'config.json' over 'default';
+        // an overridden numeric field gets a per-key revert option in its source select.
+        function applyConfigSourceUi(sel, source, revertAction) {
+            if (source === 'file') {
+                sel.innerHTML = '<option value="" selected>set in plugin settings</option><option value="revert">revert to config.json</option>';
+            } else if (source === 'config.json') {
+                sel.innerHTML = '<option value="" selected>from config.json</option>';
+            } else {
+                sel.innerHTML = '<option value="" selected>built-in default</option>';
+            }
+            sel.value = '';
+            sel.onchange = function () {
+                if (sel.value !== 'revert') { return; }
+                var b = {};
+                b[revertAction] = 'true';
+                post('revert_setting', b).then(function (d) {
+                    if (d.error) { showMsg('settingsMsg', d.error, false); return; }
+                    showMsg('settingsMsg', 'Setting reverted - the config.json value applies again.', true);
+                    loadSettings();
+                }).catch(function (e) { showMsg('settingsMsg', 'Revert failed: ' + e.message, false); });
+            };
+        }
+
+        function setBool(id, val) { var el = $(id); if (el) { el.checked = (val === true || val === 'true'); } }
+
+        function loadSettings() {
+            post('get_settings', {}).then(function (data) {
+                if (data.error) { showMsg('settingsMsg', data.error, false); return; }
+                var s = data.settings || {}, src = data.sources || {};
+                if (s.notifyThreshold) { $('setNotifyThreshold').value = s.notifyThreshold; }
+                setBool('setNotifyOnScan', s.notifyOnScan);
+                setBool('setNotifyRepeat', s.notifyUnratedRepeat);
+                setBool('setCollectOnConnect', s.collectOnAgentConnect);
+                setBool('setAutoMatch', s.autoProductMatch);
+                setBool('setCpeTableEnabled', s.cpeTableEnabled);
+                setBool('setDistroManaged', s.distroManaged);
+                setBool('setOsLifecycleEnabled', s.osLifecycleEnabled);
+                if (s.osLifecycleUrl !== undefined) $('setOsLifecycleUrl').value = s.osLifecycleUrl;
+                applyConfigSourceUi($('setOsLifecycleUrlSrc'), src.osLifecycleUrl, 'revertOsLifecycleUrl');
+                if (s.osUpgradeUrgentDays !== undefined) $('setOsUrgentDays').value = s.osUpgradeUrgentDays;
+                applyConfigSourceUi($('setOsUrgentDaysSrc'), src.osUpgradeUrgentDays, 'revertOsUpgradeUrgentDays');
+                var oli = data.osLifecycle || {};
+                $('osLifecycleInfo').textContent = oli.products ? ('data for ' + oli.products + ' OS families, fetched ' + fmtLocal(oli.fetched)) : 'no data yet (fetched with the next NVD refresh)';
+                if (s.cpeTableUrl !== undefined) $('setCpeTableUrl').value = s.cpeTableUrl;
+                applyConfigSourceUi($('setCpeTableUrlSrc'), src.cpeTableUrl, 'revertCpeTableUrl');
+                setBool('setLicCollect', s.licenseCollectionEnabled);
+                if (s.licenseCollectIntervalHours !== undefined) $('setLicInterval').value = s.licenseCollectIntervalHours;
+                applyConfigSourceUi($('setLicIntervalSrc'), src.licenseCollectIntervalHours, 'revertLicenseCollectIntervalHours');
+                setBool('setLicMsKeys', s.licenseMsKeys);
+                setBool('setLicTableEnabled', s.licenseTableEnabled);
+                applyConfigSourceUi($('setLicTableEnabledSrc'), src.licenseTableEnabled, 'revertLicenseTableEnabled');
+                if (s.licenseTableUrl !== undefined) $('setLicTableUrl').value = s.licenseTableUrl;
+                applyConfigSourceUi($('setLicTableUrlSrc'), src.licenseTableUrl, 'revertLicenseTableUrl');
+                loadLicenseSection();
+                if (s.scanIntervalHours !== undefined) $('setInterval').value = s.scanIntervalHours;
+                applyConfigSourceUi($('setIntervalSrc'), src.scanIntervalHours, 'revertScanIntervalHours');
+                if (s.updateHours !== undefined) $('setUpdateHours').value = s.updateHours;
+                applyConfigSourceUi($('setUpdateHoursSrc'), src.updateHours, 'revertUpdateHours');
+                if (s.anyCveMaxAgeYears !== undefined) $('setAnyAge').value = s.anyCveMaxAgeYears;
+                applyConfigSourceUi($('setAnyAgeSrc'), src.anyCveMaxAgeYears, 'revertAnyCveMaxAgeYears');
+                if (s.collectIntervalMinutes !== undefined) $('setCollectInterval').value = s.collectIntervalMinutes;
+                applyConfigSourceUi($('setCollectIntervalSrc'), src.collectIntervalMinutes, 'revertCollectIntervalMinutes');
+                loadGroupSelects(function () {
+                    var sc = s.scanMeshes || [];
+                    var cbs = document.querySelectorAll('.set-scan-cb');
+                    for (var i = 0; i < cbs.length; i++) { cbs[i].checked = (sc.length === 0) || (sc.indexOf(cbs[i].value) >= 0); }
+                    var trs = document.querySelectorAll('#groupTableBody tr');
+                    var perGroup = src.notifyPerGroup || {};
+                    for (var j = 0; j < trs.length; j++) {
+                        var mid = trs[j].getAttribute('data-mesh');
+                        var sel = trs[j].querySelector('.set-grp-thresh');
+                        var srcCell = trs[j].querySelector('.grp-src');
+                        if (sel && s.notify && s.notify[mid]) { sel.value = s.notify[mid]; }
+                        if (srcCell) { srcCell.textContent = (perGroup[mid] === 'file') ? 'set here' : ((perGroup[mid] === 'config.json') ? 'from config.json' : ''); }
+                    }
+                });
+            }).catch(function (e) { showMsg('settingsMsg', 'Failed to load settings: ' + e.message, false); });
+        }
+
+        function loadGroupSelects(done) {
+            post('get_locations', {}).then(function (d) {
+                var tb = $('groupTableBody');
+                if (!tb) { done(); return; }
+                var locs = (d.locations || []).slice().sort(function (a, b) { return String(a.name).localeCompare(String(b.name)); });
+                var rows = '';
+                for (var i = 0; i < locs.length; i++) {
+                    rows += '<tr data-mesh="' + esc(locs[i].id) + '">' +
+                        '<td>' + esc(locs[i].name) + '</td>' +
+                        '<td><input type="checkbox" class="set-scan-cb" value="' + esc(locs[i].id) + '" checked></td>' +
+                        '<td><select class="set-grp-thresh"><option value="">Global default</option>' +
+                        '<option value="CRITICAL">Critical</option><option value="HIGH">High</option><option value="MEDIUM">Medium</option>' +
+                        '<option value="LOW">Low</option><option value="UNKNOWN">Unknown</option></select></td>' +
+                        '<td class="grp-src"></td></tr>';
+                }
+                if (locs.length === 0) { rows = '<tr><td colspan="4" style="color:#888">No device groups found.</td></tr>'; }
+                tb.innerHTML = rows;
+                done();
+            }).catch(function () { done(); });
+        }
+
+        function doSaveSettings(msgId) {
+            var scanIds = [], notifyIds = [], notifySevs = [];
+            var allScanCbs = document.querySelectorAll('.set-scan-cb');
+            var allChecked = (allScanCbs.length > 0), anyChecked = false;
+            for (var i = 0; i < allScanCbs.length; i++) {
+                if (allScanCbs[i].checked) { scanIds.push(allScanCbs[i].value); anyChecked = true; } else { allChecked = false; }
+            }
+            var trs = document.querySelectorAll('#groupTableBody tr');
+            for (var j = 0; j < trs.length; j++) {
+                var mid = trs[j].getAttribute('data-mesh');
+                var sevSel = trs[j].querySelector('.set-grp-thresh');
+                if (mid && sevSel && sevSel.value) { notifyIds.push(mid); notifySevs.push(sevSel.value); }
+            }
+            var body = {
+                scanIntervalHours: $('setInterval').value,
+                updateHours: $('setUpdateHours').value,
+                anyCveMaxAgeYears: $('setAnyAge').value,
+                collectIntervalMinutes: $('setCollectInterval').value,
+                notifyThreshold: $('setNotifyThreshold').value,
+                notifyOnScan: $('setNotifyOnScan').checked ? 'true' : 'false',
+                notifyUnratedRepeat: $('setNotifyRepeat').checked ? 'true' : 'false',
+                collectOnAgentConnect: $('setCollectOnConnect').checked ? 'true' : 'false',
+                autoProductMatch: $('setAutoMatch').checked ? 'true' : 'false',
+                cpeTableEnabled: $('setCpeTableEnabled').checked ? 'true' : 'false',
+                cpeTableUrl: $('setCpeTableUrl').value.trim(),
+                distroManaged: $('setDistroManaged').checked ? 'true' : 'false',
+                osLifecycleEnabled: $('setOsLifecycleEnabled').checked ? 'true' : 'false',
+                osLifecycleUrl: $('setOsLifecycleUrl').value.trim(),
+                osUpgradeUrgentDays: $('setOsUrgentDays').value.trim(),
+                licenseCollectionEnabled: $('setLicCollect').checked ? 'true' : 'false',
+                licenseCollectIntervalHours: $('setLicInterval').value.trim(),
+                licenseMsKeys: $('setLicMsKeys').checked ? 'true' : 'false',
+                licenseTableEnabled: $('setLicTableEnabled').checked ? 'true' : 'false',
+                licenseTableUrl: $('setLicTableUrl').value.trim(),
+                scanMeshes: (allChecked || !anyChecked) ? '' : scanIds.join(','),
+                notifyMeshIds: notifyIds.join(','),
+                notifySeverities: notifySevs.join(',')
+            };
+            post('save_settings', body).then(function (d) {
+                if (d.error) { showMsg(msgId, d.error, false); return; }
+                showMsg(msgId, 'Settings saved to scanner-settings.json and applied immediately (they override config.json).', true);
+                loadSettings();
+            }).catch(function (e) { showMsg(msgId, 'Save failed: ' + e.message, false); });
+        }
+        $('saveSettingsBtn').addEventListener('click', function () { doSaveSettings('settingsMsg'); });
+        $('saveSettingsBtn2').addEventListener('click', function () { doSaveSettings('vulnDataMsg'); });
+        $('saveSettingsBtn3').addEventListener('click', function () { doSaveSettings('licenseMsg'); });
+
+        function loadNvdLog() {
+            post('get_nvdlog', {}).then(function (data) {
+                if (data.error) { $('nvdLog').textContent = data.error; return; }
+                $('nvdLog').textContent = (data.lines && data.lines.length) ? localizeLog(data.lines).join(String.fromCharCode(10)) : (data.note || '(empty)');
+                $('nvdLogInfo').textContent = (data.note) ? data.note : (data.lines.length + ' of ' + data.size + ' bytes shown (last 200 lines) · ' + data.file);
+            }).catch(function (e) { $('nvdLog').textContent = 'Failed to load the log: ' + e.message; });
+        }
+        $('refreshNvdLogBtn').addEventListener('click', loadNvdLog);
+        loadNvdLog();
+
+        $('updateNvdNowBtn').addEventListener('click', function () {
+            if (!window.confirm('Start an NVD database update now? Missing years are downloaded and the current year refreshed.')) { return; }
+            post('update_nvd', {}).then(function (d) {
+                $('updateNvdInfo').textContent = d.alreadyRunning ? 'An update is already running - progress in the log below.' : 'Update started - progress in the log below.';
+                loadNvdLog();
+            }).catch(function (e) { showMsg('vulnDataMsg', 'Update request failed: ' + e.message, false); });
+        });
+
+        $('resetSettingsBtn').addEventListener('click', function () {
+            if (!window.confirm('Remove ALL values saved in this tab? The settings from config.json apply again.')) { return; }
+            post('save_settings', { reset: 'true' }).then(function (d) {
+                if (d.error) { showMsg('settingsMsg', d.error, false); return; }
+                showMsg('settingsMsg', 'Plugin settings cleared - config.json applies again.', true);
+                loadSettings();
+            }).catch(function (e) { showMsg('settingsMsg', 'Reset failed: ' + e.message, false); });
+        });

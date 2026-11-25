@@ -1,0 +1,70 @@
+        <div class="tab-content" id="tab-updates" data-main="devices" data-sub="updates">
+            <div class="info">
+                Automatic software updates via <code>winget</code> on Windows devices. Nothing runs automatically until you enable
+                it here <strong>and</strong> tick at least one device group; the manual buttons (Run Now, Dry run, per-device and
+                per-package actions) work on demand and cover every non-excluded Windows device (a single-device "Update now" also works on an excluded one). Updates are silent, one package at a
+                time, and a device is never rebooted. Packages on the ignore list are skipped and (optionally) pinned
+                on the client, so even a manual <code>winget upgrade --all</code> leaves license-bound versions
+                alone. Devices without winget are reported per run; offline devices are skipped. Automatic runs follow
+                a two-stage policy: right after a device connects to the server on a day it has not been updated yet,
+                and at the latest 24 h after its previous run - no interval to configure. A full log with one line per
+                package is kept below; the Dry run button shows what would happen without touching any machine.
+            </div>
+
+            <div class="controls">
+                <label><input type="checkbox" id="wgEnabled"> Enable automatic winget updates</label>
+                <label><input type="checkbox" id="wgPinSync"> Pin ignored packages on clients</label>
+
+                <button id="wgSaveBtn">Save Configuration</button>
+                <button id="wgRunBtn" class="green">Run Now</button>
+                <button id="wgDryAllBtn">Dry run all devices</button>
+                <span id="wgRunState" class="hint"></span>
+            </div>
+            <div class="hint">Every change on this tab (switches, groups, ignore list, exclusions, "+ ignore" buttons) is
+            saved immediately; the "Save Configuration" button re-applies the whole form explicitly.</div>
+
+            <h3>Device groups to update automatically</h3>
+            <div class="table-container"><table>
+                <thead><tr><th>Group</th><th style="width:120px;">Auto-update</th></tr></thead>
+                <tbody id="wgGroupBody"><tr><td colspan="2" style="color:#888">Loading...</td></tr></tbody>
+            </table></div>
+
+            <h3>Ignore list (never auto-upgrade these package ids)</h3>
+            <div class="controls">
+                <input id="wgIgId" type="text" placeholder="package id, e.g. Adobe.Acrobat.Reader.64-bit" style="min-width:280px;">
+                <input id="wgIgNote" type="text" placeholder="reason (optional: license pinned to v11)" style="min-width:240px;">
+                <button id="wgIgAdd">Add</button>
+            </div>
+            <div class="table-container"><table>
+                <thead><tr><th style="width:320px;">Package id</th><th>Note</th><th style="width:80px;"></th></tr></thead>
+                <tbody id="wgIgBody"></tbody>
+            </table></div>
+            <div id="wgMsg"></div>
+
+            <h3>Devices</h3>
+            <div class="hint">Every Windows device with its winget actions. Excluded machines stay out of all
+            automatic batches; "Update now" on a row intentionally still works for them (it targets one device).
+            Dry run shows what would happen without touching the machine. After any run, "list" on the row opens
+            every package with its outcome (failed ones show the exit code and winget's message), and "+ ignore"
+            moves a package onto the ignore list - saved immediately, honoured by every later run.</div>
+            <div class="table-container"><table>
+                <thead><tr><th style="width:140px;">Device</th><th style="width:110px;">Group</th><th style="width:60px;">Online</th><th style="width:75px;">Excluded</th><th>Last run</th><th style="width:235px;">Actions</th></tr></thead>
+                <tbody id="wgDevBody"><tr><td colspan="6" style="color:#888">Loading...</td></tr></tbody>
+            </table></div>
+
+            <h3>Packages across all devices (from the stored last runs)</h3>
+            <div class="hint">Every winget package your devices reported in their most recent run - aggregate by
+            program instead of by machine. "Update everywhere" queues exactly this one package on every
+            non-excluded Windows device, "Uninstall everywhere" REMOVES it from every device that has it
+            (devices without it are reported as not-installed). "Skipped" counts ignored, version-less and
+            not-installed entries. Start a dry run (all) to populate this table.</div>
+            <div><button id="wgPkgRefresh" class="small">Refresh package view</button> <span id="wgPkgInfo" class="hint"></span></div>
+            <div class="table-container"><table>
+                <thead><tr><th style="width:280px;">Package (id)</th><th style="width:190px;">Counts</th><th>Devices (state, versions)</th><th style="width:150px;">Actions</th></tr></thead>
+                <tbody id="wgPkgBody"><tr><td colspan="4" style="color:#888">Not loaded yet.</td></tr></tbody>
+            </table></div>
+
+            <h3>Update log</h3>
+            <div><button id="refreshWgLogBtn" class="small">Refresh log</button> <span id="wgLogInfo" class="hint"></span></div>
+            <pre id="wgLog" style="max-height:260px;overflow:auto;background:#0f1720;color:#cfe3f5;padding:8px;border-radius:6px;font-size:11px;margin-top:6px;white-space:pre-wrap;">(not loaded yet)</pre>
+        </div>

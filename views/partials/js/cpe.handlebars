@@ -1,0 +1,98 @@
+        // ---------- CPE mapping table ----------
+
+        function renderCpeTable() {
+            var txt = state.cpeFilter.toLowerCase().trim();
+            var html = '';
+            var shown = 0;
+            for (var i = 0; i < state.cpeEntries.length; i++) {
+                var e = state.cpeEntries[i];
+                if (txt) {
+                    var hay = (e.match + ' ' + e.vendor + ' ' + e.product).toLowerCase();
+                    if (hay.indexOf(txt) < 0) { continue; }
+                }
+                shown++;
+                html += '<tr data-match="' + esc(e.match) + '" data-vendor="' + esc(e.vendor) + '" data-product="' + esc(e.product) + '">';
+                html += '<td><code>' + esc(e.match) + '</code></td>';
+                html += '<td>' + esc(e.vendor) + '</td>';
+                html += '<td>' + esc(e.product) + '</td>';
+                if (e.source === 'custom') {
+                    html += '<td><span class="badge badge-custom">Custom</span></td>';
+                    html += '<td><button class="small red del-cpe-btn">Delete</button></td>';
+                } else {
+                    html += '<td><span class="badge badge-builtin">Remote</span></td>';
+                    html += '<td><button class="small override-cpe-btn">Override</button></td>';
+                }
+                html += '</tr>';
+            }
+            if (shown === 0) {
+                html = '<tr><td colspan="5" style="color:#888">No mappings match the filter.</td></tr>';
+            }
+            $('cpeTableBody').innerHTML = html;
+        }
+
+        function loadCpeTable() {
+            post('get_cpe_table', {}).then(function (data) {
+                if (data.error) { showMsg('cpeMsg', data.error, false); return; }
+                state.cpeEntries = data.entries || [];
+                var ct = data.cpeTable || {};
+                var csi = $('cpeTableSourceInfo');
+            if (csi) { csi.innerHTML = (ct.source === 'remote')
+                    ? ('Active table: maintained CPE table - ' + (ct.origin === 'downloaded' ? 'downloaded from ' + esc(ct.url || '') : (ct.origin === 'bundled' ? 'copy shipped with the plugin' : 'local copy on this server (refreshed from ' + esc(ct.url || '') + ')')) + ' (updated ' + esc(ct.updated || '?') + ')' + (ct.enabled ? '' : ' - automatic refresh is OFF'))
+                    : ('No mapping table file could be loaded on this server - only custom entries and the automatic matcher (Auto-map) apply. Check the URL/refresh setting below or reinstall the plugin (it ships cpe-table.json).'); }
+                renderCpeTable();
+            }).catch(function (e) { showMsg('cpeMsg', 'Failed to load the CPE table: ' + e.message, false); });
+        }
+
+        $('cpeFilter').addEventListener('input', function () {
+            state.cpeFilter = this.value;
+            renderCpeTable();
+        });
+
+        $('cpeTableBody').addEventListener('click', function (e) {
+            var el = e.target;
+            if (!el || !el.tagName || (el.tagName !== 'BUTTON')) { return; }
+            var tr = el.parentNode;
+            while (tr && (tr.tagName !== 'TR')) { tr = tr.parentNode; }
+            if (!tr) { return; }
+            var match = tr.getAttribute('data-match');
+            var vendor = tr.getAttribute('data-vendor');
+            var product = tr.getAttribute('data-product');
+
+            if (el.classList.contains('del-cpe-btn')) {
+                if (!window.confirm('Delete the custom mapping "' + match + '" -> ' + vendor + '/' + product + '?')) { return; }
+                post('delete_cpe_table', { match: match, vendor: vendor, product: product }).then(function (data) {
+                    if (data.error) { showMsg('cpeMsg', data.error, false); return; }
+                    showMsg('cpeMsg', 'Custom mapping deleted.', true);
+                    loadCpeTable();
+                }).catch(function (err) { showMsg('cpeMsg', 'Delete failed: ' + err.message, false); });
+            } else if (el.classList.contains('override-cpe-btn')) {
+                $('cpeRegex').value = match;
+                $('cpeVendor').value = vendor;
+                $('cpeProduct').value = product;
+                $('cpeProduct').focus();
+                showMsg('cpeMsg', 'Values copied to the form below. Adjust them and press Add - your custom entry takes precedence over the maintained table.', true);
+            }
+        });
+
+        $('addCpeBtn').addEventListener('click', function () {
+            var match = $('cpeRegex').value.trim();
+            var vendor = $('cpeVendor').value.trim().toLowerCase();
+            var product = $('cpeProduct').value.trim().toLowerCase();
+            if (!match || !vendor || !product) {
+                showMsg('cpeMsg', 'Regex, vendor and product are required.', false);
+                return;
+            }
+            try { new RegExp(match, 'i'); } catch (err) {
+                showMsg('cpeMsg', 'Invalid regex: ' + err.message, false);
+                return;
+            }
+            post('add_cpe', { match: match, vendor: vendor, product: product }).then(function (data) {
+                if (data.error) { showMsg('cpeMsg', data.error, false); return; }
+                $('cpeRegex').value = '';
+                $('cpeVendor').value = '';
+                $('cpeProduct').value = '';
+                showMsg('cpeMsg', 'Mapping saved to custom-cpe.json (takes precedence over the maintained table).', true);
+                loadCpeTable();
+            }).catch(function (err) { showMsg('cpeMsg', 'Save failed: ' + err.message, false); });
+        });
+

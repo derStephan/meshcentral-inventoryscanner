@@ -1,0 +1,86 @@
+        <div class="tab-content" id="tab-vulndata" data-main="vulns" data-sub="data">
+            <h3>Vulnerability reports &amp; CSV export</h3>
+            <div class="controls">
+                <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=report" target="_blank" rel="noopener">Vulnerability Report</a>
+                <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=deviceReport" target="_blank" rel="noopener">Device Report</a>
+            </div>
+            <div class="info">CSV export (all devices):
+                <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=export&amp;type=hardware" target="_blank" rel="noopener">Hardware</a>
+                &middot; <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=export&amp;type=software" target="_blank" rel="noopener">Software</a>
+                &middot; <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=export&amp;type=vulns" target="_blank" rel="noopener">Vulnerabilities</a>
+            </div>
+
+            <h3>NVD database</h3>
+            <div class="setgrid">
+                <label for="setUpdateHours">NVD feed refresh (hours)</label>
+                <div><input type="text" id="setUpdateHours" class="num">
+                    <select id="setUpdateHoursSrc" class="srcsel"></select></div>
+                <label>&nbsp;</label>
+                <div><button id="updateNvdNowBtn" class="green">Update NVD database now</button>
+                    <span id="updateNvdInfo" class="hint"></span>
+                    <div class="hint">Fetches missing years and refreshes the current year immediately (rate-limited, can
+                    take a while - progress appears in the download log below).</div></div>
+            </div>
+            <div><button id="refreshNvdLogBtn" class="small">Refresh log</button>
+                <span id="nvdLogInfo" class="hint"></span></div>
+            <pre id="nvdLog" style="max-height:260px;overflow:auto;background:#0f1720;color:#cfe3f5;padding:8px;border-radius:6px;font-size:11px;margin-top:6px;white-space:pre-wrap;">(not loaded yet)</pre>
+
+            <h3>CPE mapping (installed program name &rarr; CVE codes)</h3>
+            <div class="info">
+                Every NVD CVE names the affected software with a technical code, a <strong>CPE</strong> like
+                <code>cpe:...:mozilla:firefox</code>. This table is the dictionary that tells the scanner which
+                code belongs to which program on your PCs:
+                <ul style="margin:6px 0 6px 18px;padding:0;">
+                    <li><strong>Regex</strong> is matched case-insensitively against the installed program name.</li>
+                    <li><strong>Vendor / Product</strong> is the CPE code that gets searched in the CVE database.</li>
+                </ul>
+                Rows labelled <em>Remote</em> come from the maintained table file <code>cpe-table.json</code>
+                (shipped with the plugin, refreshed from its repository URL); rows labelled <em>Custom</em> are
+                your own additions and are always checked first, so they win over any remote row. Programs that
+                match no row here are still checked automatically against the product names present in the NVD
+                data (the <em>Auto-map</em> switch under Settings). Only software where even that proves nothing
+                is listed as <em>not assessable</em> - never as "clean".
+                <br><br>
+                <strong>Fix a wrong row:</strong> <em>Override</em> copies it as a custom entry you can edit,
+                <em>Delete</em> removes only your custom entries, never remote ones.
+            </div>
+            <div class="setgrid">
+                <label for="setCpeTableEnabled">Update mapping table from repository</label>
+                <div><input type="checkbox" id="setCpeTableEnabled">
+                    <div class="hint">The curated table is maintained as <code>cpe-table.json</code> in this plugin's GitHub repository,
+                    shipped inside the plugin and re-downloaded with every NVD feed refresh. Off (or unreachable): only your custom
+                    entries below and the automatic matching remain.</div></div>
+                <label for="setCpeTableUrl">Mapping table URL</label>
+                <div><input type="text" id="setCpeTableUrl" style="width:420px">
+                    <select id="setCpeTableUrlSrc" class="srcsel"></select>
+                    <div class="hint">https only. Only change this if you maintain your own table copy.</div></div>
+            </div>
+            <div class="hint" id="cpeTableSourceInfo"></div>
+            <div class="filter-row">
+                <input type="text" id="cpeFilter" class="filter-input" placeholder="Filter mappings by regex, vendor or product...">
+            </div>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th style="cursor:default">Regex (display name)</th>
+                            <th style="cursor:default">Vendor</th>
+                            <th style="cursor:default">Product</th>
+                            <th style="cursor:default">Source</th>
+                            <th style="cursor:default"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="cpeTableBody"></tbody>
+                </table>
+            </div>
+            <h4 style="font-size:13px;color:#0b3d6b;margin:14px 0 6px 0;">Add / Override mapping</h4>
+            <div class="controls">
+                <input id="cpeRegex" type="text" placeholder="Regex, e.g. ^SAS Studio" style="min-width:220px;">
+                <input id="cpeVendor" type="text" placeholder="CPE vendor, e.g. mozilla" style="min-width:160px;">
+                <input id="cpeProduct" type="text" placeholder="CPE product, e.g. firefox" style="min-width:160px;">
+                <button id="addCpeBtn">Add</button>
+            </div>
+            <div id="cpeMsg"></div>
+            <div class="controls" style="margin-top:16px;"><button id="saveSettingsBtn2">Save NVD &amp; CPE settings</button></div>
+            <div id="vulnDataMsg"></div>
+        </div>
