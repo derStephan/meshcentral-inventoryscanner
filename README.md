@@ -86,7 +86,10 @@ without sending inventory data to anyone.
    It is **off by default**, **https only**, needs no automatic schedule (interval 0 = on-demand only), sends
    **no command to any agent**, and credentials are stored on the server, **never displayed again** and **never
    logged** (the log records device, HTTP status and external id only). This is the one place where data can
-   leave the server - the panel says so and asks for confirmation on every push.
+   leave the server - the panel says so and asks for confirmation on every push. Since v5.1.0 the push is built
+   from the same single inventory collection as the CSV exports and the printable reports, so a device carries
+   exactly the same hardware facts, the same program list and the same findings (including the OS findings
+   `WINDOWS-UPDATES` and `OS-EOL`) wherever you look.
 
 
 ## Requirements

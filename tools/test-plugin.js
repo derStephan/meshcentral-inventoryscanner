@@ -3303,9 +3303,10 @@ steps.push(function (next) {
                 var rec = {
                     device: { id: 'node//b1', host: 'bh1', given: 'AssetOne', group: 'HQ', os: 'Microsoft Windows 11 Pro', platform: 'windows', online: true },
                     hardware: { cpu: 'Intel i7', manufacturer: 'Dell', model: 'OptiPlex', serial: 'SN-B1', bios: '1.2.3', memoryBytes: 17179869184, os: 'Microsoft Windows 11 Pro', ip: '10.0.0.9' },
-                    software: [{ name: 'Firefox', version: '1.0', publisher: 'Mozilla' }],
-                    vulnerabilities: [{ cve: 'CVE-2024-0001', severity: 'CRITICAL', cvss: 9.8, software: 'Firefox', version: '1.0' }],
-                    counts: { software: 1, vulnerabilities: 1 }
+                    software: [{ name: 'Firefox', version: '1.0', publisher: 'Mozilla', location: '', date: '' }],
+                    vulnerabilities: [{ id: 'CVE-2024-0001', status: 'CVE', severity: 'CRITICAL', cvss: 9.8, software: 'Firefox', version: '1.0', description: '' }],
+                    coverage: [],
+                    counts: { software: 1, vulnerabilities: 1, coverage: 0, findings: 1, uniqueFindingIds: 1, maxSeverity: 'CRITICAL' }
                 };
                 var gcfg = oB.assetConfig();
                 var gb = oB.asBuildRequests(rec, gcfg, null);
@@ -3316,7 +3317,7 @@ steps.push(function (next) {
                 check('generic builder: the template is filled - text interpolation, typed array injection and numbers',
                     !!g0 && g0.body.name === 'AssetOne bh1' && g0.body.serial === 'SN-B1' &&
                     Array.isArray(g0.body.apps) && g0.body.apps[0].name === 'Firefox' &&
-                    Array.isArray(g0.body.vulns) && g0.body.vulns[0].cve === 'CVE-2024-0001' &&
+                    Array.isArray(g0.body.vulns) && g0.body.vulns[0].id === 'CVE-2024-0001' &&
                     g0.body.n === 1, g0 && g0.body);
 
                 var jcfg = { targetType: 'jira', endpointUrl: 'https://acme.atlassian.net/', authMode: 'basic', username: 'admin@acme.com', password: 'apitok', jiraProject: 'IT', jiraIssueType: 'Task', jiraLabel: 'inventory-scanner', jiraSummary: '[Inventory] {{device.host}}' };
@@ -3440,9 +3441,10 @@ steps.push(function (next) {
     // 1) the jiraVulnIssues option really does something now (it was stored but ignored before)
     var recC = {
         device: { id: 'node//c1', host: 'ch1', given: 'Named', group: 'HQ', os: 'W11', online: true },
-        hardware: { serial: 'SN-C1' }, software: [{ name: 'Firefox', version: '1.0' }],
-        vulnerabilities: [{ cve: 'CVE-2024-0001', severity: 'CRITICAL', cvss: 9.8, software: 'Firefox', version: '1.0' }, { cve: 'CVE-2024-0002', severity: 'HIGH', cvss: 7.5, software: 'Firefox', version: '1.0' }],
-        counts: { software: 1, vulnerabilities: 2 }
+        hardware: { serial: 'SN-C1' }, software: [{ name: 'Firefox', version: '1.0', publisher: '', location: '', date: '' }],
+        vulnerabilities: [{ id: 'CVE-2024-0001', status: 'CVE', severity: 'CRITICAL', cvss: 9.8, software: 'Firefox', version: '1.0', description: '' }, { id: 'CVE-2024-0002', status: 'CVE', severity: 'HIGH', cvss: 7.5, software: 'Firefox', version: '1.0', description: '' }],
+        coverage: [],
+        counts: { software: 1, vulnerabilities: 2, coverage: 0, findings: 2, uniqueFindingIds: 2, maxSeverity: 'CRITICAL' }
     };
     var jcfgOff = { targetType: 'jira', endpointUrl: 'https://acme.atlassian.net', authMode: 'none', jiraProject: 'IT', jiraIssueType: 'Task', jiraLabel: 'inv', jiraSummary: '[Inventory] {{device.host}}', jiraVulnIssues: false };
     var off = oC.asBuildRequests(recC, jcfgOff, null, {});
@@ -3460,8 +3462,9 @@ steps.push(function (next) {
         upd.requests[1].method === 'PUT' && upd.requests[1].url.indexOf('/issue/KEY-1') >= 0 && upd.requests[2].method === 'POST',
         upd.requests && upd.requests.map(function (r) { return r.method + ' ' + r.idSlot; }));
     var many = { vulnerabilities: [] };
-    for (var mi = 0; mi < 150; mi++) { many.vulnerabilities.push({ cve: 'CVE-2024-1' + mi, severity: 'LOW', software: 'x', version: '1' }); }
-    many.device = recC.device; many.hardware = {}; many.software = []; many.counts = { software: 0, vulnerabilities: 150 };
+    for (var mi = 0; mi < 150; mi++) { many.vulnerabilities.push({ id: 'CVE-2024-1' + mi, status: 'CVE', severity: 'LOW', software: 'x', version: '1', description: '' }); }
+    many.device = recC.device; many.hardware = {}; many.software = []; many.coverage = [];
+    many.counts = { software: 0, vulnerabilities: 150, coverage: 0, findings: 150, uniqueFindingIds: 150, maxSeverity: 'LOW' };
     var capped = oC.asBuildRequests(many, jcfgOn, null, {});
     check('v5.0.1 jira: the per-finding issues are capped (100) so one device cannot create an unbounded issue storm',
         !!capped.requests && capped.requests.length === 1 + oC.AS_MAX_VULN_ISSUES, capped.requests && capped.requests.length);
@@ -3551,6 +3554,183 @@ steps.push(function (next) {
         check('v5.0.1 results: an array-shaped/corrupt asset-sync.json is ignored instead of becoming the map',
             oE.asResults && !Array.isArray(oE.asResults) && Object.keys(oE.asResults).length === 0, oE.asResults);
         next();
+    });
+});
+
+// ---- v5.1.0: ONE canonical collector - browser list, CSV, report, fleet index and push must agree 1:1 ----
+steps.push(function (next) {
+    var dpF = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-canon-'));
+    var fNodes = [{ _id: 'node//k1', meshid: 'mesh//grp1', rname: 'kh1', name: 'Canon', osdesc: 'Microsoft Windows 11 Pro', ip: '10.1.2.3' }];
+    var fMeshes = [{ _id: 'mesh//grp1', name: 'HQ' }];
+    var fSys = {
+        'sinode//k1': {
+            _id: 'sinode//k1',
+            doc: {
+                hardware: {
+                    identifiers: {
+                        cpu_name: 'Intel Core i7-12700', gpu_name: ['Intel UHD 770'], serial: 'CHASSIS-SN-1',
+                        bios_vendor: 'Dell Inc.', bios_version: '1.4.2', bios_serial: 'BIOS-SN-1', bios_mode: 'UEFI',
+                        board_vendor: 'Dell Inc.', board_name: '0AB1CD', board_serial: 'BOARD-SN-1', board_version: 'A00',
+                        product_name: 'OptiPlex 7090', chassis_manufacturer: 'Dell Inc.', chassis_serial: 'CHASSIS-SN-1', chassis_assettag: 'ASSET-42',
+                        storage_devices: [{ Model: 'NVMe 512GB', Size: 512110190592 }]
+                    },
+                    windows: {
+                        osinfo: { BuildRevision: '2600', BuildNumber: '22621' },
+                        memory: [{ BankLabel: 'BANK 0', Capacity: 17179869184, Speed: 3200, PartNumber: 'CMK32', Manufacturer: 'Corsair' }]
+                    },
+                    tpm: { SpecVersion: '2.0', IsActivated: true, IsEnabled: true, IsOwned: true, ManufacturerId: 'INTC' },
+                    network: { dns: ['1.1.1.1', '8.8.8.8'] }
+                }
+            }
+        }
+    };
+    var dbF = {
+        GetAllType: function (t, cb) { cb(null, t === 'node' ? fNodes.slice() : (t === 'mesh' ? fMeshes.slice() : [])); },
+        Get: function (id, cb) { if (fSys[id]) { cb(null, [fSys[id]]); return; } cb(null, fNodes.filter(function (n) { return n._id === id; })); }
+    };
+    var oF = factory({ parent: { db: dbF, datapath: dpF, debug: function () { }, config: { settings: {} }, webserver: { meshes: { 'mesh//grp1': { name: 'HQ' } }, wsagents: { 'node//k1': {} } }, DispatchEvent: function () { } } });
+    oF.softwareInventory = {
+        k1: {
+            time: 'x', apps: [
+                { name: 'Firefox', version: '120.0', publisher: 'Mozilla', location: 'C:\\Program Files' },
+                { name: 'libc6', version: '2.39', location: 'dpkg', publisher: 'Ubuntu Developers <ubuntu-devel@lists.ubuntu.com>' },
+                { name: 'Mystery Tool', version: '9.9', publisher: 'Some OEM' }
+            ]
+        }
+    };
+    oF.windowsUpdates = { k1: { count: 3, updates: [] } };
+    // deterministic matcher: one real CVE, one distro-managed row, one blind spot
+    oF.scanDeviceSoftware = function (list, cb) {
+        var out = [];
+        for (var i = 0; i < (list || []).length; i++) {
+            var nm = String((list[i] && list[i].name) || '');
+            if (/firefox/i.test(nm)) out.push({ status: 'CVE', isCve: true, cve: 'CVE-2024-0001', severity: 'CRITICAL', cvss: 9.8, description: 'crit', software: nm, version: String(list[i].version || '') });
+            else if (/libc6/i.test(nm)) out.push({ status: 'distro-managed', distro: 'supported', isCve: false, cve: '', severity: '', cvss: '', description: 'patched by the distribution', software: nm, version: String(list[i].version || '') });
+            else out.push({ status: 'not assessable', isCve: false, cve: '', severity: '', cvss: '', description: 'no proven CPE', software: nm, version: String(list[i].version || '') });
+        }
+        cb(out);
+    };
+    // an OS-level CVE, so the OS findings are part of the comparison (this is what the push used to drop)
+    oF.scanDeviceOs = function () { return [{ cve: 'CVE-2024-0009', isCve: true, severity: 'HIGH', cvss: 7.8, description: 'os bug', software: 'Operating System', version: 'Windows 11 Pro' }]; };
+    oF.osSupportState = function () { return { state: 'eol', label: 'Windows 11 Pro', reason: 'test fixture' }; };
+    oF.saveAssessments = function (cb) { if (cb) cb(null); };
+
+    // the expected finding ids, straight from the canonical collector
+    oF.collectNodeInventory(fNodes[0], function (cerr, inv) {
+        check('canonical collector: no error and the raw software rows reach the matcher (location kept)', !cerr && !!inv && inv.software.length === 3 && inv.software[1].location === 'dpkg', cerr || (inv && inv.software));
+        var expectedIds = [];
+        for (var i = 0; i < inv.findings.length; i++) { if (inv.findings[i].cve && expectedIds.indexOf(inv.findings[i].cve) < 0) expectedIds.push(inv.findings[i].cve); }
+        expectedIds.sort();
+        check('canonical collector: the findings contain software CVE + OS CVE + WINDOWS-UPDATES + OS-EOL',
+            expectedIds.join(',') === 'CVE-2024-0001,CVE-2024-0009,OS-EOL,WINDOWS-UPDATES', expectedIds);
+        check('canonical collector: the coverage rows (distro-managed, not assessable) are kept, not silently dropped',
+            inv.counts.findings === 6 && inv.counts.uniqueFindingIds === 4 && inv.counts.cves === 2 && inv.counts.software === 3, inv.counts);
+
+        // 1) the vulnerability CSV must list exactly the same finding ids
+        oF.buildCsvForNodes([fNodes[0]], 'vulns', function (e1, csvV) {
+            var csvIds = [];
+            String(csvV).split('\r\n').slice(1).forEach(function (line) {
+                if (!line) return;
+                var cells = line.split(',');
+                var id = String(cells[3] || '').replace(/"/g, '');
+                if (id && csvIds.indexOf(id) < 0) csvIds.push(id);
+            });
+            csvIds.sort();
+            check('1:1 - the vulnerability CSV lists exactly the canonical finding ids', csvIds.join(',') === expectedIds.join(','), [csvIds, expectedIds]);
+
+            // 2) the asset push payload must carry exactly the same finding ids (this FAILED before v5.1.0)
+            oF.pluginSettings = { assetManagement: { enabled: true, targetType: 'generic', endpointUrl: 'https://am.example.com/i', authMode: 'none', bodyTemplate: '{"host":"{{device.host}}","vulns":"{{vulnerabilities}}","cov":"{{coverage}}","apps":"{{software}}","serial":"{{hardware.serial}}","cpu":"{{hardware.cpu}}"}', externalIdPath: 'id' } };
+            var cap = [];
+            oF.assetHttp = function (opts, cb) { cap.push(opts); cb(null, { statusCode: 200, text: '{"id":"K1"}' }); };
+            oF.handleAdminPostReq({ headers: XHDR, body: { action: 'as_push' } }, mockRes(function () {
+                waitPush(oF, function () {
+                    var body = cap.length ? cap[0].body : null;
+                    var pushIds = (body && body.vulns ? body.vulns.map(function (v) { return v.id; }) : []).filter(function (x) { return !!x; }).sort();
+                    check('1:1 - the asset push carries EXACTLY the same findings as the CSV (OS CVE, WINDOWS-UPDATES and OS-EOL included)',
+                        !!body && pushIds.join(',') === expectedIds.join(','), [pushIds, expectedIds]);
+                    check('1:1 - the push also carries the coverage rows, so no CSV information is lost',
+                        !!body && Array.isArray(body.cov) && body.cov.length === 2 &&
+                        body.cov.some(function (c) { return c.status === 'distro-managed'; }) &&
+                        body.cov.some(function (c) { return c.status === 'not assessable'; }), body && body.cov);
+                    check('1:1 - the pushed software list equals the canonical projection (name/version/publisher/location)',
+                        !!body && body.apps.length === 3 && body.apps[0].name === 'Firefox' && body.apps[1].location === 'dpkg' && body.apps[1].publisher.indexOf('Ubuntu') >= 0, body && body.apps);
+                    check('1:1 - the pushed hardware equals the hardware-CSV facts (serial + cpu from the same derivation)',
+                        !!body && body.serial === 'CHASSIS-SN-1' && body.cpu === 'Intel Core i7-12700', body && [body.serial, body.cpu]);
+
+                    // 3) the software CSV must list the same programs as the push
+                    oF.buildCsvForNodes([fNodes[0]], 'software', function (e2, csvS) {
+                        var csvNames = String(csvS).split('\r\n').slice(1).map(function (l) { return l.split(',')[2]; }).filter(function (x) { return !!x; }).sort();
+                        var pushNames = body.apps.map(function (a) { return a.name; }).sort();
+                        check('1:1 - the software CSV and the push list the same programs', csvNames.join(',') === pushNames.join(','), [csvNames, pushNames]);
+
+                        // 4) the hardware CSV must contain the same serial/cpu as the push
+                        oF.buildCsvForNodes([fNodes[0]], 'hardware', function (e3, csvH) {
+                            check('1:1 - the hardware CSV contains the same serial and CPU the push sends',
+                                String(csvH).indexOf('CHASSIS-SN-1') >= 0 && String(csvH).indexOf('Intel Core i7-12700') >= 0 && String(csvH).indexOf('ASSET-42') >= 0, String(csvH).substring(0, 160));
+
+                            // 5) the fleet index (browser device list) must report the same finding count
+                            oF.buildFleetIndex(function (e4, data) {
+                                var bd = data.byDevice['node//k1'];
+                                check('1:1 - the browser device list shows the same finding count as the CSV/report (4 distinct ids)',
+                                    !!bd && bd.cve === 4 && bd.maxSeverity === 'CRITICAL', bd);
+                                var swNames = data.software.map(function (s) { return s.name; }).sort();
+                                check('1:1 - the browser software list shows the same programs as the CSV/push',
+                                    swNames.join(',') === pushNames.join(','), [swNames, pushNames]);
+
+                                // 6) the printable report must count the same distinct findings for this device
+                                oF.buildOverallReport(function (e5, report) {
+                                    var dev = report.devices.filter(function (d) { return d.hostName === 'kh1'; })[0];
+                                    check('1:1 - the printable report counts the same distinct findings for the device',
+                                        !!dev && dev.cveCount === 4, dev && dev.cveCount);
+                                    check('1:1 - the report sees the same number of installed programs as the CSV/push',
+                                        report.totalPrograms === 3 && !!dev && dev.programs === 3, [report.totalPrograms, dev && dev.programs]);
+                                    next();
+                                });
+                            }, true);
+                        });
+                    });
+                });
+            }), user);
+        });
+    });
+});
+
+// ---- v5.1.0: the license path uses the SAME software source as the CSV (sysinfo doc included) ----
+steps.push(function (next) {
+    var dpL2 = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-lic2-'));
+    var lNodes = [{ _id: 'node//L1', meshid: 'mesh//grp1', rname: 'Lh1', name: 'LicSysinfo', osdesc: 'Microsoft Windows 11 Pro' }];
+    // the software exists ONLY in the sysinfo document - the plugin's own store is empty for this device
+    var lSys = { 'sinode//L1': { _id: 'sinode//L1', doc: { apps: [{ name: 'Adobe Acrobat Pro', version: '11' }] } } };
+    var dbL2 = { GetAllType: function (t, cb) { cb(null, t === 'node' ? lNodes.slice() : meshes.slice()); }, Get: function (id, cb) { if (lSys[id]) { cb(null, [lSys[id]]); return; } cb(null, lNodes.filter(function (n) { return n._id === id; })); } };
+    var sentL2 = [];
+    var agentsL2 = { 'node//L1': { send: function (m) { sentL2.push(JSON.parse(m)); } } };
+    var oL2 = factory({ parent: { db: dbL2, datapath: dpL2, debug: function () { }, config: { settings: {} }, webserver: { meshes: {}, wsagents: agentsL2 }, DispatchEvent: function () { } } });
+    oL2.softwareInventory = {};
+    oL2.customLicenseEntries = [{ match: 'acrobat', label: 'Adobe Acrobat', rules: [{ type: 'registry', path: 'HKLM:\\SOFTWARE\\Adobe\\Acrobat', value: 'Serial' }] }];
+    oL2.pluginSettings = { inventoryScanner: { licenseCollectionEnabled: true, licenseMsKeys: false } };
+    var gunzL2 = function (cmd) { var m = String(cmd).match(/FromBase64String\('([A-Za-z0-9+\/=]+)'\)/); return m ? require('zlib').gunzipSync(Buffer.from(m[1], 'base64')).toString('utf8') : ''; };
+
+    // the canonical row source must see the sysinfo-only program
+    oL2.fetchNodeSoftware(lNodes[0], function (e, got) {
+        check('v5.1.0 fetchNodeSoftware: the sysinfo document is a software source like the plugin store (one canonical accessor)',
+            !e && got.rows.length === 1 && got.rows[0].name === 'Adobe Acrobat Pro', got && got.rows);
+        check('v5.1.0 licenseAppRules: takes the canonical rows and matches the rule for a sysinfo-only program',
+            oL2.licenseAppRules(got.rows).length === 1 && oL2.licenseAppRules(got.rows)[0].label === 'Adobe Acrobat', oL2.licenseAppRules(got.rows));
+        oL2.handleAdminPostReq({ headers: XHDR, body: { action: 'lic_collect', nodeId: 'node//L1' } }, mockRes(function (d) {
+            var script = sentL2.length ? gunzL2(sentL2[0].cmds) : '';
+            // the rules travel base64-encoded inside the script (never as a literal path), so decode them
+            var blobs = []; var re = /FromBase64String\('([A-Za-z0-9+\/=]+)'\)/g; var mm;
+            while ((mm = re.exec(script)) !== null) { try { blobs.push(Buffer.from(mm[1], 'base64').toString('utf8')); } catch (e) { } }
+            var hasRule = blobs.some(function (b) { return b.indexOf('Adobe') >= 0 && b.indexOf('Serial') >= 0; });
+            check('v5.1.0 lic_collect: a program listed only in sysinfo still gets its license rule dispatched (was invisible before)',
+                d.started === true && sentL2.length === 1 && hasRule, [d, script.length, blobs.length]);
+            // and the CSV lists exactly the same program for the same device
+            oL2.buildCsvForNodes([lNodes[0]], 'software', function (ce, csv) {
+                check('v5.1.0 1:1 - the software CSV lists the same program the license run was built from',
+                    String(csv).indexOf('Adobe Acrobat Pro') >= 0, String(csv).split('\r\n').slice(0, 2));
+                next();
+            });
+        }), user);
     });
 });
 

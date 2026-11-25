@@ -77,6 +77,19 @@ Consequences an agent must respect:
   settings/assessments â†’ data (nvd, nvdindex, cpetable, matching, oslifecycle, osscan, inventory) â†’
   collectors/engines (collector, scheduling, winget, winget-handlers, osupdate, swstore, swdeploy,
   swdeploy-handlers) â†’ output (reports, csv, nodes) â†’ routes â†’ browser.
+- **ONE collection, many consumers (v5.1.0 - a hard rule).** A device's inventory is collected in exactly
+  one place: `obj.fetchNodeSoftware(node, cb)` returns the raw software rows (plugin store AND sysinfo doc)
+  and `obj.collectNodeInventory(node, cb)` returns the whole canonical record - identity, `hardwareSummary`,
+  the raw rows, the output projection (`softwareProjection`), the per-software scan rows, the FULL findings
+  list (software CVEs + OS CVEs + `WINDOWS-UPDATES` + `OS-EOL`) and the counts. **Never** re-implement that
+  chain (`fetchSysinfo` â†’ `getStoredSoftware` â†’ `scanNodeSoftware` â†’ OS findings) in a consumer, and
+  **never** hand the matcher a reduced projection of the rows: `isDistroPackage`/`isDistroMaintained` read
+  `location`/`installLocation`, so projecting before scanning silently turns distribution packages into
+  false-positive CVEs. Consumers are `csv.js` (all three exports), `reports.js` (both scan paths),
+  `fleetindex.js` (browser lists) and `assetmgmt.js` (the push); `license.js` uses `fetchNodeSoftware` for
+  its rule matching. This is what makes the browser, the CSV and the push show the SAME device facts -
+  `tools/test-plugin.js` pins it with the "1:1" assertions (same finding ids in CSV, report, fleet index and
+  push payload; same program list; same hardware serial/CPU).
 - **Functions that were local helpers are now members too** (`obj.formatCsvField`, `obj.csvCellCompare`, `obj.csvRowCompare`, `obj.pacedEach`, `obj.timestamp`,
   `obj.parseMeshIds`, `obj.isFindingId`, `obj.boolSetting`, `obj.safeNodeDir`, `obj.fetchSysinfo`,
   `obj.httpGetToFile`, `obj.winRelNum`, `obj.ubuRelNum`, `obj.MAX_TIMEOUT_MS`) - same reason: they are
@@ -107,15 +120,15 @@ Consequences an agent must respect:
 | `lib/devreset.js` | per-device Windows PC reset (v4.5.0, the ONLY rebooting feature): `devBuildProbeScript`/`devBuildResetScript`, `devDispatch`, `devModeAllowed`/`devProbeFresh`/`devBitlockerState` gates, `devHandleResponse`/`devResetTimeout`, `dr_status`/`dr_probe`/`dr_reset` handlers, `device-reset.json` + `device-reset.log` |
 | `lib/wutroubleshoot.js` | per-device Windows Update troubleshooter (v4.6.0): `wuBuildDiagnoseScript`/`wuBuildRepairScript`/`wuHead`, `wuDispatch`, `wuHandleResponse`/`wuTimeout`, reboot-state reporting, `wu_diag`/`wu_repair` handlers, `wu-troubleshoot.json` + `wu-troubleshoot.log` |
 | `lib/devreboot.js` | per-device force restart + user notice (v4.7.0): `rbBuild*Script`/`rbBuildScript`/`rbProbeLines`/`rbCleanMessage`/`rbB64`, `rbDispatch`, `rbHandleResponse`/`rbTimeout`, `reboot_now`/`reboot_notify` handlers, `device-reboot.json` + `device-reboot.log` |
-| `lib/license.js` | license keys/info in the software CSV (v4.8.0): curated `license-table.json` + remote fetch + custom rules (`applyLicenseTableText`/`sanitizeLicenseRules`/`licenseRulesForApp`), read-only `licenseBuildScript`, `licDispatch`/`licHandleResponse`/`licTimeout`, per-node `data/<node>/license.json`, `lic_status`/`lic_collect`/`get_license_table`/`add_license`/`remove_license`, `license-collection.log` |
-| `lib/fleetindex.js` | READ-ONLY fleet index for the two unified views (v4.9.5, issue #8): `buildFleetIndex` aggregates stored software (`getStoredSoftware`) + the same `scanNodeSoftware` matcher the CSV/reports use + `wgResults` (updatable) + `licenseMapForNode` into a distinct-software table and a per-device CVE count; `swFleetHandler` (POST `sw_fleet`, 60 s in-memory cache, `?refresh=1`). No agent command, no new outbound request. |
-| `lib/assetmgmt.js` | OPTIONAL outbound asset-management connector (v5.0.0, issue #5): `assetConfig`, `asBuildRequests` (generic JSON body template with `{{placeholders}}` + Jira and Snipe-IT presets, create-or-update via a stored external id), `asExternalId`, `assetHttp` (https-only, injectable), `asCollectDeviceRecord`, `asSendDevice`/`asPushHandler`/`asTestHandler`, `asStatusHandler`, `asGetConfigHandler`/`asSaveConfigHandler` (own `assetManagement` settings section, secrets masked + blank-keeps + `__AS_CLEAR__`), `asLog` (status only, never a payload/secret), `scheduleAssetSync` (off unless enabled AND interval > 0), `asset-sync.json` + `asset-sync.log` |
+| `lib/license.js` | license keys/info in the software CSV (v4.8.0): curated `license-table.json` + remote fetch + custom rules (`applyLicenseTableText`/`sanitizeLicenseRules`/`licenseRulesForApp`), read-only `licenseBuildScript`, `licenseAppRules(rows)` (since v5.1.0 fed by `obj.fetchNodeSoftware`, so a program that only exists in the sysinfo doc is matched too - it used to see fewer programs than the CSV listed), `licDispatch`/`licHandleResponse`/`licTimeout`, per-node `data/<node>/license.json`, `lic_status`/`lic_collect`/`get_license_table`/`add_license`/`remove_license`, `license-collection.log` |
+| `lib/fleetindex.js` | READ-ONLY fleet index for the two unified views (v4.9.5, issue #8): `buildFleetIndex` walks `obj.collectNodeInventory` (v5.1.0 - before that it read `getStoredSoftware(node,{})` without the sysinfo doc and counted only software CVEs, so the browser disagreed with the CSV) and joins `wgResults` (updatable) + `licenseMapForNode`; `swFleetHandler` (POST `sw_fleet`, 60 s in-memory cache, `?refresh=1`). Per-software CVE attribution uses the software findings only (OS-level findings belong to the device, not to a program); the device badge counts `uniqueFindingIds` = the same distinct ids the CSV/report show. No agent command, no outbound request. |
+| `lib/assetmgmt.js` | OPTIONAL outbound asset-management connector (v5.0.0, issue #5): `assetConfig`, `asBuildRequests` (generic JSON body template with `{{placeholders}}` + Jira and Snipe-IT presets, create-or-update via a stored external id), `asExternalId`, `assetHttp` (https-only, injectable), `asCollectDeviceRecord` (since v5.1.0 a thin shaping of `obj.collectNodeInventory` - the push therefore carries the SAME findings/hardware/software as the CSV: `vulnerabilities` = every finding with an id, `coverage` = the blind-spot rows), `asSendDevice`/`asPushHandler`/`asTestHandler`, `asStatusHandler`, `asGetConfigHandler`/`asSaveConfigHandler` (own `assetManagement` settings section, secrets masked + blank-keeps + `__AS_CLEAR__`), `asLog` (status only, never a payload/secret), `scheduleAssetSync` (off unless enabled AND interval > 0), `asset-sync.json` + `asset-sync.log` |
 | `lib/swstore.js` | deploy foundation: installer library index/folders, resumable upload parts, task store load/save/prune, staging into `<filespath>/tmp`, `swDownloadCookie` (agentdownload), name/args/extension sanitizers, `swEnsureStaged` |
 | `lib/swdeploy.js` | deploy engine: `swBuildWindowsScript`/`swBuildLinuxScript`, `swWgetCommand`, queue/pump/`swDispatchNode`/`swHandleResponse`/watchdogs, `swOnNodeConnect`/`swSweepOnce`/`scheduleSwSweep`, `swTaskDoneCheck`, `swCreateTask`/`swTaskView` |
 | `lib/swdeploy-handlers.js` | `sw_files`, `sw_upload`, `sw_delete_file`, `sw_rescan_library`, `sw_serverfiles`, `sw_devices`, `sw_create_task`, `sw_status`, `sw_retry_task`, `sw_cancel_task` handlers |
-| `lib/reports.js` | `scanMeshCves`, `scanMultiMeshCves`, `assessmentScan` (the `action=scan` route), `summarizeDeviceSwVer`, `buildOverallReport`, `vulnerabilityReport`, `deviceReport` |
-| `lib/csv.js` | CSV formatting helpers (`formatCsvField`, `csvCellCompare`, `csvRowCompare`), `buildCsvForNodes`, the `action=export` route |
-| `lib/nodes.js` | `fetchSysinfo`, `scanNodeSoftware`, `getGroupName`, `getHostName`, `windowsUpdatesFinding` |
+| `lib/reports.js` | `scanMeshCves`, `scanMultiMeshCves`, `assessmentScan` (the `action=scan` route), `summarizeDeviceSwVer`, `buildOverallReport`, `vulnerabilityReport`, `deviceReport` - both scan paths read `obj.collectNodeInventory` (v5.1.0), no own collection |
+| `lib/csv.js` | CSV formatting helpers (`formatCsvField`, `csvCellCompare`, `csvRowCompare`), `buildCsvForNodes` (all three types generated from `obj.collectNodeInventory`, v5.1.0), `formatBytes`, the `action=export` route |
+| `lib/nodes.js` | **THE canonical per-device collection (v5.1.0)**: `fetchNodeSoftware` (the one way to get a device's raw software rows - plugin store AND sysinfo doc) and `collectNodeInventory` (identity + `hardwareSummary` + raw rows + projection + `softwareFindings` + the FULL `findings` list + counts). Plus `fetchSysinfo`, `scanNodeSoftware`, `getGroupName`, `getHostName`, `windowsUpdatesFinding`, `hardwareSummary`, `softwareProjection`. Every consumer (CSV, both reports, fleet index, asset push, license rules) reads this one record - see the "One collection, many consumers" rule below. |
 | `lib/routes.js` | `handleAdminReq`/`handleAdminPostReq` dispatch, `isAuthorizedAdmin`, `isSameOriginRequest`, panel render, `get_locations`, `get_log`, `parseMeshIds` |
 | `lib/browser.js` | `uiCustomEvent` (server-side) + the three browser-exported functions |
 
@@ -1504,7 +1517,7 @@ v5.0.0: issue #5 - optional connector to an external asset-management system.
   skips a clean device and RECORDS the skip, as_test, the scheduler registers nothing while disabled/interval 0
   and only then, and get_log/as_status. Plus 7 render assertions for the panel, its disclosure text, the as_*
   routes, password fields with an explicit clear, and the per-push consent. Version 4.9.6 -> 5.0.0.
-v5.0.1 (this release): full source review of the #5 connector - six real defects found and fixed.
+v5.0.1: full source review of the #5 connector - six real defects found and fixed.
 - **Linux distribution packages were mis-scanned before being pushed** (the most serious one): the record
   collector handed the matcher a reduced projection ({name,version,publisher}) instead of the RAW stored rows,
   so `location`/`installLocation` (dpkg, rpm, apk, pacman) was lost. `isDistroPackage`/`isDistroMaintained`
@@ -1538,3 +1551,41 @@ v5.0.1 (this release): full source review of the #5 connector - six real defects
   the result map; `as_status` no longer ships the internal per-CVE id map to the browser (a count instead).
 - Tests: +3 steps / +21 assertions (619 PASS + 3 SKIP / 94 steps) pinning every fix above, including the
   background-answer + watchdog-unlock behaviour and the raw-rows contract. Version 5.0.0 -> 5.0.1.
+v5.1.0 (this release): refactor - ONE canonical inventory collection, so browser, CSV, reports and push agree 1:1.
+- User-visible problem: the same device could show different information depending on where you looked. The
+  reason was that "collect a device" had been implemented FIVE times: `reports.js` twice, `csv.js` once,
+  `fleetindex.js` once and `assetmgmt.js` once. The copies had drifted:
+    * `assetmgmt.js` dropped the OS findings entirely - a push contained only software CVE rows, never the OS
+      CVEs, never `WINDOWS-UPDATES`, never `OS-EOL`, and it reduced the hardware to a handful of fields. The
+      CSV and the report showed all of them for the same device.
+    * `fleetindex.js` called `getStoredSoftware(node, {})` - without the sysinfo document - and counted only
+      software CVEs, so the browser's device badge could disagree with the CSV.
+    * `license.js` also read `getStoredSoftware(node, {})`, so a program that only exists in the sysinfo doc
+      was listed by the CSV but never got a license rule matched.
+    * `assetmgmt.js` handed the matcher a reduced projection, dropping `location`/`installLocation` (fixed in
+      5.0.1, but the same class of drift).
+- The fix is structural, not per-symptom: `lib/nodes.js` now owns the collection - `fetchNodeSoftware(node, cb)`
+  (the one way to get the raw rows: plugin store AND sysinfo doc) and `collectNodeInventory(node, cb)` (identity,
+  `hardwareSummary`, raw rows, `softwareProjection`, `softwareFindings`, the FULL `findings` list and the counts,
+  incl. `uniqueFindingIds` and `maxSeverity`). `hardwareSummary` is the single derivation of the hardware facts
+  (CPU, GPUs, memory banks + total, storage, BIOS, board, chassis/system, TPM, network/DNS, best-effort serial),
+  pre-formatted with `formatBytes` so no consumer formats it a second, slightly different way.
+- All five consumers were migrated onto it: `csv.js` (hardware rows are now generated FROM the canonical
+  summary - byte-identical output, verified by the existing CSV tests), `reports.js` (both scan paths; the
+  coverage categories now come from `inv.softwareFindings`, the findings from `inv.findings`), `fleetindex.js`
+  (device badge = `uniqueFindingIds`, software rows from the canonical projection), `assetmgmt.js` (the record
+  is a shaping of the canonical one: `vulnerabilities` = every finding with an id, `coverage` = the blind-spot
+  rows, `hardware` = flat convenience fields kept for existing templates PLUS the full canonical detail) and
+  `license.js` (`licenseAppRules(rows)`, fed by `fetchNodeSoftware`; the "all online Windows" path became a
+  paced async loop like the other bulk paths).
+- AGENTS.md gained a hard rule: never re-implement the collection chain in a consumer and never hand the
+  matcher a projection (the distro-package detection needs `location`).
+- Behaviour changes an admin can see: the asset push now contains the OS findings and the full hardware detail
+  (and a `coverage` array), and the browser's per-device vulnerability badge counts the same distinct findings
+  the CSV lists (it used to count software CVEs only). The CSV and the printable reports are unchanged.
+- Tests: +2 steps / +18 assertions (637 PASS + 3 SKIP / 96 steps). The new "1:1" step builds one device with a
+  software CVE, an OS CVE, `WINDOWS-UPDATES`, `OS-EOL`, a distro-managed row and a not-assessable row, then
+  asserts the SAME finding-id set appears in the vulnerability CSV, the push payload, the fleet index and the
+  report count; that CSV/push/fleet-index list the same programs; that the hardware serial + CPU are identical
+  in the hardware CSV and the push; and that a sysinfo-only program reaches both the software CSV and the
+  license run. These assertions fail on any future drift between the views. Version 5.0.1 -> 5.1.0.

@@ -3009,10 +3009,15 @@
             o.name = asPlaceholder('device.given') + ' ' + asPlaceholder('device.host');
             o.group = asPlaceholder('device.group');
             o.os = asPlaceholder('device.os');
+            o.ip = asPlaceholder('device.ip');
             o.serial = asPlaceholder('hardware.serial');
+            o.manufacturer = asPlaceholder('hardware.manufacturer');
+            o.model = asPlaceholder('hardware.model');
             o.cpu = asPlaceholder('hardware.cpu');
+            o.memory = asPlaceholder('hardware.memoryText');
             o.software = asPlaceholder('software');
             o.vulnerabilities = asPlaceholder('vulnerabilities');
+            o.coverage = asPlaceholder('coverage');
             o.softwareCount = asPlaceholder('counts.software');
             o.vulnerabilityCount = asPlaceholder('counts.vulnerabilities');
             return JSON.stringify(o, null, 2);
@@ -3051,12 +3056,18 @@
             $('asTokenHint').textContent = c.hasToken
                 ? 'A token IS stored (never displayed). Leave blank to keep it, or tick "clear" to erase it.'
                 : 'No token stored yet.';
-            var names = ['device.id', 'device.host', 'device.given', 'device.group', 'device.os', 'device.online',
-                'hardware.cpu', 'hardware.manufacturer', 'hardware.model', 'hardware.serial', 'hardware.bios', 'hardware.memoryBytes', 'hardware.ip',
-                'software (array)', 'vulnerabilities (array)', 'counts.software', 'counts.vulnerabilities'];
+            var names = ['device.id', 'device.host', 'device.given', 'device.group', 'device.os', 'device.online', 'device.ip',
+                'hardware.cpu', 'hardware.manufacturer', 'hardware.model', 'hardware.serial', 'hardware.bios', 'hardware.biosVendor',
+                'hardware.memoryBytes', 'hardware.memoryText', 'hardware.windowsBuild', 'hardware.gpus', 'hardware.memoryBanks',
+                'hardware.storage', 'hardware.board', 'hardware.system', 'hardware.tpm', 'hardware.network',
+                'software (array)', 'vulnerabilities (array)', 'coverage (array)',
+                'counts.software', 'counts.vulnerabilities', 'counts.coverage', 'counts.findings', 'counts.uniqueFindingIds', 'counts.maxSeverity'];
             var parts = [];
             for (var i = 0; i < names.length; i++) { parts.push(asPlaceholder(names[i].replace(' (array)', ''))); }
-            $('asTemplateHint').innerHTML = 'Available placeholders: <code>' + parts.join('</code> <code>') + '</code>. A placeholder alone in a value injects the whole list; inside text it is inserted as text.';
+            $('asTemplateHint').innerHTML = 'Available placeholders: <code>' + parts.join('</code> <code>') + '</code>. A placeholder alone in a value injects the whole list; inside text it is inserted as text.'
+                + ' <br><code>software</code> = the installed programs (name, version, publisher, location, date) - the same rows the software CSV has.'
+                + ' <code>vulnerabilities</code> = every actionable finding (a CVE, WINDOWS-UPDATES or OS-EOL) - the same rows the vulnerability CSV has.'
+                + ' <code>coverage</code> = the honest blind spots of the same scan (not assessable, distribution-managed, driver/firmware).';
             asShowTargetFields();
         }
 
