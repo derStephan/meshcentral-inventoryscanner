@@ -1,19 +1,27 @@
 {
-  "updated": "2026-11-23",
+  "updated": "2026-11-25",
   "_comment": "License-key extraction rules per software, the asset-management counterpart of cpe-table.json. Each entry: a case-insensitive 'match' regex against the installed-software display name, a human 'label', and 'rules' - one or more of: {type:'registry', path:'HKLM:\\...', value:'<name>'}, {type:'file', path:'<file>', regex:'<regex with group 1 = the key>' | jsonfield:'<name>' | line:<n>}, {type:'wmi', class:'<ClassName>', property:'<Prop>', filter:'<WQL filter>'}. The script only ever uses these as a registry value / file content / CIM property - never as code. Microsoft keys come from SoftwareLicensingProduct (the 'include Microsoft keys' switch), not from here. Keep the curated set small and correct: add your own per-program rules in the panel (Software > License keys).",
   "entries": [
     {
-      "match": "microsoft office (professional|standard|enterprise)|office 201[0-9]|microsoft 365",
+      "match": "^microsoft office|^microsoft 365|office 201[0-9]|^office ltsc",
       "label": "Microsoft Office",
       "rules": [
-        { "type": "registry", "path": "HKLM:\\SOFTWARE\\Microsoft\\Office\\ClickToRun\\Configuration", "value": "ProductIds" }
+        {
+          "type": "registry",
+          "path": "HKLM:\\SOFTWARE\\Microsoft\\Office\\ClickToRun\\Configuration",
+          "value": "ProductIds"
+        }
       ]
     },
     {
       "match": "adobe acrobat|acrobat pro|acrobat reader",
       "label": "Adobe Acrobat",
       "rules": [
-        { "type": "registry", "path": "HKLM:\\SOFTWARE\\WOW6432Node\\Adobe\\Adobe Acrobat\\11.0", "value": "Serial" }
+        {
+          "type": "registry",
+          "path": "HKLM:\\SOFTWARE\\WOW6432Node\\Adobe\\Adobe Acrobat\\11.0",
+          "value": "Serial"
+        }
       ]
     }
   ]

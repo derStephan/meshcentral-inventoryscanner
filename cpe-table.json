@@ -1,5 +1,5 @@
 {
-  "updated": "2026-11-12",
+  "updated": "2026-11-25",
   "entries": [
     {
       "match": "mozilla firefox",
@@ -75,6 +75,16 @@
       "match": "^visual studio build tools 2022|^microsoft visual studio (community|professional|enterprise) 2022",
       "vendor": "microsoft",
       "product": "visual_studio_2022"
+    },
+    {
+      "match": "^microsoft visual studio team foundation server",
+      "vendor": "microsoft",
+      "product": "visual_studio_team_foundation_server"
+    },
+    {
+      "match": "team foundation server",
+      "vendor": "microsoft",
+      "product": "team_foundation_server"
     },
     {
       "match": "microsoft visual studio",
@@ -515,6 +525,160 @@
       "match": "^sas 9\\.",
       "vendor": "sas",
       "product": "base_sas"
+    },
+    {
+      "match": "^fotos$",
+      "vendor": "microsoft",
+      "product": "photos"
+    },
+    {
+      "match": "^microsoft visual basic \\d",
+      "vendor": "microsoft",
+      "product": "visual_basic"
+    },
+    {
+      "match": "^microsoft asp\\.net mvc",
+      "vendor": "microsoft",
+      "product": "asp.net_model_view_controller"
+    },
+    {
+      "match": "^service pack \\d+ (für|for) sql server",
+      "vendor": "microsoft",
+      "product": "sql_server"
+    },
+    {
+      "match": "dell ?optimizer",
+      "vendor": "dell",
+      "product": "optimizer"
+    },
+    {
+      "match": "^nvidia grafiktreiber|^nvidia display driver",
+      "vendor": "nvidia",
+      "product": "display_driver"
+    },
+    {
+      "match": "^cuda-toolkit",
+      "vendor": "nvidia",
+      "product": "cuda_toolkit"
+    },
+    {
+      "match": "^nvidia-container-toolkit",
+      "vendor": "nvidia",
+      "product": "nvidia_container_toolkit"
+    },
+    {
+      "match": "^containerd",
+      "vendor": "linuxfoundation",
+      "product": "containerd"
+    },
+    {
+      "match": "^google-chrome",
+      "vendor": "google",
+      "product": "chrome"
+    },
+    {
+      "match": "mysql workbench",
+      "vendor": "oracle",
+      "product": "mysql_workbench"
+    },
+    {
+      "match": "^vmware workstation",
+      "vendor": "vmware",
+      "product": "workstation"
+    },
+    {
+      "match": "^bluestacks",
+      "vendor": "bluestacks",
+      "product": "bluestacks"
+    },
+    {
+      "match": "^winpcap",
+      "vendor": "winpcap",
+      "product": "winpcap"
+    },
+    {
+      "match": "^advanced installer",
+      "vendor": "caphyon",
+      "product": "advanced_installer"
+    },
+    {
+      "match": "^adobe cs\\d|adobe creative suite",
+      "vendor": "adobe",
+      "product": "creative_suite"
+    },
+    {
+      "match": "powerchute network shutdown",
+      "vendor": "apc",
+      "product": "powerchute_network_shutdown"
+    },
+    {
+      "match": "prosafe plus",
+      "vendor": "netgear",
+      "product": "prosafe_plus_configuration_utility"
+    },
+    {
+      "match": "^realtek usb audio",
+      "kind": "driver"
+    },
+    {
+      "match": "^realtek card reader",
+      "kind": "driver"
+    },
+    {
+      "match": "^realtek pc camera",
+      "kind": "driver"
+    },
+    {
+      "match": "^intel\\(r\\) hid event filter",
+      "kind": "driver"
+    },
+    {
+      "match": "^intel\\(r\\) serial io",
+      "kind": "driver"
+    },
+    {
+      "match": "^intel\\(r\\) virtual buttons",
+      "kind": "driver"
+    },
+    {
+      "match": "^intel\\(r\\) management engine (components|driver)",
+      "kind": "driver"
+    },
+    {
+      "match": "^dynamic application loader host interface",
+      "kind": "driver"
+    },
+    {
+      "match": "^displaylink graphics",
+      "kind": "driver"
+    },
+    {
+      "match": "^iss_drivers",
+      "kind": "driver"
+    },
+    {
+      "match": "^pl-2303",
+      "kind": "driver"
+    },
+    {
+      "match": "^qualcomm 11ac",
+      "kind": "driver"
+    },
+    {
+      "match": "^thunderbolt",
+      "kind": "driver"
+    },
+    {
+      "match": "^dw\\d{4}e snapdragon",
+      "kind": "driver"
+    },
+    {
+      "match": "^dell controlvault host components",
+      "kind": "driver"
+    },
+    {
+      "match": "^windows-treiberpaket",
+      "kind": "driver"
     }
   ]
 }
