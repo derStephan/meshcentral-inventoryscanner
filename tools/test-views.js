@@ -21,6 +21,25 @@ try {
 
 const viewsDir = path.join(__dirname, '..', 'views');
 
+// Register the partials exactly the way express-handlebars@8 does for a MeshCentral plugin:
+// pluginHandler sets app.set('views', <plugin>/views) per request, the engine is created without a
+// partialsDir, so it derives `<plugin>/views/partials/` per render and globs `**/*.handlebars` with
+// posix paths - the partial name is the relative path minus the extension (sub-folders = namespaces).
+const partialsDir = path.join(viewsDir, 'partials');
+const registeredPartials = [];
+(function registerPartials(dir, prefix) {
+    if (!fs.existsSync(dir)) { return; }
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (e.isDirectory()) { registerPartials(path.join(dir, e.name), prefix + e.name + '/'); }
+        else if (e.name.endsWith('.handlebars')) {
+            const name = prefix + e.name.slice(0, -'.handlebars'.length);
+            Handlebars.registerPartial(name, fs.readFileSync(path.join(dir, e.name), 'utf8'));
+            registeredPartials.push(name);
+        }
+    }
+})(partialsDir, '');
+console.log('registered ' + registeredPartials.length + ' partial(s): ' + (registeredPartials.join(', ') || '(none)'));
+
 const loc = {
     id: 'mesh//grp1', name: 'HQ & Co <b>',
     totalSystems: 2, totalPrograms: 10, assessablePrograms: 3, notAssessablePrograms: 5, outOfScopePrograms: 2, coverageBase: 8, coveragePercent: 38,
@@ -91,6 +110,9 @@ try {
 // v4.9.0 issue #8: two-layer navigation (main sections + sub tabs), old flat nav gone, no moved-control id duplicates
 try {
     const a = fs.readFileSync(path.join(outDir, 'assessment-data.html'), 'utf8');
+    // the panel must resolve a partial from views/partials/ - the mechanism the view modularisation needs
+    console.log(((a.indexOf('inv-partial-probe') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'partials: the panel resolves {{> probe }} from views/partials/');
+    console.log(((registeredPartials.length > 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'partials: at least one partial file is registered for the render');
     const count = (s, re) => (s.match(re) || []).length;
     console.log((/class="maintab[^"]*" data-main="devices"/.test(a) && /data-main="software"/.test(a) && /data-main="vulns"/.test(a) && /data-main="settings"/.test(a) ? 'PASS ' : (failed++, 'FAIL ')) + 'nav: four main sections present');
     console.log(((a.indexOf('id="subnav"') >= 0 && a.indexOf('id="mainnav"') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'nav: sub-nav container present');

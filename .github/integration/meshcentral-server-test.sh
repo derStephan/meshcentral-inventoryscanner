@@ -58,6 +58,11 @@ chk 'panel POST without a session is refused'          401 "$(post_anon --data '
 chk 'panel GET with the session renders'               200 "$(get_auth '&action=show')"
 if grep -q "plugin v${PLUGIN_VER:-unknown}" "$BODY"; then ok 'the panel shows the running plugin version'; else bad "panel does not show plugin v${PLUGIN_VER:-unknown}"; fi
 if grep -q 'inventoryscanner' "$BODY"; then ok 'the panel references the plugin shortName'; else bad 'panel missing the shortName'; fi
+# View-modularisation spike: express-handlebars MUST resolve partials for a plugin view. pluginHandler sets
+# app.set('views', <plugin>/views) per request and webserver.js creates the engine without a partialsDir, so
+# express-handlebars@8 derives '<plugin>/views/partials/' per render. The whole panel split depends on this,
+# therefore it is proven live against the real server, not only by reading the upstream source.
+if grep -q 'inv-partial-probe' "$BODY"; then ok 'the panel resolves a handlebars partial from views/partials/'; else bad 'PARTIAL NOT RESOLVED - views/partials/ does not work for plugin views'; fi
 chk 'POST without the cross-site header is refused'    403 "$(post_nohdr --data 'action=get_locations')"
 chk 'POST with an unknown action 404s'                 404 "$(post_auth --data 'action=does_not_exist')"
 chk 'GET with an unknown action 404s'                  404 "$(get_auth '&action=nope')"

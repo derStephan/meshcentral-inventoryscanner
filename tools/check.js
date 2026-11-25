@@ -89,8 +89,10 @@ for (const vf of fs.readdirSync(viewsDir).filter(function (f) { return f.endsWit
     }
     blocks.forEach(function (js, bi) {
         const label = vf + ' script #' + (bi + 1);
-        const stray = js.replace(/\{\{shortName\}\}/g, '').indexOf('{{');
-        report(label + ': no stray {{ (only {{shortName}})', stray < 0,
+        // Allowed inside a <script>: the server token {{shortName}} and a partial tag {{> name }}
+        // (since the view modularisation the panel JS is composed of partials included INSIDE the IIFE).
+        const stray = js.replace(/\{\{shortName\}\}/g, '').replace(/\{\{\s*>\s*[A-Za-z0-9_.\-/]+[^}]*\}\}/g, '').indexOf('{{');
+        report(label + ': no stray {{ (only {{shortName}} and {{> partial }})', stray < 0,
             stray >= 0 ? js.substring(Math.max(0, stray - 40), stray + 40) : undefined);
         const tmp = path.join(os.tmpdir(), 'invscanner-inline-check-' + Date.now() + '-' + bi + '.js');
         fs.writeFileSync(tmp, js, 'utf8');
@@ -99,6 +101,43 @@ for (const vf of fs.readdirSync(viewsDir).filter(function (f) { return f.endsWit
     });
 }
 if (!fs.existsSync(path.join(viewsDir, 'assessment.handlebars'))) { report('assessment.handlebars exists', false); }
+
+// 2b. Handlebars partials (view modularisation). MeshCentral's pluginHandler does
+//     `serv.app.set('views', <pluginPath>/<pin>/views)` per request and webserver.js creates the engine
+//     with `exphbs.engine({ defaultLayout: false })` - no partialsDir - so express-handlebars@8 derives
+//     it PER RENDER as `<plugin>/views/partials/` (glob `**/*.handlebars`, posix, so sub-folders become
+//     namespaces: partials/panels/x.handlebars => `{{> panels/x }}`). Same symmetry guard as lib/ <-> the
+//     entry's modules list: every reference resolves to a file, and no file is an unreferenced orphan.
+const partialsDir = path.join(viewsDir, 'partials');
+function allViewFiles(dir, prefix) {
+    let out = [];
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const rel = prefix + e.name;
+        if (e.isDirectory()) { out = out.concat(allViewFiles(path.join(dir, e.name), rel + '/')); }
+        else if (e.name.endsWith('.handlebars')) { out.push({ rel: rel, abs: path.join(dir, e.name) }); }
+    }
+    return out;
+}
+const viewFilesAll = allViewFiles(viewsDir, '');
+const partialNames = viewFilesAll.filter(function (f) { return f.rel.indexOf('partials/') === 0; })
+    .map(function (f) { return f.rel.slice('partials/'.length, -'.handlebars'.length); }).sort();
+const partialRefs = new Set();
+for (const f of viewFilesAll) {
+    // Handlebars comments may legitimately DOCUMENT the partial syntax - they are not references.
+    const src = fs.readFileSync(f.abs, 'utf8')
+        .replace(/\{\{!--[\s\S]*?--\}\}/g, '')
+        .replace(/\{\{![^}]*\}\}/g, '');
+    const re = /\{\{\s*>\s*([A-Za-z0-9_.\-/]+)/g;
+    let m;
+    while ((m = re.exec(src)) !== null) { partialRefs.add(m[1]); }
+}
+report('views/partials/ exists (express-handlebars derives partialsDir from the views path)', fs.existsSync(partialsDir));
+for (const r of [...partialRefs].sort()) {
+    report('partial reference "' + r + '" resolves to views/partials/' + r + '.handlebars', partialNames.indexOf(r) >= 0);
+}
+for (const p of partialNames) {
+    report('partial views/partials/' + p + '.handlebars is referenced (no orphan)', partialRefs.has(p));
+}
 
 // 3. JSON files
 for (const f of [path.join(pluginDir, 'config.json'), path.join(root, 'package.json')]) {

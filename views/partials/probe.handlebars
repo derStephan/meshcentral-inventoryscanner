@@ -1,0 +1,16 @@
+{{!--
+  Spike for the view modularisation (issue #9 preparation).
+
+  Proves that Handlebars PARTIALS resolve for a MeshCentral plugin view. Verified against the upstream
+  source: pluginHandler.handleAdminReq does `serv.app.set('views', <pluginPath>/<pin>/views)` before
+  calling the plugin, and webserver.js creates the engine with `exphbs.engine({ defaultLayout: false })`
+  - no partialsDir. express-handlebars@8 derives it PER RENDER from the views path Express resolved:
+  `this.partialsDir = this.config.partialsDir || path.join(viewsPath, "partials/")`, and `_getDir` globs
+  `**/*.handlebars` with posix paths, so sub-folders become namespaces
+  (views/partials/panels/x.handlebars => `{{> panels/x }}`).
+
+  This marker is asserted locally by tools/test-views.js and - the actual point of the spike - live by
+  the CI container test against a real MeshCentral server. It renders as an HTML comment, so the panel
+  looks exactly as before.
+--}}
+<!-- inv-partial-probe -->
