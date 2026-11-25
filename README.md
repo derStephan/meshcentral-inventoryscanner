@@ -1,113 +1,55 @@
-# MeshCentral Inventory & Vulnerability Scanner Plugin
+# MeshCentral Inventory & Vulnerability Scanner
 
-> **Transparency**: Created with **Qwen 3.6 27B** & **Qwen 3.8 Flash Next** • Audited by **NVIDIA Nemotron 3 550B A55B** (2026-11-06) and **Claude Opus 5.5** (2026-11-11, v3.0.1 and 2026-11-14, v4.3.0) - see [AUDIT.md](AUDIT.md)
+One admin panel for MeshCentral that answers three questions about your fleet: **what is installed**, **what is
+vulnerable**, and **what needs updating**. It collects the hardware and software inventory of every device, matches
+the installed programs against the public NVD vulnerability feeds **offline on your server**, lets you rate findings
+per location, prints audit-ready reports, exports CSV lists - and can, if you want it to, install updates and
+software for you.
 
-Turns your MeshCentral server into a software inventory and vulnerability scanner that works **offline**: CSV
-exports for audits, an NVD-based CVE scan of everything your devices have installed, a shared assessment panel
-where the team rates findings per location, printable audit reports, scheduled scans with notifications - an
-opt-in software updater based on the official **winget** package manager, and a **deploy** tab that installs
-your own MSI/MSP/EXE/DEB/RPM/shell packages on the devices you choose, queuing offline machines until they reconnect.
-
-**Who it is for:** MeshCentral site administrators who need to answer *which software is installed where, what has
-known CVEs, what has the team already reviewed, and what is left to do* - without buying a commercial scanner and
-without sending inventory data to anyone.
+Everything is opt-in and admin-only. Nothing runs on a device unless you start it.
 
 ---
 
 ## What you get
 
-* **Inventory exports** - hardware and software lists as Excel-safe CSV, for selected devices or for the whole
-  fleet with one bookmarkable URL.
-* **Offline CVE scan** - matches installed software against the public NVD feeds stored on your server. No
-  inventory data leaves the machine while scanning; the server only downloads the feeds, the mapping table and OS
-  support dates. (The single optional exception is the asset-management push below, which is off by default.)
+* **Inventory** - hardware (CPU, memory, disks, BIOS, TPM, network) and installed software per device, collected
+  through the agent you already have. No extra software on the devices.
+* **Vulnerability scan** - matches installed programs and operating systems against the NVD feeds stored on your
+  server. Ratings and false-positive flags per location, one click for all affected locations.
 * **Honest coverage numbers** - every report says how much of the inventory could actually be checked, and names
-  the two reasons it could not: no verified CPE mapping (*not assessable*) or out of scope by nature
-  (**drivers and firmware** are patched by the hardware vendor and Windows Update, not by NVD application data -
-  they are reported in their own category and do not distort the coverage percentage).
-* **Linux packages handled honestly** - packages of the distribution itself (Ubuntu, Debian, Red Hat, ...) get
-  their fixes as backports into the same upstream version, so an NVD version check would only raise false alarms.
-  They are reported as *patched by the distribution* while the OS release still receives security updates, and the
-  device gets an **OS-EOL** finding once it does not. The support dates are downloaded from the public
-  [endoflife.date](https://endoflife.date) API (nothing hard-coded); packages from third-party repositories (Docker,
-  NVIDIA, ...) are still checked against the NVD.
-* **Windows OS findings by exact build** - the OS check uses the release-specific NVD product (e.g. Windows 11 25H2)
-  and the installed build including the update revision, so a patched machine shows no OS CVEs and an unpatched one
-  shows exactly what its missing cumulative updates fix.
-* **Assessment panel** - one sortable table of all findings across selected locations; a rating (with comment) is
-  saved per location, false positives stop counting everywhere.
-* **Printable reports** - vulnerability report and device report, one page per location, ready for Print/Save-as-PDF.
-* **Scheduled scans** - monthly (or any interval) with admin notifications that list what is new and, if you want,
-  everything still unrated.
-* **Software updates via winget** - opt-in, dry runs first, per device or per package across the whole fleet,
-  with an ignore list for licensed packages and a full audit trail.
-* **OS updates and OS upgrades on demand** - *force OS updates* installs pending Windows updates (built-in Windows
-  Update agent) or runs the Linux package manager upgrade; *force OS Upgrade* brings outdated releases (e.g.
-  Windows 11 23H2, Ubuntu 22.04) to the current one, marked *urgent* when the installed release runs out of support.
-  This never reboots the device itself - a pending reboot is reported, with when Windows restarts automatically.
-* **Windows Update troubleshooter (per device in the OS Updates tab)** - *Diagnose* reads the Windows Update
-  services, whether a reboot is pending (and when Windows will restart), the download-cache size and the last
-  `WindowsUpdateClient` errors, changing nothing; *Troubleshoot* applies the repairs the built-in troubleshooter
-  performs - restart BITS/Windows Update/Cryptographic/msiserver, reset the `SoftwareDistribution\Download` and
-  `catroot2` folders and re-assert the Automatic start types. It runs as SYSTEM and **does not reboot** (it reports
-  any pending reboot instead). Implemented as direct repairs because the old `TroubleshootingPack` cmdlets were
-  removed in Windows 10 1709 and the msdt wizard is not headless.
-* **Software deployment (Deploy tab)** - install an **MSI / MSP / EXE / DEB / RPM / shell installer** on the devices
-  you pick (single machines or whole locations): upload the package from your PC into the plugin's library, take it
-  from MeshCentral's Server Files, or place it in the plugin's server folder. Optional command-line parameters,
-  **offline devices install automatically as soon as they reconnect**, every transfer is **SHA-256 verified on the
-   device before anything runs**, and the install itself never reboots the device (exit 3010/1641 is reported
-   as "ok, reboot pending"). Per device you get state + exit code + the
-   installer's own message.
-* **Reset a Windows PC (PC Reset tab)** - reset one chosen Windows machine with the built-in `systemreset` tool,
-   *Keep my files* or *Remove everything*. One of the two features that restart a device (a reset runs in
-   Windows RE, not inside the booted OS), so it is deliberately manual and per-device: you press *Check* first
-   (reads `systemreset`, the build, WinRE, BitLocker, …), you must **type the device name** to confirm, and
-   *Remove everything* stays **blocked while BitLocker protection is on** until you confirm the recovery key.
-   Never automatic, never a fleet action.
-* **Force restart + user notice (per device in the OS Updates tab, v4.7.0)** - reboot one Windows or Linux
-   device before or after an upgrade. *Notify user* shows a message to whoever is logged on (Windows `msg`,
-   Linux `wall`) without rebooting; *Restart* reboots after a short grace and puts the same message in the OS
-   shutdown banner so the user can save their work. The second explicit reboot path: per-device, manual, device
-   name typed to confirm, never automatic, never a batch or schedule. macOS / unknown-OS and busy devices are skipped.
-* **Software license keys in the inventory (Software > License keys, v4.8.0; grouped under Software in v4.9.0)** - for asset management the **software-inventory CSV**
-   can carry `License` + `License Source` columns. A configurable rule table (curated + your own, like the CPE mapping)
-   maps each program to where its license lives - a Windows registry value, a file (regex / JSON field / line) or a WMI
-   property - so it is **not limited to Microsoft software** (Microsoft keys come from the `SoftwareLicensingProduct`
-    class behind a switch). Reading is **opt-in**, **read-only** as SYSTEM, and the
-    keys stay **on this server** (`data/<node>/license.json`) - never sent anywhere, never in a log. By default it
-    runs **on demand only** (you press *Collect*); since v5.2.0 you can also set an automatic interval in the
-    Settings (0 = off, the default), which runs the same read-only collection on every online Windows device.
-* **Push to an external asset-management system (Settings > Asset management, v5.0.0, optional)** - the three
-   lists this plugin already has (hardware, software, vulnerabilities) can be transferred to your asset system
-   over REST. Choose **Generic** and describe the request yourself (HTTP method, extra headers and a JSON body
-   template with placeholders such as the device name, group, OS, serial, the software list and the findings) -
-   that reaches GLPI, NetBox, ServiceNow, Device42, Freshservice, ManageEngine, Lansweeper or anything else with
-   a REST API - or use the built-in presets for **Jira** (one issue per device) and **Snipe-IT** (one hardware
-   asset per device). Both create on the first push and **update** on later pushes, so nothing is duplicated.
-   It is **off by default**, **https only**, needs no automatic schedule (interval 0 = on-demand only), sends
-   **no command to any agent**, and credentials are stored on the server, **never displayed again** and **never
-   logged** (the log records device, HTTP status and external id only). This is the one place where data can
-   leave the server - the panel says so and asks for confirmation on every push. Since v5.1.0 the push is built
-   from the same single inventory collection as the CSV exports and the printable reports, so a device carries
-   exactly the same hardware facts, the same program list and the same findings (including the OS findings
-   `WINDOWS-UPDATES` and `OS-EOL`) wherever you look.
+  the two reasons it could not: no verified mapping (*not assessable*) or out of scope by nature (drivers/firmware).
+  A low finding count can never be misread as "everything is clean".
+* **Reports and exports** - a printable vulnerability report and a printable device inventory report (one page per
+  location), plus hardware / software / vulnerability CSV for all devices or for the ones you ticked.
+* **Scheduled scans with notifications** - a toast and a server event for every site admin; optionally repeated
+  until a finding is rated, so the notification works as a to-do list.
+* **Updates** - Windows software updates via the official **winget** package manager, and operating-system updates
+  and release upgrades for Windows and Linux. Dry runs first, per device or fleet-wide.
+* **Software deployment** - install an MSI/MSP/EXE/DEB/RPM/shell package on chosen devices or whole locations.
+  Offline devices are queued and install as soon as they reconnect.
+* **Windows Update troubleshooter** - a read-only diagnose and the repairs the built-in troubleshooter applies,
+  for machines whose update service is stuck.
+* **Restart and PC reset** - restart a device with a message to its user, or reset a Windows PC to factory state.
+  Both are per device, both need the device name typed to confirm, and neither ever happens automatically.
+* **License keys** - optionally read the license of a program from the registry, a file or WMI, so the software
+  export carries a `License` column for asset management.
+* **Asset-management connector** - optionally push the three lists to an external REST system (generic mapping, or
+  presets for **Jira** and **Snipe-IT**). Off by default; the only feature that ever sends data off the server.
 
+---
 
 ## Requirements
 
 * MeshCentral 1.x (Docker or bare metal).
-* You must be a **full site administrator** of the default domain - every screen and endpoint is admin-only (on
-  multi-domain servers, administrators of sub-domains are refused because the plugin covers all devices).
-* Outbound HTTPS to `nvd.nist.gov` (feed download, then roughly weekly), `raw.githubusercontent.com` (the
-  maintained mapping table) and `endoflife.date` (OS support dates). All matching runs locally. Optionally - only
-  if you configure and enable it - outbound HTTPS to **your own** asset-management system (Settings > Asset
-  management).
+* You must be a **full site administrator** of the default domain. Every screen and endpoint is admin-only; on a
+  multi-domain server, sub-domain administrators are refused because the plugin covers all devices.
+* Outbound HTTPS to `nvd.nist.gov` (the feeds), `raw.githubusercontent.com` (the maintained mapping table) and
+  `endoflife.date` (public OS support dates). All matching itself runs locally. Optionally - only if you configure
+  and enable it - outbound HTTPS to **your own** asset-management system.
 * Several GB of free disk under `<datapath>/nvd/` for the feed data.
-* Agents that have been online at least once, so their software list can be collected.
-* For deploying software (optional, Deploy tab): nothing to open or install on the devices - the package travels
-  over the agent's existing connection to the server (MeshCentral's own batch-upload mechanism, so the agent must
-  be able to reach the server's own web port, which it already does every second).
+* Agents that have been online at least once, so their inventory could be collected.
+* For deploying software: nothing to open or install on the devices. The package travels over the agent's existing
+  connection to the server, so the agent only needs to reach the server's own web port - which it already does.
 
 ## Installation
 
@@ -124,296 +66,279 @@ without sending inventory data to anyone.
    ```
    https://raw.githubusercontent.com/derStephan/meshcentral-inventoryscanner/main/config.json
    ```
-3. **Enable it** in the plugin list, then obey the restart notice and restart once more.
+3. **Enable it** in the plugin list, then follow the restart notice and restart once more.
 4. **Hard-reload the browser** (Ctrl+F5). The toolbar buttons above the device list appear by themselves, and the
-first NVD download starts in the background (several GB - watch the tail of the download log under Vulnerabilities >
-Reports, NVD & CPE table, no shell needed).
+   first NVD download starts in the background (several GB - watch its progress under
+   **Vulnerabilities → NVD database**, no shell needed).
 
-Updates need no ceremony: push a new version here and every server offers **Upgrade** on the Plugins page. One
-click is enough: the plugin notices the new files and restarts the MeshCentral server by itself (an admin toast
-announces it), so the new version is active after the restart - reload the page once it is back.
-Uninstall: remove the plugin on that page - MeshCentral deletes `<datapath>/plugins/inventoryscanner/` including the
-collected inventory, settings, update results and the deploy package library. The NVD feeds, ratings and scan history
-stay in `<datapath>/nvd/`; delete that folder too if you want them gone. Staged deploy copies in MeshCentral's own
-`meshcentral-files/tmp` are removed with the task, at the latest by the next server start (sweep for files older
-than 24 h). On clients, an updater transcript may remain next to `meshagent.exe` or in `C:\ProgramData\InventoryScanner`
-(installs additionally log to `invscanner-deploy.log` there).
+**Updates** need no ceremony: when a new version is published, the Plugins page offers **Upgrade**. One click is
+enough - the plugin notices the new files and restarts MeshCentral by itself (an admin toast announces it).
 
-## Day-to-day use
+**Uninstall**: remove the plugin on that page. MeshCentral deletes `<datapath>/plugins/inventoryscanner/` including
+the collected inventory, the settings, the update results and the deploy library. The NVD feeds, your ratings and
+the scan history stay in `<datapath>/nvd/` - delete that folder too if you want them gone. On the devices, an
+updater transcript may remain next to `meshagent.exe` or in `C:\ProgramData\InventoryScanner`.
 
-**Panel** - `My Server → Plugins → Inventory & Vulnerability Scanner`, or the *Vulnerability Assessment* toolbar
-button. Pick the locations you work on (floating *Locations* button, remembered per browser), then use one
-aggregated table of unique findings: sort by any column, filter by text/severity/status, rate a finding for all
-affected locations in one action, or mark it a false positive (with undo). Every CVE shows its first words under
-the id (the full description stays in the tooltip), so a rating rarely needs a trip to nvd.nist.gov. Since v4.9.0
-the panel uses **two-layer navigation**: four main sections **Devices** (a unified **Device list**, software
-updates, OS updates & reboot, PC reset), **Software** (a fleet-wide **Software list**, deployment, license keys),
-**Vulnerabilities** (assessment, reports / NVD update / CPE table) and **Settings** (general options, asset
-management), each opening its own row of
-sub-tabs. The Device list merges every engine's per-device state into one table (tick devices, run an update /
-OS update / OS upgrade / Windows Update repair / license collection, with Restart and Reset kept per-device and
-typed-name confirmed); the Software list shows each program once across the fleet with its CVE, winget-update
-and license status. Same engines and routes, grouped and aggregated rather than spread over separate tabs.
+---
 
-**Opening the panel reads the stored result - it does not scan (v4.4.0).** The table appears immediately with the
-findings of the last scan (its date is shown, plus any location that has no stored result yet), and changing the
-location selection with *Apply* only re-reads that snapshot. **Scan & Review** is the one button that asks the
-devices: on a big fleet it takes a while, but the server stays usable while it runs (other tabs, other users and the
-rest of MeshCentral keep answering). The scheduled scans keep the stored result fresh on their own, and a second
-admin pressing the button joins the pass that is already running instead of starting another one.
+## The panel
 
-**A finding never claims a version that is not on every device.** If the affected machines run different
-versions, the row shows *varies (N)* and the per-device truth is one hover away - the exact per-device list is
-always the software/vulnerability CSV.
+Open it with **My Server → Plugins → Inventory & Vulnerability Scanner**, or with the *Vulnerability Assessment*
+button above the device list.
 
-**CSV exports** - tick devices and use the toolbar buttons, or export everything with a URL you can bookmark:
+There are five sections, each with its own sub-pages. **The address bar shows which page you are on** (`#devices/devicelist`
+and so on), so you can copy a link to a view and paste it later - and the browser's back button walks back through
+the pages you visited. Hovering any button shows what it does in a box at the lower right corner.
 
-Every CSV is sorted column by column from left to right (Group, then Host Name, then Software/Component), so a
-device block is contiguous and version numbers read in natural order - Firefox 9 before Firefox 121 (v4.4.0).
+### Devices
 
-```
-/pluginadmin.ashx?pin=inventoryscanner&action=export&type=hardware   (or: software, vulns)
-```
+**Device list** - one row per device with everything the server already knows: online state, operating system and
+release state, pending software updates, findings, collected licenses. Click a column header to sort, filter by
+name/group/OS, and tick several devices to run one operation on all of them.
 
-The `vulns` export carries one row per finding with a `Status` column: `CVE`, `no CVE for <product>`,
-`not assessable`, `drivers are not covered by CVE data`, `firmware is not covered by CVE data`,
-`patched by the distribution (OS supported)`, `distribution package - OS end of life`,
-`distribution package - OS support unknown` or `false positive`. Two synthetic findings exist besides real CVEs:
-`WINDOWS-UPDATES` (missing Critical/Important updates) and `OS-EOL` (operating system release out of support).
-Software entries without a version number are handled conservatively: only CVEs that apply to *all* versions are
-asserted, so historical findings never flood the list.
+Per device you can: run a **dry run** or the real **software update**, **exclude**/**include** it from the automatic
+batches, run **OS updates** or an **OS upgrade**, **diagnose** or **repair** Windows Update, send a **message to the
+user**, and **reboot** it. **Details** opens everything stored about that machine on demand - hardware, installed
+programs, its findings, the last run of every engine and the license state.
 
-**Reports** - *Vulnerability Report* (findings per location, no device list) and *Device Report* (device inventory
-with host names, OS, program and finding counts). Both state their own blind spot, so a low finding count can
-never be misread as "everything is clean".
+Fleet-wide buttons (*force OS updates*, *force OS Upgrade (urgent/all)*) act on every non-excluded device, and the
+OS update log is at the bottom of the page.
 
-**Scheduled scans** - set the interval and the notification threshold in the Settings tab. After each run all
-site admins get a toast plus a server event listing findings at or above the threshold, marked `new`; with
-*Repeat unrated findings* enabled, everything still unrated is repeated every time, so the notification works as
-a to-do list that shrinks as you rate. Rated and false-positive findings are never reported again.
+**PC reset** - reset one chosen Windows machine with the built-in `systemreset` tool, keeping or removing the user
+files. A read-only **Check** must pass first (tool present, build new enough, recovery environment enabled,
+BitLocker state, on AC power), you must type the device name, and "Remove everything" is blocked while BitLocker is
+on until you confirm the recovery key.
 
-**Software updates (Updates tab)** - completely opt-in: nothing runs **automatically** until you turn it on *and*
-tick at least one device group (only Windows devices of those groups are updated automatically). The manual buttons
-(Run now, Dry run, per device, per package) act on demand on every non-excluded Windows device. Keep the ignore
-list short (well below ~150 entries): the whole update script travels as one command line, and cmd.exe refuses
-lines above 8191 characters. Two views on the same fleet:
+**Device report** - the printable device inventory: host names, operating system and its support state, program and
+finding counts, one page per location.
 
-* **By device** - every Windows machine with its last result; per row *Dry run*, *Update now*, *Exclude*/*Include*,
-  and a *list* button that opens **every package with its outcome** (failed rows show the exit code and winget's own
-  message, plus a one-click *+ ignore*).
-* **By package** - every package your devices reported, aggregated across the fleet, with two fleet-wide actions:
-  **Update everywhere** and **Uninstall everywhere** (both ask for confirmation and only ever touch that one
-  package id; a device that does not have it reports *not installed* instead of failing).
+### Software
 
-Ignored packages are skipped in every run and pinned on the client, so even a user's own
-`winget upgrade --all` leaves a licensed version alone. Offline devices are picked up when they connect;
-a device is never rebooted.
+**Software list** - every distinct program across the fleet: how many devices have it, which versions, which
+findings matched it, whether a license was collected, and what the last winget run reported. Per row: **Ignore**
+(never upgrade it automatically), **Update everywhere**, **Uninstall everywhere** and **Details** (devices,
+versions, findings, license, the per-device winget results). The three package actions need a winget package id -
+rows without one show them disabled, because winget manages ids and not display names.
 
-**OS updates (OS Updates tab)** - three manual buttons, all with confirmation,
-plus *OS updates* / *OS Upgrade* per device row:
+**Software updates** - the winget configuration: the master switch, the device groups that are updated
+automatically, the ignore list and the run log. Nothing runs automatically until you enable it **and** tick at least
+one group. Keep the ignore list reasonably short (a few dozen entries).
 
-* **force OS updates** - every non-excluded Windows and Linux device. Windows: the built-in Windows Update agent
-  searches, downloads and installs all pending updates (feature upgrades excluded). Linux: `apt-get update` +
-  `apt-get upgrade`, or `dnf upgrade --refresh`, `yum update`, `zypper update`, `pacman -Syu`, `apk upgrade`.
-* **force OS Upgrade (urgent)** / **force OS Upgrade (all)** - only devices whose release is provably not current.
-  "Current" comes exclusively from the endoflife.date data (newest Windows 11 release, newest Ubuntu LTS) - there is
-  no built-in fallback version. If that data is missing, switched off or older than 30 days, the release state is
-  shown as **unknown** together with the reason, and nothing is upgraded. Windows 10/11: Windows Update is pointed at
-  the current release with the documented `TargetReleaseVersion` policy and installs it; the policy is applied
-  immediately by restarting the Windows Update service (before the search and again after the restore), and the
-  previous policy values are restored afterwards. Ubuntu: `apt-get dist-upgrade`, then `do-release-upgrade` (one release step per run; if a
-  reboot is pending first, the device reports *reboot-needed* - reboot, then run it again). Other distributions and
-  Windows Server are shown in the table but not upgraded automatically.
+**Deployment** - upload an installer into the plugin's library, pick one from MeshCentral's Server Files, or place a
+file in the plugin's `software/files/` folder and rescan. Then tick devices or **whole locations**, add command-line
+parameters if the installer needs them, and confirm. The package is verified by SHA-256 **on the device** before
+anything runs. Offline devices queue and install when they reconnect. Each device shows its state and the
+installer's exit code in decimal and hex (3010 = "ok, but a reboot is pending" - the plugin never reboots for you).
+A file from Server Files can have been placed there by any user with that group's *server files* right - check it
+before you deploy it to other machines.
 
-**Release state per device** - the *Release state* column shows one of four states:
+**License keys** - the rule table that maps a program name to where its license lives (a registry value, a file, or
+a WMI property), your own rules, the collection log and the schedule. Reading is **read-only**, the keys stay on
+this server and are **never displayed in the panel** - they appear only in the software CSV export. Off by default;
+you can collect on demand, on a schedule, per device from the device list, or for all online Windows devices here.
 
-| State | Meaning | force OS Upgrade (urgent) | force OS Upgrade (all) / per device |
+### Vulnerabilities
+
+**Assessment** - the findings table. Tick the locations to assess in the row above the table (remembered per
+browser), then sort, filter and rate. Opening the page reads the **stored** result, so it is instant and touches no
+device; **Scan & Review** is the only button that queries the machines. A rating needs a comment and applies to
+every selected location that has the finding; a false positive needs no comment and disappears from the counts
+(and can be undone). The table is sorted by **effective severity**, so your own ratings decide the order - inside
+one severity the higher CVSS comes first.
+
+**Vulnerability report** - the printable findings report: an overview page plus one page per location, with the
+coverage percentage stated.
+
+**CPE table** - the dictionary that maps an installed program name to the technical product code the NVD uses.
+The maintained table is downloaded with every feed refresh, so a corrected mapping reaches you without a plugin
+update; your own entries always win. Programs with no mapping are still matched automatically against the product
+names that really exist in the feeds - and only if that proves nothing are they listed as *not assessable*.
+
+**NVD database** - the feed refresh interval, an "update now" button and the download log. A feed older than the
+interval is fetched shortly after the next server start; a failed download is retried after six hours rather than
+hammering the rate-limited source.
+
+### Exports
+
+Choose **hardware**, **software** or **vulnerabilities** and download the CSV for all devices. Every export is
+sorted column by column, so a device block stays together and versions read in natural order (Firefox 9 before
+Firefox 121). For a **selection** of devices use the hardware/software buttons on MeshCentral's own device list
+toolbar - same columns, only the ticked machines.
+
+### Settings
+
+**General** - scan interval, which locations are scanned, notification threshold and mode, inventory collection
+interval, the OS-support data source, the urgency window for OS upgrades, and the device-group table with
+per-group thresholds. Every value shows where it comes from (your setting, `config.json`, or the built-in default)
+and can be reverted individually; *Reset all* hands control back to `config.json`. Changes apply immediately, no
+restart, and the plugin never writes MeshCentral's `config.json`.
+
+**Asset management** - the optional connector that pushes your aggregated lists to an external system. Choose
+**Generic** and describe the request yourself (method, headers and a JSON body template with placeholders such as
+the device name, the serial, the software list and the findings) - that reaches GLPI, NetBox, ServiceNow, Device42,
+Freshservice, ManageEngine, Lansweeper or anything else with a REST API - or use the presets for **Jira** (one issue
+per device) and **Snipe-IT** (one hardware asset per device). Both create on the first push and **update** on later
+pushes, so nothing is duplicated. A *test request* verifies the target without pushing the fleet.
+
+---
+
+## Reference
+
+### What a finding's status means
+
+The panel and the vulnerability CSV use the same vocabulary:
+
+| Status | Meaning |
+|---|---|
+| `CVE` | a real vulnerability matched by a verified product code and version range |
+| `WINDOWS-UPDATES` | this Windows device is missing Critical/Important updates |
+| `OS-EOL` | the operating-system release is out of support and gets no security fixes any more |
+| `no CVE for <product>` | the product is known, but no vulnerability matches this version |
+| `not assessable` | a real program with no proven mapping - the honest blind spot, **not** "clean" |
+| `drivers are not covered by CVE data` | out of scope by nature: the vendor and Windows Update patch these |
+| `firmware is not covered by CVE data` | same, for firmware |
+| `patched by the distribution (OS supported)` | a Linux distribution package - your distribution backports the fix into the same version, so a version check would only produce false alarms |
+| `distribution package - OS end of life` | the same package, but the release no longer gets fixes |
+| `false positive` | you flagged it; it is excluded from every count and notification |
+
+A finding never claims a version that is not on every affected device: if the machines differ, the row shows
+*varies* and the per-device truth is in the CSV. Programs without a version number are handled conservatively -
+only vulnerabilities that apply to *all* versions are asserted.
+
+### Operating-system release states
+
+| State | Meaning | Upgrade (urgent) | Upgrade (all) / per device |
 |---|---|---|---|
 | **current** | the newest release | - | - |
-| **Upgrade available** | a newer release exists; the installed one is still supported for longer than the urgency window | no | yes |
-| **Upgrade urgent** | a newer release exists and the installed release is out of support, or its support ends within the urgency window | yes | yes |
-| **unknown** | no clean answer (release not reported, no fresh endoflife.date data) - the reason is shown | no | no |
+| **Upgrade available** | a newer release exists; yours is still supported longer than the urgency window | no | yes |
+| **Upgrade urgent** | a newer release exists and yours is out of support, or its support ends within the window | yes | yes |
+| **unknown** | no clean answer (release not reported, or no fresh support data) - the reason is shown | no | no |
 
-* The **urgency window** is set in the Settings tab ("OS upgrade is urgent this many days before support ends";
-  default **365 days**, 0 = only after support ended). The support end is that of the *installed* release and
-  edition at endoflife.date: Windows Home/Pro and Enterprise/Education releases have different end dates.
-* Windows 11 Home/Pro releases get 24 months of support. With the default 365 days a Pro release therefore becomes
-  *urgent* about a year after it came out - e.g. on 2026-11-12, Windows 11 Pro 25H2 (support until 2027-10-12) is
-  urgent, the same release on Enterprise (until 2028-10-10) is only *available*. Lower the window if that is too early.
-* An outdated release whose support end is not known is shown as *available* with "support end unknown" - it is
-  never called urgent on a guess.
-* Windows Server and distributions other than Ubuntu have no newer-release check: they show *Upgrade urgent* when
-  their own support has ended or ends within the window, otherwise *unknown*, and are never upgraded automatically.
+"Current" comes exclusively from the endoflife.date data (newest Windows 11 release, newest Ubuntu LTS); there is no
+built-in fallback version, and without fresh data nothing is upgraded. The urgency window is set in Settings
+(default **365 days** before support ends, 0 = only after it ended). Windows Home/Pro and Enterprise/Education have
+different support ends - with the default window, a Pro release becomes *urgent* about a year after release while
+the same Enterprise release is only *available*. A release whose support end is unknown is never called urgent on a
+guess. Windows Server and distributions other than Ubuntu are shown but never upgraded automatically.
 
-These OS runs never reboot the device themselves; a pending reboot is shown per device (and Windows handles it
-at its automatic-restart deadline). Results go to the device table, the device's event
-list and `os-update.log`; the clients log to `invscanner-osupdate.log` (Windows: next to `meshagent.exe` or in
-`C:\ProgramData\InventoryScanner`, Linux: `/var/log/`). OS and winget batches never run at the same time, and the
-winget exclusion list applies to both.
+### Which Linux distributions are handled
 
-**Which Linux distributions are supported?** The script picks the package manager it finds on the device, not the
-distribution name:
+The script uses the package manager it finds on the device, not the distribution name:
 
-| Distribution (examples) | force OS updates | force OS Upgrade |
+| Distribution (examples) | OS updates | OS upgrade |
 |---|---|---|
-| Ubuntu and its official flavors (Kubuntu, Xubuntu, Ubuntu Server, ...) | `apt-get update` + `apt-get upgrade` | yes: `dist-upgrade`, then `do-release-upgrade` |
-| Debian, Linux Mint, Raspberry Pi OS, Pop!_OS and other apt-based systems | `apt-get update` + `apt-get upgrade` | no |
-| Fedora, RHEL 8+, Rocky Linux, AlmaLinux, CentOS Stream | `dnf upgrade --refresh` | no |
-| CentOS 7 / RHEL 7 (no dnf) | `yum update` | no |
+| Ubuntu and its official flavors | `apt-get update` + `apt-get upgrade` | yes: `dist-upgrade`, then `do-release-upgrade` (one release per run) |
+| Debian, Linux Mint, Raspberry Pi OS, Pop!_OS and other apt systems | `apt-get update` + `apt-get upgrade` | no |
+| Fedora, RHEL 8+, Rocky, AlmaLinux, CentOS Stream | `dnf upgrade --refresh` | no |
+| CentOS 7 / RHEL 7 | `yum update` | no |
 | openSUSE Leap, SLES | `zypper refresh` + `zypper update` | no |
-| Arch Linux, Manjaro | `pacman -Syu` | no |
+| Arch, Manjaro | `pacman -Syu` | no |
 | Alpine | `apk update` + `apk upgrade` | no |
 
-**Deploying software (Deploy tab)** - three ways to get the package onto a device: **Upload** an MSI/EXE/DEB/...
-from your PC (the panel uploads it in chunks into the plugin's library on the server), pick a file from
-**MeshCentral's Server Files** (the per-location folders you already know from the Files tab), or place a file in
-`<datapath>/plugins/inventoryscanner/software/files/` on the server and press **Rescan**. Then tick devices or
-**whole locations**, add command-line parameters if the installer needs them, and confirm: every online device
-fetches the package through its existing agent connection (no new ports, no share passwords, the agent verifies
-the **SHA-256** the server computed before executing anything, and executes exactly the bytes it verified) and runs
-it silently as SYSTEM/root. A file from Server Files can have been put there by any user with the *server files*
-right of that group - check it before you deploy it to other machines. **Offline
-devices are queued and install by themselves the moment they reconnect** - that is the whole point of the task
-list. Each device row shows `ok / failed / queued / running ...` with the installer's exit code (decimal and
-hex, e.g. 3010 = "ok, but a reboot is pending - the plugin never reboots for you"); finished tasks also raise a
-notification for every logged-in admin and an entry on the device's own event page. Retry failed devices with
-one click; a cancel only drops devices that never started. Like everything else on the server: only full site
-administrators can deploy, and nothing installs without a task an admin created.
+A device without any of these reports *unsupported*. Rolling distributions have no release to upgrade to -
+*OS updates* is the regular way to keep them current (on openSUSE Tumbleweed run `zypper dup` yourself from time to
+time). One **broken third-party repository does not fail the run**: the device continues with the refreshed lists and
+the repository warning appears in its note; it is only reported as failed when no package list could be refreshed at
+all. Requirements: the agent runs as root (the default), the device reaches its repositories, and `base64` and
+`gzip` are installed (they are on all of the above).
 
-* **force OS updates** installs the pending package updates *within* the installed release on every distribution
-  in the table. A device without any of these package managers reports *unsupported*.
-* **force OS Upgrade** (new release) is automated for **Ubuntu only**: the device must report `ID=ubuntu` in
-  `/etc/os-release`. Derivatives with their own ID (Linux Mint, Pop!_OS, elementary OS, ...) report *unsupported*,
-  because `do-release-upgrade` is not their upgrade path. For every other distribution a release upgrade needs its
-  own tool and manual steps (e.g. `dnf system-upgrade` on Fedora, editing the sources and `apt full-upgrade` on
-  Debian, `zypper dup` on openSUSE), so the plugin does not try it. Such a release is shown as *Upgrade urgent* once
-  its support has ended or ends within the urgency window, but it is never upgraded automatically.
-* Rolling distributions (Arch, Manjaro, openSUSE Tumbleweed) have no releases to upgrade to; *force OS updates* is
-  the regular way to keep them current. On Tumbleweed the plugin runs `zypper update`, not the recommended
-  `zypper dup`, so run `zypper dup` yourself from time to time.
-* One **broken third-party repository does not fail the run** (v4.3.4): `apt-get update` exits non-zero when any
-  source is unusable (an unsigned Google Chrome/any repo gives `W: GPG error`), even though every distribution
-  repository downloaded. The plugin then continues with the refreshed lists and puts the apt `W:`/`E:` line into the
-  device note ("apt-get update reported a repository problem ... the other repositories worked"); it only reports
-  *failed* (and installs nothing) when no package list was refreshed at all. Fix the source on the device to make
-  the note disappear.
-* Requirements on every Linux device: the MeshCentral agent runs as root (the default installation), the device has
-  network access to its package repositories, and `base64` and `gzip` are installed (present on all distributions
-  above).
+### Reboots
 
-## Settings
+Update, upgrade, deployment and troubleshooter runs **never reboot** a device. If a restart is needed, it is
+reported per device and Windows performs it at its own automatic-restart deadline. Exactly two things restart a
+machine on purpose - the **Reboot** button on a device row and the **PC reset** - and both are per device, manual,
+announced to the logged-on user and need the device name typed to confirm. Never a batch, never a schedule.
 
-Everything is configured from the panel - no file editing, effective immediately without a restart (the main
-form is the **Settings** section; since v4.9.0 the NVD update and the CPE and license mapping tables sit under
-their own topic - Vulnerabilities and Software - but write the same overlay file). The
-values are stored in the plugin's own folder and **override the same keys in `config.json`**, which the plugin
-only reads (it never writes it). Per field you can revert to the `config.json` value, and *Reset all* hands
-control of those values back to the file completely. The configuration of the winget updater (switch, groups,
-ignore list, exclusions) is not touched by *Save Settings* or *Reset all*.
-
-File-based fallback keys (for unattended setups) are listed in [AGENTS.md](AGENTS.md) under
-*Configuration keys & precedence*. Group ids look like `mesh/<domain>/<name>` - in the default domain that is
-`mesh//YourServerName`; the easiest lookup is the *Locations* picker in the panel.
+---
 
 ## Improving the software mapping
 
-The name-to-CPE table that drives matching is maintained in this repository as
-[cpe-table.json](cpe-table.json). Every server re-downloads it with each feed refresh, so a new or corrected
-mapping reaches you **without a plugin update** (and a fresh install already ships the current copy). Rows can
-also mark a name as a driver or firmware component. Contributions are pull requests that touch only that file -
-the rules (including how to verify a CPE against the NVD, because guessing is not allowed) are in
-[CONTRIBUTING.md](CONTRIBUTING.md). Your own entries added in the CPE mapping table (Vulnerabilities > Reports, NVD &
-CPE table) always win, and that section states which table file is in force - the code holds no second copy of the table.
+The name-to-product table is maintained in this repository as [cpe-table.json](cpe-table.json) and re-downloaded
+with every feed refresh, so a new or corrected mapping reaches you **without a plugin update**. Contributions are
+pull requests that touch only that file; the rules (including how to verify a mapping against the NVD, because
+guessing is not allowed) are in [CONTRIBUTING.md](CONTRIBUTING.md). Your own entries in **Vulnerabilities → CPE
+table** always win over it.
 
 ## Privacy & security
 
-* By default no inventory data is ever transmitted anywhere; the outbound requests go to `nvd.nist.gov` (feeds),
-  `raw.githubusercontent.com` (mapping table - https only, size-capped, every regex checked before use) and
-  `endoflife.date` (public OS support dates - a fixed list of product names is requested, nothing about your devices).
-* **The one deliberate exception (v5.0.0):** the optional asset-management connector can push your aggregated
-  hardware/software/vulnerability lists to a REST system **you** configure. It is off by default, https only, has
-  no automatic schedule unless you set one, sends no command to any agent, and every push asks for confirmation.
-  Credentials are stored on this server, never shown again in the clear and never written to a log; the log holds
-  device, HTTP status and external id only - never a request or response body.
-* Admin-only: every endpoint and the toolbar export re-check your site-administrator rights server-side; every
-  changing request must come from the plugin's own page (request-header check against cross-site requests).
-* The updater writes its client transcript only to folders that standard users cannot write to.
-* Deployed packages stay on the server; delivery rides the existing agent connection (a one-shot, 5-minute
-  download ticket per device and dispatch) and is SHA-256 verified on the device before it executes - the file is
-  locked (Windows) or copied into a private root-only folder (Linux) between the check and the execution, so the
-  verified bytes are the executed bytes. Installers
-  run as SYSTEM/root because machine-wide installation is the use case - so the Deploy tab is gated like every
-  other endpoint and tasks never run automatically.
-* Output is hardened: HTML escaping on render, CSV formula-injection neutralization, strict id validation on
-  every write.
-* The updater runs one self-logging PowerShell script per device; every run ends up in a server-side log and in the
-  device's own event list in MeshCentral.
+* **By default no inventory data leaves your server.** The outbound requests go to `nvd.nist.gov` (feeds),
+  `raw.githubusercontent.com` (the mapping table, https only, size-capped, every pattern checked before use) and
+  `endoflife.date` (public OS support dates - a fixed list of product names, nothing about your devices).
+* **The one deliberate exception:** the optional asset-management connector. It is off by default, https only, has
+  no schedule unless you set one, sends no command to any agent, and every push asks for confirmation. Credentials
+  are stored on this server, never shown again in the clear and never written to a log; the log records the device,
+  the HTTP status and an external id - never a request or response body. Collected **license keys never ride along**
+  in a push.
+* License keys are treated as secrets: read-only collection, stored only in
+  `<datapath>/plugins/inventoryscanner/data/<node>/license.json`, never logged, never displayed - they appear only
+  in your own software CSV export.
+* Admin-only everywhere: every endpoint re-checks your site-administrator rights server-side, and every changing
+  request must come from the plugin's own page (a cross-site request is refused).
+* Deployed packages are verified by SHA-256 on the device before they run, and the verified bytes are the executed
+  bytes. Installers run as SYSTEM/root because machine-wide installation is the use case - and a task only exists
+  because an admin created it.
+* Output is hardened: HTML escaping on render, CSV formula-injection neutralisation, strict validation of every id.
 
 ## Troubleshooting
 
-* **"NVD database: not downloaded"** - the feed download failed (rate limit or proxy). Look at the download log under
-Vulnerabilities > Reports, NVD & CPE table, then restart the server to retry.
+* **"NVD database: not downloaded"** - the feed download failed (rate limit or proxy). Look at the download log
+  under **Vulnerabilities → NVD database**; a stale feed is fetched automatically shortly after the next server
+  start, or press *Update NVD database now*.
 * **401 on the panel** - you need full site-admin rights, and the plugin folder/shortName must stay
   `inventoryscanner` (letters and digits only).
 * **No toolbar buttons** - plugins are not enabled, the server was not restarted, or your browser cached the UI:
   hard-reload with Ctrl+F5.
 * **Empty software lists** - the device has not been online since installation, or collection is switched off in
-  the Settings tab. An empty list means *not collected*, never *clean*.
-* **A device row stays "waiting for answer"** - another command session on that machine (a MeshCentral terminal,
-  another script) has the agent busy; the run closes with an explicit timeout instead of hanging forever. The
-  device also keeps a transcript of every updater run next to `meshagent.exe` (or in the admin-only folder
-  `C:\ProgramData\InventoryScanner`) - that is the place to look when the server side stays silent.
+  Settings. An empty list means *not collected*, never *clean*.
+* **A device stays "waiting for answer"** - another command session on that machine (a MeshCentral terminal, another
+  script) has the agent busy; the run ends with an explicit timeout instead of hanging forever. The device also keeps
+  a transcript of every updater run next to `meshagent.exe` (or in `C:\ProgramData\InventoryScanner`) - that is where
+  to look when the server side stays silent.
 * **Reports look wrong** - check the inventory age first: offline devices show their last collected state.
 * **A deploy task stays "queued (waiting for connect)"** - the device has not been online since the task was
-  created; the queue is server-side and survives restarts. The device's `invscanner-deploy.log` (Windows: next to
+  created. The queue is server-side and survives restarts. The device's `invscanner-deploy.log` (Windows: next to
   `meshagent.exe` or `C:\ProgramData\InventoryScanner`; Linux: `/var/log/`) has the client-side view.
-* **A deploy says *no-file*** - the script ran but the installer never reached the device. Since v4.3.3 the message
-  names the actual cause instead of guessing: *nothing ever appeared at ...* (the agent never fetched it - the
-  download ticket, the agent's own server URL or a proxy/firewall on `/agentdownload.ashx` is the usual reason; the
-  device's own words, e.g. "the server replied with HTTP 404", are appended when it printed any) versus *a file
-  appeared but its SHA-256 never matched* (a partial or replaced download - retry the device). While a device waits,
-  its download ticket is re-sent with a fresh cookie every 90 s (up to 4 times), because the agentdownload ticket is
-  only valid 5 minutes - an expired or dropped wget self-heals now instead of costing 15 silent minutes.
+* **A deploy says *no-file*** - the script ran but the installer never reached the device, and the message names the
+  actual cause: *nothing ever appeared* (the agent never fetched it - usually the agent's server URL or a proxy in
+  front of `/agentdownload.ashx`) versus *a file appeared but its SHA-256 never matched* (a partial or replaced
+  download - retry the device). While a device waits, its download ticket is re-sent a few times, because that ticket
+  is only valid for five minutes.
+* **The panel looks stale after an upgrade** - hard-reload (Ctrl+F5). An already-open page keeps running the old
+  script until you reload it.
 
 ## Known limitations
 
-* **Windows OS CVEs need the full build** (`10.0.26200.9711`, reported by current MeshCentral agents). Without it no
-  OS CVE is asserted; the count of missing Critical/Important Windows updates remains the indicator.
-* **Coverage is never 100%** by design: a program is only checked when a verified mapping exists. Unknown names
-  stay *not assessable* instead of being guessed, which keeps false positives rare - the percentage in every
-  report tells you how much was actually looked at.
-* **Linux distribution packages are trusted while the OS release is supported** (see above). This assumes the
-  machine actually installs its updates - check that with the distribution's own tools (e.g. `apt list --upgradable`).
-  Without lifecycle data (offline, switched off) their state is shown as *unknown*, never as safe. Software installed
-  outside the package manager is matched like on Windows.
+* **Windows OS vulnerabilities need the full build number** (`10.0.26200.9711`, reported by current agents). Without
+  it no OS finding is asserted; the count of missing Critical/Important updates remains the indicator.
+* **Coverage is never 100%** by design: a program is only checked when a verified mapping exists. Unknown names stay
+  *not assessable* instead of being guessed, which keeps false positives rare - the percentage in every report tells
+  you how much was actually looked at.
+* **Linux distribution packages are trusted while the release is supported.** That assumes the machine really
+  installs its updates - check with the distribution's own tools (e.g. `apt list --upgradable`). Without support
+  data their state is *unknown*, never "safe". Software installed outside the package manager is matched like on
+  Windows.
 * **Duplicate leftovers** from upgraders ("Firefox 3.6" next to "Firefox 121") are collapsed to the newest row, so
-  years-old CVEs are not reported against patched software. Programs that genuinely coexist (Edge and the WebView2
-  runtime, VC++ x86 and x64, side-by-side Java/Python versions) stay separate.
-* **Notifications** are a toast plus a server event; there is no built-in email. If no admin is logged in during a
+  years-old findings are not reported against patched software. Programs that genuinely coexist (Edge and its WebView2
+  runtime, VC++ x86 and x64, side-by-side Java/Python) stay separate.
+* **Notifications** are a toast plus a server event; there is no built-in e-mail. If no admin is logged in during a
   scan, read it under **My Server → Events**.
 
-## Development
+---
+
+## Where the technical detail lives
+
+This README is deliberately for administrators. The internals - every route and its contract, the module layout, the
+generated device scripts, the verified MeshCentral API facts, the scheduling and upgrade mechanics - are documented
+in **[AGENTS.md](AGENTS.md)**. Security policy and threat model: **[SECURITY.md](SECURITY.md)**. Audit reports:
+**[AUDIT.md](AUDIT.md)**. The mapping-table process: **[CONTRIBUTING.md](CONTRIBUTING.md)**. The changelog is the
+[commit history](https://github.com/derStephan/meshcentral-inventoryscanner/commits/main) - every version is
+described there in full.
 
 ```bash
-npm ci         # dev dependency: handlebars (for the view tests), exact versions from package-lock.json
-npm test       # syntax/consistency checks + behavioral tests + view render tests
+npm ci         # dev dependency only (handlebars, for the view tests)
+npm test       # consistency checks + behavioural tests + view render tests
 ```
-
-The server code is split by feature: `inventoryscanner.js` is the entry (identity, file layout, module
-wiring) and `lib/` holds one module per area - NVD feeds and CVE index, CPE mapping tables, matching,
-the collector, the winget and OS update engines, scheduling, reports, CSV, routes and the browser
-exports. [AGENTS.md](AGENTS.md) maps every file to its responsibility.
-
-Agents and contributors: [AGENTS.md](AGENTS.md) documents the verified contracts, and
-[CONTRIBUTING.md](CONTRIBUTING.md) the mapping-table process.
-
-## Security & Audit
-
-* **Security Policy**: [SECURITY.md](SECURITY.md)
-* **Audit Report**: [AUDIT.md](AUDIT.md) (audits 2026-11-06, 2026-11-11 and 2026-11-14)
-* **Changelog**: the [commit history](https://github.com/derStephan/meshcentral-inventoryscanner/commits/main) -
-  every version is described there in full.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT - see [LICENSE](LICENSE).

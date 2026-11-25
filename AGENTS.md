@@ -126,13 +126,13 @@ Consequences an agent must respect:
 | `lib/collector.js` | agent software/`winupdates` requests, `installRouteHook`, `onAgentResponse` reply ownership, per-node JSON cache, collection schedule, `hook_agentCoreIsStable` |
 | `lib/scheduling.js` | `scannerConfig`, `runScheduledScans`, `notifyAdmins`, `scheduleScans`, `load/saveScans`, `SEVERITY_RANK`, `longTimeout` |
 | `lib/winget.js` | `wgBuildScript`/`wgTransport`/queue/pump/watchdogs, results+log persistence, `wgNodeDue`/`wgSweepOnce`/`scheduleWingetUpdates`, `psTranscriptLines`, `wingetConfig` |
-| `lib/winget-handlers.js` | `wg_get_config`, `wg_save_config`, `wg_run`, `wg_status`, `wg_programs` handlers |
+| `lib/winget-handlers.js` | `wg_get_config`, `wg_save_config`, `wg_toggle_exclude` + `wg_toggle_ignore` (v5.4.0: the atomic single-key routes - see the "never save a whole config form from another view" rule), `wg_run`, `wg_status`, `wg_programs` handlers |
 | `lib/osupdate.js` | OS batch engine: `osBuildWindowsScript`, `osBuildLinuxScript`, `osLinuxTransport`, targeting/`osUpgradeInfo`/`osUrgency`, `os_run` + `os_status` handlers |
 | `lib/devreset.js` | per-device Windows PC reset (v4.5.0, the ONLY rebooting feature): `devBuildProbeScript`/`devBuildResetScript`, `devDispatch`, `devModeAllowed`/`devProbeFresh`/`devBitlockerState` gates, `devHandleResponse`/`devResetTimeout`, `dr_status`/`dr_probe`/`dr_reset` handlers, `device-reset.json` + `device-reset.log` |
 | `lib/wutroubleshoot.js` | per-device Windows Update troubleshooter (v4.6.0): `wuBuildDiagnoseScript`/`wuBuildRepairScript`/`wuHead`, `wuDispatch`, `wuHandleResponse`/`wuTimeout`, reboot-state reporting, `wu_diag`/`wu_repair` handlers, `wu-troubleshoot.json` + `wu-troubleshoot.log` |
 | `lib/devreboot.js` | per-device force restart + user notice (v4.7.0): `rbBuild*Script`/`rbBuildScript`/`rbProbeLines`/`rbCleanMessage`/`rbB64`, `rbDispatch`, `rbHandleResponse`/`rbTimeout`, `reboot_now`/`reboot_notify` handlers, `device-reboot.json` + `device-reboot.log` |
 | `lib/license.js` | license keys/info in the software CSV (v4.8.0): curated `license-table.json` + remote fetch + custom rules (`applyLicenseTableText`/`sanitizeLicenseRules`/`licenseRulesForApp`), read-only `licenseBuildScript`, `licenseAppRules(rows)` (since v5.1.0 fed by `obj.fetchNodeSoftware`, so a program that only exists in the sysinfo doc is matched too - it used to see fewer programs than the CSV listed), `licDispatch`/`licHandleResponse`/`licTimeout`, `licSweepOnce` (one pass over all online Windows devices - used by BOTH the `all=true` route and the scheduler, v5.2.0), `scheduleLicenseCollection` (only when the master switch is on AND `licenseCollectIntervalHours` > 0; default 0 = on demand only), per-node `data/<node>/license.json`, `lic_status`/`lic_collect`/`get_license_table`/`add_license`/`remove_license`, `license-collection.log` |
-| `lib/fleetindex.js` | READ-ONLY fleet index for the two unified views (v4.9.5, issue #8): `buildFleetIndex` walks `obj.collectNodeInventory` (v5.1.0 - before that it read `getStoredSoftware(node,{})` without the sysinfo doc and counted only software CVEs, so the browser disagreed with the CSV) and joins `wgResults` (updatable) + `licenseMapForNode`; `swFleetHandler` (POST `sw_fleet`, 60 s in-memory cache, `?refresh=1`). Per-software CVE attribution uses the software findings only (OS-level findings belong to the device, not to a program); the device badge counts `uniqueFindingIds` = the same distinct ids the CSV/report show. No agent command, no outbound request. |
+| `lib/fleetindex.js` | READ-ONLY fleet index for the two unified views (v4.9.5, issue #8): `buildFleetIndex` walks `obj.collectNodeInventory` (v5.1.0 - before that it read `getStoredSoftware(node,{})` without the sysinfo doc and counted only software CVEs, so the browser disagreed with the CSV) and joins `wgResults` (updatable) + `licenseMapForNode`; `swFleetHandler` (POST `sw_fleet`, 60 s in-memory cache, `?refresh=1`). Since v5.4.0 it also owns the two on-demand detail routes `devDetailsHandler` (`dev_details`) and `swDetailsHandler` (`sw_details`, own 60 s cache per name) - both read-only, both built on `collectNodeInventory`, both reporting license COUNTS/presence and never a value. Per-software CVE attribution uses the software findings only (OS-level findings belong to the device, not to a program); the device badge counts `uniqueFindingIds` = the same distinct ids the CSV/report show. No agent command, no outbound request. |
 | `lib/assetmgmt.js` | OPTIONAL outbound asset-management connector (v5.0.0, issue #5): `assetConfig`, `asBuildRequests` (generic JSON body template with `{{placeholders}}` + Jira and Snipe-IT presets, create-or-update via a stored external id), `asExternalId`, `assetHttp` (https-only, injectable), `asCollectDeviceRecord` (since v5.1.0 a thin shaping of `obj.collectNodeInventory` - the push therefore carries the SAME findings/hardware/software as the CSV: `vulnerabilities` = every finding with an id, `coverage` = the blind-spot rows), `asSendDevice`/`asPushHandler`/`asTestHandler`, `asStatusHandler`, `asGetConfigHandler`/`asSaveConfigHandler` (own `assetManagement` settings section, secrets masked + blank-keeps + `__AS_CLEAR__`), `asLog` (status only, never a payload/secret), `scheduleAssetSync` (off unless enabled AND interval > 0), `asset-sync.json` + `asset-sync.log` |
 | `lib/swstore.js` | deploy foundation: installer library index/folders, resumable upload parts, task store load/save/prune, staging into `<filespath>/tmp`, `swDownloadCookie` (agentdownload), name/args/extension sanitizers, `swEnsureStaged` |
 | `lib/swdeploy.js` | deploy engine: `swBuildWindowsScript`/`swBuildLinuxScript`, `swWgetCommand`, queue/pump/`swDispatchNode`/`swHandleResponse`/watchdogs, `swOnNodeConnect`/`swSweepOnce`/`scheduleSwSweep`, `swTaskDoneCheck`, `swCreateTask`/`swTaskView` |
@@ -364,6 +364,10 @@ POST body `action=`:
 | `get_license_table` | â€” | (v4.8.0) the full license rule table `{entries:[{match,label,rules,source:'table'|'custom'}], licenseTable:{source,origin,updated,url,tableEnabled,entries,custom}}` |
 | `add_license` / `remove_license` | match, label, rules (JSON array) / index | (v4.8.0) custom rule editor; every field validated (`isSafeTableRegex`, type ∈ registry/file/wmi, lengths, ≤8 rules) before storing to `license-custom.json`; custom wins over the table |
 | `sw_fleet` | `refresh` (optional '1') | (v4.9.5, issue #8) READ-ONLY fleet index that powers the two unified views: `{devices, software:[{name, version, versions, publisher, deviceCount, vulnerable, cve, maxSeverity, updatable, hasLicense}], byDevice:{<nodeId>:{cve, maxSeverity}}, generated}`. Built only from data already on the server (stored software + the report/CSV matcher + winget results + local license maps); sends nothing to any agent and makes no new outbound request. Cached ~60 s so switching between the two views does not re-scan. |
+| `dev_details` | `nodeId` | (v5.4.0, issue #9) READ-ONLY everything stored about ONE device, fetched on demand by the Device list's *Details* button: identity + `hardwareSummary` + the installed programs + the FULL `findings` (shaped like the CSV rows) + the `coverage` rows + counts, plus the last run of every engine (`winget.rows`, `os`, `wu`, `rb`, `reset` probe/modes/last) and the license **counts**. Built from `obj.collectNodeInventory` - never a second collection. Contains NO license value and sends NO agent command. |
+| `sw_details` | `name`, optional `pkgId` | (v5.4.0, issue #9) READ-ONLY everything stored about ONE installed program across the fleet: `devices` (with version, capped 300), `versions`, `cves` (capped 200), `coverage` statuses, `licenseDevices` (a COUNT - never a value) and the `winget` aggregate for that package (ready/ok/failed/skipped + per-device rows + whether it is ignored). Paced walk over `collectNodeInventory`, cached ~60 s per name. |
+| `wg_toggle_exclude` | `nodeId`, `excluded` ('true'/'false') | (v5.4.0, issue #9) puts ONE device on the winget exclusion list or takes it off, changing ONLY that key server-side. Exists because `wg_save_config` reads the whole form from the Updates-tab DOM - calling it from another view would have saved `enabled:false` with empty `updateMeshes`/`ignorePackages`. Keys that came from config.json are not copied into the plugin file. |
+| `wg_toggle_ignore` | `pkgId`, `ignore` ('true'/'false'), optional `note` | (v5.4.0, issue #9) the same for ONE package id on the ignore list (validated against `WINGET_ID_RE`, list capped at 500). Used by the Software list's *Ignore* button. |
 | `as_get_config` / `as_save_config` | full asset-management form | (v5.0.0, issue #5) the connector configuration in its OWN `assetManagement` section of scanner-settings.json (so the Settings-tab save/reset cannot wipe it and vice versa). Validated: https-only endpoint, method whitelist, JSON headers + JSON body template, Jira needs a project key, enabling needs a URL. Secrets (token/password/header value) are NEVER returned in the clear - the GET answers with a mask + `has*` flags; on save a blank secret KEEPS the stored value and `__AS_CLEAR__` erases it. |
 | `as_status` | - | (v5.0.0) `{devices:[{id,host,given,group,last:{time,status,httpCode,externalId,error}|null}], running, config}` - the masked config summary plus the last push per device. |
 | `as_test` | - | (v5.0.0) sends ONE synthetic sample record to the configured target and reports `{ok, httpCode}` - verifies URL/auth/mapping without pushing the fleet. |
@@ -496,27 +500,44 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
    are now sub-panels under Vulnerabilities and Software; they are the SAME fields (ids unchanged), and this
    tab's Save still writes them (the relocated panels reuse one shared `doSaveSettings` path).
 
-- Navigation is TWO LAYERS since v4.9.0 (issue #8): four main sections in the top bar (Devices | Software |
-  Vulnerabilities | Settings) and a second row of sub-tabs that changes with the selected main section. Each
-  existing panel is tagged `data-main`/`data-sub` and `selectSub(main, sub)` shows exactly one, builds the
-  sub-tab row, moves `#pageTitle`/`#statusMeta` + the location panel, and runs only that panel's loader. All
-  ids and handlers are unchanged - only the HTML was regrouped (no feature logic touched):
-    Devices -> Device list (`loadDeviceList`, the unified per-device view), Software updates (`loadWgTab`),
-      OS updates & reboot (`loadOsStatus`), PC reset (`loadDrStatus`);
-    Software -> Software list (`loadSwFleet`, the unified fleet-wide view), Deployment (`loadSwTab`),
-      License keys (`loadLicenseSection`);
-    Vulnerabilities -> Assessment (the CVE table + location panel, the default landing), Reports & NVD & CPE table
-      (the two printable reports + CSV exports, "Update NVD database now" + download log via `loadNvdLog`, and
-      the CPE mapping table with its config via `loadCpeTable`);
+- Navigation is TWO LAYERS with DEEP LINKS (v4.9.0, reworked by issue #9 in v5.4.0): FIVE main sections in the top
+  bar (Devices | Software | Vulnerabilities | Exports | Settings) and a second row of sub-tabs that changes with the
+  selected section. Each panel is tagged `data-main`/`data-sub` and `selectSub(main, sub)` shows exactly one, builds
+  the sub-tab row, moves `#pageTitle`/`#statusMeta` and runs only that panel's loader. The URL hash carries
+  `#<main>/<sub>`: the anchors hold the real hash and are NOT prevented, so the `hashchange` event is the single
+  driver (`applyHash`) - a copied link restores the view and the browser back button walks through the visited
+  views. An unknown or missing hash lands on `vulns/assessment` (the default since v4.9.0).
+    Devices -> Device list (`loadDeviceList`), PC reset (`loadDrStatus`), Device report (link);
+    Software -> Software list (`loadSwFleet`), Software updates (`loadWgTab`, the winget CONFIGURATION),
+      Deployment (`loadSwTab`), License keys (`loadLicenseSection`, configuration + rules);
+    Vulnerabilities -> Assessment (the findings table + the inline location row, the default landing),
+      Vulnerability report (link), CPE table (`loadCpeTable`), NVD database (`loadNvdLog`);
+    Exports -> CSV exports (choose hardware / software / vulnerabilities for all devices);
     Settings -> General (scan/collection/lifecycle/notify options + device groups), Asset management
       (the optional external connector: target, credentials, mapping, test/push, last push per device, log).
-  The two unified views the issue also asked for shipped in v4.9.5 (they were the "deferred" half of v4.9.0):
-  `Device list` merges the existing `os_status`/`wg_status`/`dr_status`/`lic_status` with the new read-only
-  `sw_fleet` index into one row per device with an action-checkbox batch; `Software list` renders the `sw_fleet`
-  distinct-software table. Both add NO new agent command - the device list's batch only calls the existing run
-  routes (`wg_run`/`os_run`/`lic_collect`/`wu_repair`) over the selected devices, and Restart/Reset are never
-  batched (each row links to the panel that does the per-device typed-name confirm). The engines still
-  share the winget `excludeNodes` list and the one-runcommands-session-per-agent rule.
+  The issue-#9 rework removed the per-device/per-package TABLES that duplicated the unified views: the winget
+  device table and the "Packages across all devices" table are gone (their content lives in the Device list and the
+  Software list), the whole `OS updates & reboot` register is gone (its per-device actions, its fleet buttons, its
+  reference line and its log all live in the Device list), and the license device table is gone (the Device list
+  shows the collected count, collects for the ticked devices, and its Details view collects for one device). The
+  old `Reports, NVD & CPE table` panel was split into three sub-tabs plus the new Exports section, and the Device
+  report moved under Devices.
+- **One action, one definition (issue #9).** The Device list does NOT re-implement the engine actions: its buttons
+  call the functions that own them - `wgRunOne` (winget, dry or real), `osDeviceUpdate`/`osDeviceUpgrade`/
+  `osFleetUpdates`/`osUpgradeFleet`, `wuDiag`/`wuDeviceRepair`, `rbNotify`/`rbRestart` (the typed-name confirm),
+  `licCollectOne`, all defined in `js/winget`, `js/os` and `js/license`. `osRefresh()` is the single "the OS state
+  changed, re-read it" hook and points at `loadDeviceList`, because the device list is the OS view now. The old
+  `renderOsDevices`/`loadOsStatus`/`loadOsLog`/`renderWgDevices`/`renderWgPackages`/`renderLicDevices` and
+  `wgToggleExclude` are gone with their tables.
+- **Never save a whole config form from another view.** `wg_save_config` builds its body from the Software-updates
+  DOM (`$('wgEnabled')`, the group checkboxes, `wgApp.cfg`), so calling it from a view that never loaded that panel
+  would have saved `enabled:false` with EMPTY `updateMeshes`/`ignorePackages` - silently switching the automatic
+  updater off. The single-key routes `wg_toggle_exclude` and `wg_toggle_ignore` exist for exactly that reason: they
+  change ONE key server-side and copy the rest of the existing `wingetUpdater` section untouched (so keys that came
+  from config.json are not pinned into the plugin file). Use them for per-device/per-package toggles.
+- **Hover help (issue #9):** every action button carries `data-help="<key>"`; one delegated `mouseover` listener
+  (`bindHelpBox`) shows `HELP[key]` in the fixed box at the lower right (`#helpBox`). The texts are the per-action
+  breakdown of the info boxes, so the explanation is where the hand is. A new action button must add its key.
 
 - Deploy tab (v4.0.0): library table + `<input type=file>` upload (FileReader chunks â†’ `sw_upload`, sequential
   POSTs with resume-on-gap, progress text), source switch plugin-library â‡„ MeshCentral Server Files (two selects,
@@ -1680,7 +1701,7 @@ v5.2.0: optional license collection schedule + the NVD feed timer actually runs.
   validates/reverts the new interval. Plus 2 render assertions for the new field and its honest description.
   The old "license is never scheduled" assertion was deliberately replaced (the invariant changed by request).
   Version 5.1.0 -> 5.2.0.
-v5.3.0 (this release): the panel view is modularised - STRUCTURE ONLY, no behaviour change. Preparation for
+v5.3.0: the panel view is modularised - STRUCTURE ONLY, no behaviour change. Preparation for
 issue #9, which restructures the navigation and would otherwise mean editing one 3,240-line file.
 - Verified first (upstream sources, then proven live): MeshCentral's `pluginHandler.handleAdminReq` does
   `serv.app.set('views', <pluginPath>/<pin>/views)` per request and `webserver.js` builds the engine with
@@ -1718,3 +1739,67 @@ issue #9, which restructures the navigation and would otherwise mean editing one
   not ready, restored ready - the "missing" case is what caught the disk-walk flaw), test-views 40 PASS
   (+6: partials registered, the probe resolves, and the four inventory guards). No route, handler, engine,
   data shape or agent script changed. Version 5.2.0 -> 5.3.0.
+v5.4.0 (this release): issue #9 - the UI rework on the modular base.
+- **Deep links:** the URL hash carries `#<main>/<sub>`; the nav anchors hold the real hash and are not prevented, so
+  `hashchange` (`applyHash`) is the single driver. Copying the address of any view and pasting it restores that view,
+  and the browser back button walks through the visited views. An unknown/missing hash lands on `vulns/assessment`.
+- **Sorting bug fixed:** the findings table defaulted to `sortKey:'cvss'`, and `sortValue('cvss')` returns the RAW
+  NVD score - so a finding rated LOW (or flagged false positive) with CVSS 9.8 stayed at the top and the manual
+  rating appeared to do nothing. The default is now `severity`, which sorts by `effSeverity()` (rating wins, false
+  positives sink via `SEV_RANK`), with the higher CVSS as the tiebreaker inside one severity and then the CVE id for
+  a stable order. The CVSS column stays freely sortable.
+- **The floating location selector is gone** (its look & feel was never repeated anywhere else and it covered the
+  table): the selection is now an inline row of checkboxes above the findings table, with the same ids
+  (`locationPanel`/`locList`/`locAll`/`locApply`/`locCountTxt`), the same localStorage persistence and the same
+  "Apply only re-reads the stored snapshot" behaviour.
+- **Hover help:** a fixed box at the lower right (`#helpBox`) shows the explanation of whichever action button the
+  pointer is on (`data-help` key -> `HELP` registry, one delegated listener). The texts are the per-action breakdown
+  of the info boxes, so the explanation is where the hand is.
+- **New navigation:** five main sections. Devices -> Device list, PC reset, Device report. Software -> Software
+  list, Software updates (the winget configuration), Deployment, License keys. Vulnerabilities -> Assessment,
+  Vulnerability report, CPE table, NVD database. Exports (NEW) -> choose hardware/software/vulnerabilities.
+  Settings -> General, Asset management. The old `Reports, NVD & CPE table` panel was split accordingly.
+- **Device list** is now the device hub: sortable columns, a filter, and per-row Software (Dry run / Update /
+  Exclude|Include), OS (OS updates / OS Upgrade) and Troubleshoot (Diagnose / Troubleshoot / Reboot - renamed from
+  "Restart" - / Notify user) buttons, plus **Details**, which fetches `dev_details` on demand (hardware, programs,
+  findings + coverage, the last run of every engine, the license counts) so the table itself stays compact. The
+  fleet OS buttons, the upgrade-reference line and the OS update log moved here with the OS register. The Reboot and
+  Reset columns and the row Reset button were removed as requested - a reset stays on its own PC reset page.
+- **Software list** gained the winget package aggregate (ready/ok/failed/skipped from the stored last runs) in place
+  of the old "Update" column, and every row carries Ignore / Update everywhere / Uninstall everywhere / Details
+  (`sw_details`: devices, versions, findings, license presence, the per-device winget rows). Rows without a winget
+  package id show those three buttons DISABLED with the reason - winget manages ids, not display names.
+- **Removed as duplicates** (their content lives in the unified views now): the winget device table and the
+  "Packages across all devices" table, the whole `OS updates & reboot` register, the license device table, and the
+  CSV links on the device list. Nothing was dropped without a new home - see the audit below.
+- **Two atomic winget routes** (`wg_toggle_exclude`, `wg_toggle_ignore`) instead of reusing `wg_save_config`: that
+  handler builds its body from the Updates-tab DOM, so calling it from the device list before the tab was ever
+  loaded would have saved `enabled:false` with EMPTY `updateMeshes`/`ignorePackages` - silently switching the
+  automatic updater off and wiping its scope. The new routes change one key and copy the rest of the section
+  untouched (keys that came from config.json are not pinned into the plugin file).
+- **One action, one definition:** the device list calls `wgRunOne`, `osDeviceUpdate`/`osDeviceUpgrade`/
+  `osFleetUpdates`/`osUpgradeFleet`, `wuDiag`/`wuDeviceRepair`, `rbNotify`/`rbRestart` and `licCollectOne` - the
+  functions that own those actions, with their existing confirmations (including the typed-name restart confirm, so
+  the reboot policy is unchanged). `osRefresh()` is the single re-read hook and points at `loadDeviceList`. The
+  table renderers that belonged to the removed panels (`renderOsDevices`, `renderWgDevices`, `renderWgPackages`,
+  `renderLicDevices`, `loadOsStatus`, `loadOsLog`, `loadWgPackages`, `wgToggleExclude`, `dlGo`) are gone.
+- **Completeness audit against v5.3.0** (the same method as v4.9.6, now automated by the inventory fixture): 20 ids
+  disappeared and every one has a replacement (`osUpdBtn`->`dlOsUpdAllBtn`, `osLog`->`dlOsLog`,
+  `osCurrentInfo`+`osUrgentDaysInfo`->`dlOsRefInfo`, `wgDevBody`->the device rows, `wgPkgBody`->the software rows,
+  `licDeviceBody`->the License column + Details, `locationToggle`/`locClose`->the inline row, `tab-os`/
+  `tab-vulndata`->the new sub-tabs); all 13 removed `data-*act` actions map to a new one; no link was lost. The audit
+  also caught TWO real losses that were fixed before shipping: the OS batch-running indicator had no home (now
+  `dlOsRunState`) and two sentences of the winget explanation ("devices without winget are reported per run; offline
+  devices are skipped", "a full log with one line per package") had been dropped while rewriting (restored). The
+  per-device license collect would have been lost with the license table, so it moved into the device Details view.
+- **README + plugin description rewritten for administrators** (as the issue asked): the README is now task-oriented
+  around the five sections, with reference tables for the finding statuses, the OS release states and the supported
+  distributions, and the implementation internals (policy mechanics, transport details, command-line limits) are
+  referred to AGENTS.md instead of being duplicated. The manifest description is one human sentence pair.
+- Tests: +18 assertions in test-plugin (679 PASS + 3 SKIP / 99 steps) - the atomic toggles keep every other winget
+  key, `dev_details` returns the FULL finding list (software CVE + OS CVE + WINDOWS-UPDATES + OS-EOL) and the
+  coverage rows, both detail routes are read-only (no agent command) and never contain a license VALUE, invalid ids
+  are refused; +9 render assertions in test-views (49 PASS) for the five sections, the deep-link machinery, the
+  severity-default sort and its tiebreaker, the inline location row, the help box and registry, and the Exports
+  selector. The inventory fixture was regenerated in the same commit (206 ids, 65 help texts, 6 links, 14 panels) -
+  the diff shows exactly which controls were removed on purpose. Version 5.3.0 -> 5.4.0.

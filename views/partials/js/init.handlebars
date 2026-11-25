@@ -5,4 +5,7 @@
         loadCached();
         loadCpeTable();
         loadSettings();
-        selectSub('vulns', 'assessment');   // v4.9.0: two-layer nav, land on the assessment table
+        // issue #9: the URL hash decides which view opens - a copied link brings you back to the same place.
+        // Without a hash this lands on Vulnerabilities > Assessment, as before.
+        applyHash();
+        bindHelpBox();

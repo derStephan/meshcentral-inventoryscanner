@@ -117,8 +117,8 @@ try {
     console.log((/class="maintab[^"]*" data-main="devices"/.test(a) && /data-main="software"/.test(a) && /data-main="vulns"/.test(a) && /data-main="settings"/.test(a) ? 'PASS ' : (failed++, 'FAIL ')) + 'nav: four main sections present');
     console.log(((a.indexOf('id="subnav"') >= 0 && a.indexOf('id="mainnav"') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'nav: sub-nav container present');
     console.log((a.indexOf('data-tab=') < 0 && a.indexOf('class="navtab') < 0 ? 'PASS ' : (failed++, 'FAIL ')) + 'nav: old flat navtab markup removed');
-    console.log(((count(a, /id="tab-vulndata"/g) === 1 && count(a, /id="tab-license"/g) === 1) ? 'PASS ' : (failed++, 'FAIL ')) + 'nav: CPE/NVD reports panel and license panel exist once each');
-    console.log(((a.indexOf('data-main="vulns" data-sub="data"') >= 0 && a.indexOf('data-main="software" data-sub="license"') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'nav: extracted blocks carry main+sub tags');
+    console.log(((count(a, /id="tab-cpe"/g) === 1 && count(a, /id="tab-nvd"/g) === 1 && count(a, /id="tab-vulnreport"/g) === 1 && count(a, /id="tab-license"/g) === 1) ? 'PASS ' : (failed++, 'FAIL ')) + 'nav: CPE table, NVD database, vulnerability report and license panels exist once each (issue #9 split the old "data" panel)');
+    console.log(((a.indexOf('data-main="vulns" data-sub="cpe"') >= 0 && a.indexOf('data-main="vulns" data-sub="nvd"') >= 0 && a.indexOf('data-main="exports" data-sub="files"') >= 0 && a.indexOf('data-main="devices" data-sub="devreport"') >= 0 && a.indexOf('data-main="software" data-sub="license"') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'nav: every panel carries its main+sub tags, incl. the new Exports section and the Device report under Devices');
     console.log((count(a, /id="setUpdateHours"/g) === 1 ? 'PASS ' : (failed++, 'FAIL ')) + 'nav: moved NVD-refresh field appears exactly once (no id collision)');
     console.log((count(a, /id="setCpeTableEnabled"/g) === 1 && count(a, /id="setLicCollect"/g) === 1 ? 'PASS ' : (failed++, 'FAIL ')) + 'nav: moved CPE/license config fields appear once each');
     console.log(((a.indexOf('doSaveSettings') >= 0 && a.indexOf('saveSettingsBtn2') >= 0 && a.indexOf('saveSettingsBtn3') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'nav: relocated settings keep one shared save path');
@@ -169,6 +169,17 @@ try {
     });
     console.log((missPanels.length === 0 ? 'PASS ' : (failed++, 'FAIL ')) + 'inventory: all ' + inv.panels.length + ' navigation panels are still present'
         + (missPanels.length ? ' -> MISSING: ' + missPanels.join(', ') : ''));
+
+    // issue #9 phase 1: deep links, the sorting fix, the inline location row and the hover help box
+    console.log(((a.indexOf('data-main="exports"') >= 0 && a.indexOf('#exports/files') >= 0 && a.indexOf('#devices/devicelist') >= 0 && a.indexOf('#vulns/assessment') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + '#9: five main sections incl. Exports, and the nav anchors carry real deep-link hashes');
+    console.log(((a.indexOf('function applyHash') >= 0 && a.indexOf("addEventListener('hashchange'") >= 0 && a.indexOf('navLock') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + '#9: the URL hash drives the view (copy/paste a link and the back button work)');
+    console.log(((a.indexOf("sortKey: 'severity'") >= 0 && a.indexOf("sortKey: 'cvss'") < 0) ? 'PASS ' : (failed++, 'FAIL ')) + '#9: the findings table sorts by EFFECTIVE severity by default, not by the raw CVSS (a manual rating re-orders it)');
+    console.log(((a.indexOf('key !== \'cvss\'') >= 0 && a.indexOf('return cb2 - ca;') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + '#9: inside one severity the higher CVSS wins (tiebreaker), then the CVE id for a stable order');
+    console.log(((a.indexOf('class="locbar"') >= 0 && a.indexOf('location-toggle') < 0 && a.indexOf('locClose') < 0) ? 'PASS ' : (failed++, 'FAIL ')) + '#9: the location selection is an inline row above the table - the floating panel and its toggle are gone');
+    console.log(((a.indexOf('id="locList"') >= 0 && a.indexOf('id="locApply"') >= 0 && a.indexOf('invscanner_locations') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + '#9: the inline location row keeps its ids and the localStorage persistence');
+    console.log(((a.indexOf('id="helpBox"') >= 0 && a.indexOf('function bindHelpBox') >= 0 && a.indexOf('data-help=') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + '#9: the hover help box exists and buttons carry data-help');
+    console.log(((a.indexOf("'scan.review'") >= 0 && a.indexOf("'dl.reboot'") >= 0 && a.indexOf("'swf.uninstall'") >= 0 && a.indexOf("'as.pushall'") >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + '#9: the help registry covers the actions of every area');
+    console.log(((a.indexOf('id="exportType"') >= 0 && a.indexOf('id="exportGo"') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + '#9: the Exports section lets you choose which CSV to download');
 } catch (e) { failed++; console.log('FAIL nav checks: ' + e.message); }
 
 console.log(failed === 0 ? '\ntest-views: ALL PASSED' : '\ntest-views: ' + failed + ' FAILURE(S)');

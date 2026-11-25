@@ -3903,6 +3903,105 @@ steps.push(function (next) {
     });
 });
 
+// ---- v5.4.0 (issue #9): the atomic winget toggles + the two read-only detail routes ----
+steps.push(function (next) {
+    var dpD2 = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-det-'));
+    var dNodes = [
+        { _id: 'node//d1', meshid: 'mesh//grp1', rname: 'dh1', name: 'DetailWin', osdesc: 'Microsoft Windows 11 Pro', ip: '10.0.0.7' },
+        { _id: 'node//d2', meshid: 'mesh//grp1', rname: 'dh2', name: 'DetailTwo', osdesc: 'Microsoft Windows 10' }
+    ];
+    var dSys = {
+        'sinode//d1': { _id: 'sinode//d1', doc: { hardware: { identifiers: { cpu_name: 'Intel i5', chassis_serial: 'SN-D1', product_name: 'ThinkPad' }, windows: { osinfo: { BuildRevision: '2600' }, memory: [{ BankLabel: 'B0', Capacity: 8589934592 }] } } } },
+        'sinode//d2': { _id: 'sinode//d2', doc: { apps: [{ name: 'Firefox', version: '121.0', publisher: 'Mozilla' }] } }
+    };
+    var dbD2 = {
+        GetAllType: function (t, cb) { cb(null, t === 'node' ? dNodes.slice() : (t === 'mesh' ? meshes.slice() : [])); },
+        Get: function (id, cb) { if (dSys[id]) { cb(null, [dSys[id]]); return; } cb(null, dNodes.filter(function (n) { return n._id === id; })); }
+    };
+    var sentD2 = [];
+    var oD2 = factory({ parent: { db: dbD2, datapath: dpD2, debug: function () { }, config: { settings: {} }, webserver: { meshes: { 'mesh//grp1': { name: 'HQ' } }, wsagents: { 'node//d1': {} } }, DispatchEvent: function () { } } });
+    oD2.softwareInventory = { d1: { apps: [{ name: 'Firefox', version: '120.0', publisher: 'Mozilla' }, { name: 'Notepad', version: '11' }] } };
+    oD2.windowsUpdates = { d1: { count: 2, updates: [] } };
+    oD2.licenseInventory = { d1: { time: 'x', items: [{ name: 'Firefox', license: 'SUPER-SECRET-KEY', source: 'registry' }], ms: [{ name: 'Windows', key: 'MS-SECRET' }] } };
+    oD2.scanDeviceSoftware = function (list, cb) {
+        var out = [];
+        for (var i = 0; i < (list || []).length; i++) {
+            var nm = String((list[i] && list[i].name) || '');
+            out.push(/firefox/i.test(nm)
+                ? { status: 'CVE', isCve: true, cve: 'CVE-2024-0001', severity: 'CRITICAL', cvss: 9.8, software: nm, version: String(list[i].version || ''), description: 'crit' }
+                : { status: 'not assessable', isCve: false, cve: '', severity: '', cvss: '', software: nm, version: String(list[i].version || ''), description: '' });
+        }
+        cb(out);
+    };
+    oD2.scanDeviceOs = function () { return [{ cve: 'CVE-2024-0009', isCve: true, severity: 'HIGH', cvss: 7.8, software: 'Operating System', version: 'W11' }]; };
+    oD2.osSupportState = function () { return { state: 'eol', label: 'Windows 11 Pro', reason: 'fixture' }; };
+
+    // 1) the atomic exclude toggle must change ONE key and keep every other winget setting
+    oD2.pluginSettings = { wingetUpdater: { enabled: true, updateMeshes: ['mesh//grp1'], excludeNodes: [], ignorePackages: [{ id: 'Some.Package', note: 'keep' }], pinSync: true } };
+    oD2.handleAdminPostReq({ headers: XHDR, body: { action: 'wg_toggle_exclude', nodeId: 'node//d1', excluded: 'true' } }, mockRes(function (r1) {
+        var s1 = oD2.pluginSettings.wingetUpdater;
+        check('wg_toggle_exclude: adds the device and KEEPS enabled/updateMeshes/ignorePackages/pinSync (the old wg_save_config path read them from the DOM and would have wiped them)',
+            r1.success === true && s1.excludeNodes.length === 1 && s1.excludeNodes[0] === 'node//d1' && s1.enabled === true &&
+            s1.updateMeshes[0] === 'mesh//grp1' && s1.ignorePackages.length === 1 && s1.pinSync === true, s1);
+        oD2.handleAdminPostReq({ headers: XHDR, body: { action: 'wg_toggle_exclude', nodeId: 'node//d1', excluded: 'false' } }, mockRes(function (r2) {
+            check('wg_toggle_exclude: takes the device off the list again', r2.success === true && oD2.pluginSettings.wingetUpdater.excludeNodes.length === 0, r2);
+            oD2.handleAdminPostReq({ headers: XHDR, body: { action: 'wg_toggle_exclude', nodeId: 'not-a-node', excluded: 'true' } }, mockRes(function (r3) {
+                check('wg_toggle_exclude: an invalid node id is refused', !!r3.error, r3);
+
+                // 2) the atomic ignore toggle
+                oD2.handleAdminPostReq({ headers: XHDR, body: { action: 'wg_toggle_ignore', pkgId: 'Adobe.Acrobat.Reader', ignore: 'true', note: 'pinned' } }, mockRes(function (r4) {
+                    var s4 = oD2.pluginSettings.wingetUpdater;
+                    check('wg_toggle_ignore: adds the package and keeps every other winget key',
+                        r4.success === true && s4.ignorePackages.length === 2 && s4.ignorePackages[1].id === 'Adobe.Acrobat.Reader' && s4.enabled === true && s4.updateMeshes.length === 1, s4);
+                    oD2.handleAdminPostReq({ headers: XHDR, body: { action: 'wg_toggle_ignore', pkgId: 'Adobe.Acrobat.Reader', ignore: 'false' } }, mockRes(function (r5) {
+                        check('wg_toggle_ignore: removes it again', r5.success === true && oD2.pluginSettings.wingetUpdater.ignorePackages.length === 1, r5);
+                        oD2.handleAdminPostReq({ headers: XHDR, body: { action: 'wg_toggle_ignore', pkgId: 'bad id with spaces', ignore: 'true' } }, mockRes(function (r6) {
+                            check('wg_toggle_ignore: an invalid package id is refused', !!r6.error, r6);
+
+                            // 3) dev_details: the full picture for one device, read-only, and NO secret in it
+                            sentD2.length = 0;
+                            oD2.handleAdminPostReq({ headers: XHDR, body: { action: 'dev_details', nodeId: 'node//d1' } }, mockRes(function (d) {
+                                var all = JSON.stringify(d);
+                                check('dev_details: identity + hardware come from the canonical record',
+                                    d.device.host === 'dh1' && d.device.group === 'HQ' && d.hardware.serial === 'SN-D1' && d.hardware.cpu === 'Intel i5' && d.hardware.memoryBanks.length === 1, d.device);
+                                check('dev_details: the findings are the FULL list - software CVE, OS CVE, WINDOWS-UPDATES and OS-EOL (what the CSV shows)',
+                                    d.findings.map(function (f) { return f.id; }).sort().join(',') === 'CVE-2024-0001,CVE-2024-0009,OS-EOL,WINDOWS-UPDATES', d.findings.map(function (f) { return f.id; }));
+                                check('dev_details: the coverage rows (not assessable) are reported separately, not dropped',
+                                    d.coverage.length === 1 && d.coverage[0].status === 'not assessable', d.coverage);
+                                check('dev_details: installed programs + the windows update count are included',
+                                    d.software.length === 2 && d.counts.software === 2, d.software);
+                                check('dev_details: SECURITY - it reports license COUNTS only, never a collected key',
+                                    d.license.found === 1 && d.license.ms === 1 && all.indexOf('SUPER-SECRET-KEY') < 0 && all.indexOf('MS-SECRET') < 0, d.license);
+                                check('dev_details: it is read-only - no agent command is sent', sentD2.length === 0, sentD2.length);
+                                oD2.handleAdminPostReq({ headers: XHDR, body: { action: 'dev_details', nodeId: 'bogus' } }, mockRes(function (d2) {
+                                    check('dev_details: an invalid node id is refused', !!d2.error, d2);
+
+                                    // 4) sw_details: the fleet picture for one program
+                                    oD2.handleAdminPostReq({ headers: XHDR, body: { action: 'sw_details', name: 'Firefox' } }, mockRes(function (s) {
+                                        var sall = JSON.stringify(s);
+                                        check('sw_details: lists the devices and versions that carry the program',
+                                            s.deviceCount === 2 && s.devices.length === 2 && s.versions.length === 2 &&
+                                            s.devices.some(function (x) { return x.version === '120.0'; }) && s.devices.some(function (x) { return x.version === '121.0'; }), [s.deviceCount, s.versions]);
+                                        check('sw_details: the CVEs matched for this program are reported',
+                                            s.cves.length === 1 && s.cves[0].id === 'CVE-2024-0001' && s.cves[0].severity === 'CRITICAL', s.cves);
+                                        check('sw_details: SECURITY - a collected license is reported as presence, never as a value',
+                                            s.licenseDevices === 1 && sall.indexOf('SUPER-SECRET-KEY') < 0, s.licenseDevices);
+                                        check('sw_details: read-only - no agent command is sent', sentD2.length === 0, sentD2.length);
+                                        oD2.handleAdminPostReq({ headers: XHDR, body: { action: 'sw_details', name: '' } }, mockRes(function (s2) {
+                                            check('sw_details: an empty name is refused', !!s2.error, s2);
+                                            next();
+                                        }), user);
+                                    }), user);
+                                }), user);
+                            }), user);
+                        }), user);
+                    }), user);
+                }), user);
+            }), user);
+        }), user);
+    }), user);
+});
+
 // The runner MUST stay the last statement: every steps.push() above has to be registered before
 // step 0 starts (pre-3.0.1 it sat mid-file and the trailing steps only ran because an earlier
 // step happened to be asynchronous). New steps go ABOVE this block.

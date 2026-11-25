@@ -1,0 +1,29 @@
+        <div class="tab-content" id="tab-nvd" data-main="vulns" data-sub="nvd">
+            <h3>NVD database</h3>
+            <div class="info">
+                The vulnerability data comes from the public <strong>NVD 2.0 feeds</strong>, downloaded to this
+                server (<code>&lt;datapath&gt;/nvd/</code>) and matched <strong>offline</strong> - no inventory
+                data is sent to nvd.nist.gov and no NVD API is queried at runtime. The first download covers
+                every year and takes a while (several GB); afterwards only missing years and the current year
+                are refreshed, on the cycle set below. The same cycle also re-downloads the maintained CPE
+                mapping table and the OS support dates.
+            </div>
+            <div class="setgrid">
+                <label for="setUpdateHours">NVD feed refresh (hours)</label>
+                <div><input type="text" id="setUpdateHours" class="num">
+                    <select id="setUpdateHoursSrc" class="srcsel"></select>
+                    <div class="hint">168 = weekly (the default). The timer is due-aware: a feed that is older
+                    than this is fetched shortly after the next server start, and a failed download is retried
+                    after 6 hours instead of hammering the rate-limited source.</div></div>
+                <label>&nbsp;</label>
+                <div><button id="updateNvdNowBtn" class="green" data-help="nvd.update">Update NVD database now</button>
+                    <span id="updateNvdInfo" class="hint"></span>
+                    <div class="hint">Fetches missing years and refreshes the current year immediately (rate-limited, can
+                    take a while - progress appears in the download log below).</div></div>
+            </div>
+            <div><button id="refreshNvdLogBtn" class="small" data-help="nvd.refreshlog">Refresh log</button>
+                <span id="nvdLogInfo" class="hint"></span></div>
+            <pre id="nvdLog" style="max-height:260px;overflow:auto;background:#0f1720;color:#cfe3f5;padding:8px;border-radius:6px;font-size:11px;margin-top:6px;white-space:pre-wrap;">(not loaded yet)</pre>
+            <div class="controls" style="margin-top:16px;"><button id="saveSettingsBtn4">Save NVD settings</button></div>
+            <div id="nvdMsg"></div>
+        </div>

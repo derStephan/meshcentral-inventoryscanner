@@ -48,13 +48,13 @@
             </div>
             <div class="hint" id="licTableSourceInfo"></div>
             <div class="controls">
-                <button id="licCollectAllBtn" class="purple">Collect licenses (all online Windows)</button>
+                <button id="licCollectAllBtn" class="purple" data-help="lic.collectall">Collect licenses (all online Windows)</button>
                 <span id="licRunInfo" class="hint"></span>
             </div>
-            <div class="table-container"><table>
-                <thead><tr><th>Device</th><th>Group</th><th style="width:70px;">Online</th><th style="width:260px;">Collected</th><th style="width:120px;">Actions</th></tr></thead>
-                <tbody id="licDeviceBody"><tr><td colspan="5" style="color:#888">Loading...</td></tr></tbody>
-            </table></div>
+            <div class="hint">Per device: the <strong>Device list</strong> shows how many keys were collected on each
+            machine, collects for the devices you tick there, and its <em>Details</em> button offers the collection
+            for that single device. The values themselves are never displayed - they stay in
+            <code>data/&lt;node&gt;/license.json</code> on this server and appear only in the software CSV export.</div>
             <h4 style="font-size:13px;color:#0b3d6b;margin:14px 0 6px 0;">Custom rules (you can add your own)</h4>
             <div class="table-container"><table>
                 <thead><tr><th style="cursor:default">Regex (display name)</th><th style="cursor:default">Label</th><th style="cursor:default">Rules</th><th style="width:120px;"></th></tr></thead>
@@ -64,12 +64,12 @@
                 <input id="licMatch" type="text" placeholder="Regex, e.g. ^Adobe Illustrator" style="min-width:200px;">
                 <input id="licLabel" type="text" placeholder="Label, e.g. Adobe Illustrator CC" style="min-width:160px;">
                 <input id="licRules" type="text" placeholder='Rules JSON, e.g. [{"type":"registry","path":"HKLM:\\...","value":"LicenseKey"}]' style="min-width:360px;">
-                <button id="addLicBtn">Add</button>
+                <button id="addLicBtn" data-help="lic.add">Add</button>
             </div>
             <div id="licMsg"></div>
             <h4 style="font-size:13px;color:#0b3d6b;margin:14px 0 6px 0;">License collection log</h4>
-            <div><button id="refreshLicLogBtn" class="small">Refresh log</button> <span id="licLogInfo" class="hint"></span></div>
+            <div><button id="refreshLicLogBtn" class="small" data-help="lic.refreshlog">Refresh log</button> <span id="licLogInfo" class="hint"></span></div>
             <pre id="licLog" style="max-height:200px;overflow:auto;background:#0f1720;color:#cfe3f5;padding:8px;border-radius:6px;font-size:11px;margin-top:6px;white-space:pre-wrap;">(not loaded yet)</pre>
-            <div class="controls" style="margin-top:16px;"><button id="saveSettingsBtn3">Save license settings</button></div>
+            <div class="controls" style="margin-top:16px;"><button id="saveSettingsBtn3" data-help="set.save">Save license settings</button></div>
             <div id="licenseMsg"></div>
         </div>

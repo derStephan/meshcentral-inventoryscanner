@@ -66,16 +66,19 @@
         .subnav a.subtab.active { background: #2f6fa8; color: #fff; }
         .tab-content { display: none; }
         .tab-content.active { display: block; }
-        .location-selector { position: fixed; top: 130px; right: 20px; z-index: 1000; background: #fff; border: 1px solid #d8e0ec; border-radius: 8px; padding: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); width: 320px; max-height: 60vh; overflow-y: auto; }
-        .location-selector.hidden { display: none; }
-        .location-selector h4 { margin: 0 0 12px 0; font-size: 14px; color: #0b3d6b; }
-        .location-selector .loc-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; cursor: pointer; font-weight: 400; font-size: 13px; }
-        .location-selector .loc-item:hover { background: #f0f4f9; border-radius: 4px; }
-        .location-selector input[type="checkbox"] { width: 16px; height: 16px; accent-color: #4a90d9; }
-        .location-selector .loc-all { border-top: 1px solid #e0e4ea; padding-top: 8px; margin-top: 4px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
-        .location-selector .loc-actions { margin-top: 12px; display: flex; gap: 8px; }
-        .location-toggle { position: fixed; top: 80px; right: 20px; z-index: 999; padding: 6px 14px; background: #0b3d6b; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 600; line-height: 18px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
-        .location-toggle:hover { background: #154d80; }
+        .locbar { background: #f7fafd; border: 1px solid #d8e0ec; border-radius: 6px; padding: 10px 12px; margin-bottom: 14px; }
+        .locbar-head { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+        .locbar-title { font-weight: 700; font-size: 13px; color: #0b3d6b; }
+        .locbar-list { display: flex; gap: 6px 14px; flex-wrap: wrap; max-height: 132px; overflow-y: auto; }
+        .locbar .loc-item { display: flex; align-items: center; gap: 6px; padding: 3px 6px; cursor: pointer; font-weight: 400; font-size: 13px; border-radius: 4px; }
+        .locbar .loc-item:hover { background: #eaf1f8; }
+        .locbar input[type="checkbox"] { width: 15px; height: 15px; accent-color: #4a90d9; }
+        .locbar .loc-all { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 13px; }
+        .helpbox { position: fixed; right: 18px; bottom: 18px; z-index: 1200; width: 380px; max-width: 42vw; max-height: 38vh;
+                   overflow-y: auto; background: #0b3d6b; color: #eaf2fb; border-radius: 8px; padding: 12px 14px;
+                   font-size: 12px; line-height: 1.5; box-shadow: 0 6px 18px rgba(0,0,0,.28); display: none; }
+        .helpbox.visible { display: block; }
+        .helpbox b { color: #fff; display: block; margin-bottom: 4px; font-size: 12px; }
         .table-container { overflow-x: auto; }
         .filter-row { display: flex; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
         .filter-input { padding: 6px 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; line-height: 18px; flex: 1; min-width: 150px; }
@@ -93,10 +96,11 @@
 <body>
     <div class="topnav">
         <div class="mainnav" id="mainnav">
-            <a href="#" class="maintab" data-main="devices">Devices</a>
-            <a href="#" class="maintab" data-main="software">Software</a>
-            <a href="#" class="maintab active" data-main="vulns">Vulnerabilities</a>
-            <a href="#" class="maintab" data-main="settings">Settings</a>
+            <a href="#devices/devicelist" class="maintab" data-main="devices">Devices</a>
+            <a href="#software/softwarelist" class="maintab" data-main="software">Software</a>
+            <a href="#vulns/assessment" class="maintab active" data-main="vulns">Vulnerabilities</a>
+            <a href="#exports/files" class="maintab" data-main="exports">Exports</a>
+            <a href="#settings/general" class="maintab" data-main="settings">Settings</a>
         </div>
         <div class="subnav" id="subnav"></div>
     </div>
@@ -109,32 +113,23 @@
         </div>
 {{> panels/assessment }}
 {{> panels/settings }}
-{{> panels/vulndata }}
+{{> panels/vulnreport }}
+{{> panels/cpe }}
+{{> panels/nvd }}
+{{> panels/devreport }}
+{{> panels/exports }}
 {{> panels/license }}
 {{> panels/devicelist }}
 {{> panels/swlist }}
 {{> panels/asset }}
 {{> panels/updates }}
-{{> panels/os }}
 {{> panels/deploy }}
 {{> panels/reset }}
     </div>
 
     <div id="invFloat" style="display:none;position:fixed;top:18px;left:50%;transform:translateX(-50%);color:#fff;padding:10px 22px;border-radius:8px;z-index:9999;font-weight:600;box-shadow:0 4px 14px rgba(0,0,0,.35);transition:opacity .6s;max-width:80%;"></div>
 
-    <div class="location-selector" id="locationPanel">
-        <h4>Locations to assess</h4>
-        <div id="locList">
-            {{#each meshList}}
-            <label class="loc-item"><input type="checkbox" class="loc-cb" value="{{this.id}}" checked> {{this.name}}</label>
-            {{/each}}
-        </div>
-        <label class="loc-all"><input type="checkbox" id="locAll" checked> All locations</label>
-        <div class="loc-actions">
-            <button id="locApply" class="green">Apply</button>
-            <button id="locClose" class="red">Close</button>
-        </div>
-    </div>
+    <div class="helpbox" id="helpBox"><b id="helpTitle"></b><span id="helpText"></span></div>
 
     <script>
     (function () {
@@ -156,6 +151,8 @@
 {{> js/devicelist }}
 {{> js/swlist }}
 {{> js/asset }}
+{{> js/exports }}
+{{> js/help }}
 {{> js/init }}
     })();
     </script>

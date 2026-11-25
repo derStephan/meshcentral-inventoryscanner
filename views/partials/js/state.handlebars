@@ -3,7 +3,10 @@
         var state = {
             rows: [],
             cpeEntries: [],
-            sortKey: 'cvss',
+            // issue #9: the default sort is the EFFECTIVE severity (which honours a manual rating and sinks
+            // false positives), not the raw NVD score. Sorting by 'cvss' ignored every rating, so a finding
+            // rated LOW with CVSS 9.8 stayed at the top of the list.
+            sortKey: 'severity',
             sortDir: 'desc',
             filterText: '',
             filterSeverity: '',

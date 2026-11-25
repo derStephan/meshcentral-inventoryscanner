@@ -1,0 +1,11 @@
+        // ---------- CSV exports (issue #9: their own main navigation item) ----------
+
+        function exportSelected() {
+            var t = $('exportType');
+            var type = t ? t.value : 'vulns';
+            if (['hardware', 'software', 'vulns'].indexOf(type) < 0) { type = 'vulns'; }
+            // the export route streams an attachment for ALL devices; opening it in a new tab starts the download
+            window.open(base + '&action=export&type=' + encodeURIComponent(type), '_blank');
+        }
+
+        $('exportGo').addEventListener('click', exportSelected);

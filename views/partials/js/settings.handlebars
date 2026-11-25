@@ -149,6 +149,8 @@
         $('saveSettingsBtn').addEventListener('click', function () { doSaveSettings('settingsMsg'); });
         $('saveSettingsBtn2').addEventListener('click', function () { doSaveSettings('vulnDataMsg'); });
         $('saveSettingsBtn3').addEventListener('click', function () { doSaveSettings('licenseMsg'); });
+        // issue #9: the NVD area is its own sub-tab now, so it has its own save button (same shared save path)
+        $('saveSettingsBtn4').addEventListener('click', function () { doSaveSettings('nvdMsg'); });
 
         function loadNvdLog() {
             post('get_nvdlog', {}).then(function (data) {

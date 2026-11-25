@@ -1,4 +1,9 @@
-        // ---------- floating location selector ----------
+        // ---------- location selection (a row of checkboxes above the table since issue #9) ----------
+        //
+        // The floating panel with its own toggle button is gone: the look & feel was never repeated anywhere
+        // else in the plugin and it covered part of the table. The selection now lives inline in the Assessment
+        // panel, keeps the same ids and the same localStorage persistence, and Apply still only RE-READS the
+        // stored snapshot (v4.4.0) - choosing locations is not a scan.
 
         function locCheckboxes() {
             return document.querySelectorAll('.loc-cb');
@@ -35,12 +40,6 @@
             } catch (e) { }
         }
 
-        $('locationToggle').addEventListener('click', function () {
-            $('locationPanel').classList.toggle('hidden');
-        });
-        $('locClose').addEventListener('click', function () {
-            $('locationPanel').classList.add('hidden');
-        });
         $('locAll').addEventListener('change', function () {
             var cbs = locCheckboxes();
             for (var i = 0; i < cbs.length; i++) { cbs[i].checked = this.checked; }
@@ -54,7 +53,5 @@
         })();
         $('locApply').addEventListener('click', function () {
             updateLocCount();
-            $('locationPanel').classList.add('hidden');
             loadCached();   // v4.4.0: choosing locations is not a scan - "Scan & Review" does that
         });
-

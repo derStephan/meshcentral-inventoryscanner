@@ -1,26 +1,35 @@
         // ---------- tabs ----------
+        //
+        // Two-layer navigation with deep links (issue #9): the URL hash carries `#<main>/<sub>`, so copying the
+        // address of any view and pasting it into a new tab lands on exactly that view, and the browser's back
+        // button walks through the views you visited. The anchors carry the real hash and are NOT prevented -
+        // the hashchange event is the single driver, which is what makes back/forward work.
 
         var navTree = {
-            devices: [ { key: 'devicelist', label: 'Device list' }, { key: 'updates', label: 'Software updates' }, { key: 'os', label: 'OS updates & reboot' }, { key: 'reset', label: 'PC reset' } ],
-            software: [ { key: 'softwarelist', label: 'Software list' }, { key: 'deploy', label: 'Deployment' }, { key: 'license', label: 'License keys' } ],
-            vulns: [ { key: 'assessment', label: 'Assessment' }, { key: 'data', label: 'Reports, NVD & CPE table' } ],
+            devices: [ { key: 'devicelist', label: 'Device list' }, { key: 'reset', label: 'PC reset' }, { key: 'devreport', label: 'Device report' } ],
+            software: [ { key: 'softwarelist', label: 'Software list' }, { key: 'updates', label: 'Software updates' }, { key: 'deploy', label: 'Deployment' }, { key: 'license', label: 'License keys' } ],
+            vulns: [ { key: 'assessment', label: 'Assessment' }, { key: 'vulnreport', label: 'Vulnerability report' }, { key: 'cpe', label: 'CPE table' }, { key: 'nvd', label: 'NVD database' } ],
+            exports: [ { key: 'files', label: 'CSV exports' } ],
             settings: [ { key: 'general', label: 'General' }, { key: 'asset', label: 'Asset management' } ]
         };
         var subTitles = {
             devicelist: 'Devices', softwarelist: 'Installed Software (all devices)',
-            updates: 'Software Updates (winget)', os: 'Operating System Updates', reset: 'Reset a Windows PC',
+            updates: 'Software Updates (winget)', reset: 'Reset a Windows PC',
+            devreport: 'Device Inventory Report',
             deploy: 'Deploy Software', license: 'Software License Keys',
-            assessment: 'Vulnerability Assessment', data: 'Vulnerability Data & Tables', settings: 'Settings',
-            asset: 'External Asset Management'
+            assessment: 'Vulnerability Assessment', vulnreport: 'Vulnerability Report',
+            cpe: 'CPE Mapping Table', nvd: 'NVD Database',
+            files: 'CSV Exports', settings: 'Settings', asset: 'External Asset Management'
         };
         var subLoaders = {
             devicelist: function () { loadDeviceList(); }, softwarelist: function () { loadSwFleet(); },
-            updates: function () { loadWgTab(); }, os: function () { loadOsStatus(); },
+            updates: function () { loadWgTab(); },
             deploy: function () { loadSwTab(); }, reset: function () { loadDrStatus(); },
             license: function () { loadLicenseSection(); }, asset: function () { loadAssetSection(); },
-            data: function () { loadCpeTable(); loadNvdLog(); }
+            cpe: function () { loadCpeTable(); }, nvd: function () { loadNvdLog(); }
         };
         var currentMain = 'vulns', currentSub = 'assessment';
+        var navLock = false;   // ignores the hashchange our own assignment triggers
 
         function renderSubnav(main, activeSub) {
             var sn = document.getElementById('subnav');
@@ -28,16 +37,12 @@
             var subs = navTree[main] || [];
             var html = '';
             for (var k = 0; k < subs.length; k++) {
-                html += '<a href="#" class="subtab' + (subs[k].key === activeSub ? ' active' : '') + '" data-main="' + main + '" data-sub="' + subs[k].key + '">' + subs[k].label + '</a>';
+                html += '<a href="#' + main + '/' + subs[k].key + '" class="subtab' + (subs[k].key === activeSub ? ' active' : '') + '" data-main="' + main + '" data-sub="' + subs[k].key + '">' + subs[k].label + '</a>';
             }
             sn.innerHTML = html;
-            var links = sn.querySelectorAll('.subtab');
-            for (var q = 0; q < links.length; q++) {
-                links[q].addEventListener('click', function (e) { e.preventDefault(); selectSub(this.getAttribute('data-main'), this.getAttribute('data-sub')); });
-            }
         }
 
-        function selectSub(main, sub) {
+        function selectSub(main, sub, fromHash) {
             currentMain = main; currentSub = sub;
             var contents = document.querySelectorAll('.tab-content');
             for (var i = 0; i < contents.length; i++) { contents[i].classList.remove('active'); }
@@ -46,23 +51,29 @@
             var mains = document.querySelectorAll('.maintab');
             for (var m = 0; m < mains.length; m++) { mains[m].classList.toggle('active', mains[m].getAttribute('data-main') === main); }
             renderSubnav(main, sub);
-            var lp = document.getElementById('locationPanel');
-            if (lp) { lp.classList.toggle('hidden', !(main === 'vulns' && sub === 'assessment')); }
+            // the NVD/scan part of the status line belongs to the assessment and the settings views
             var sm = document.getElementById('statusMeta');
             if (sm) { sm.style.display = ((main === 'vulns' && sub === 'assessment') || main === 'settings') ? '' : 'none'; }
             var pt = document.getElementById('pageTitle');
             if (pt && subTitles[sub]) { pt.textContent = subTitles[sub]; }
+            if (!fromHash) {
+                var want = '#' + main + '/' + sub;
+                if (String(location.hash) !== want) { navLock = true; location.hash = want; setTimeout(function () { navLock = false; }, 0); }
+            }
             var fn = subLoaders[sub];
             if (fn) { try { fn(); } catch (e) { } }
         }
 
-        var maintabs = document.querySelectorAll('.maintab');
-        for (var mi = 0; mi < maintabs.length; mi++) {
-            maintabs[mi].addEventListener('click', function (e) {
-                e.preventDefault();
-                var main = this.getAttribute('data-main');
-                var subs = navTree[main] || [];
-                selectSub(main, subs.length ? subs[0].key : '');
-            });
+        /** @brief Resolve the URL hash to a view; an unknown or missing hash lands on the assessment. */
+        function applyHash() {
+            if (navLock) { return; }
+            var parts = String(location.hash || '').replace(/^#/, '').split('/');
+            var main = parts[0] || '', sub = parts[1] || '';
+            if (!navTree[main]) { main = 'vulns'; }
+            var subs = navTree[main] || [];
+            var known = false;
+            for (var i = 0; i < subs.length; i++) { if (subs[i].key === sub) { known = true; } }
+            if (!known) { sub = subs.length ? subs[0].key : 'assessment'; }
+            selectSub(main, sub, true);
         }
-
+        window.addEventListener('hashchange', applyHash);

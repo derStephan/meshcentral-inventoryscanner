@@ -1,6 +1,15 @@
-        // ---------- unified device list (v4.9.5, issue #8) ----------
+        // ---------- unified device list (v4.9.5, reworked by issue #9) ----------
+        //
+        // One row per device, merged from data already stored on this server (os_status, wg_status, dr_status,
+        // lic_status and the read-only fleet index) - opening this view sends NO command to any device.
+        // The per-device buttons reuse the SAME functions as the engine views (wgRunOne, osDeviceUpdate,
+        // osDeviceUpgrade, wuDiag, wuDeviceRepair, rbNotify, rbRestart) so there is one definition of what an
+        // action asks and does. Excluding a device goes through the atomic wg_toggle_exclude route: the old
+        // wg_save_config path reads the whole form from the Updates-tab DOM and would have wiped the updater
+        // settings when called from here before that tab was ever opened.
 
-        var dlApp = { devices: [], byId: {} };
+        var dlApp = { devices: [], byId: {}, sortKey: 'device', sortDir: 1, filter: '', open: {} };
+        var dlPollTimer = null;
 
         function dlSevBadge(n, sev) {
             if (!n) { return '<span style="color:#888">none</span>'; }
@@ -25,62 +34,238 @@
                     if (!e.host && d.host) { e.host = d.host; }
                     return e;
                 }
-                ((rs[0] && rs[0].devices) || []).forEach(function (d) {
+                var os = (rs[0] && rs[0].devices) || [];
+                os.forEach(function (d) {
                     var e = ensure(d);
                     e.osState = d.releaseState || ''; e.outdated = !!d.outdated; e.urgent = !!d.urgent;
-                    e.rb = d.rb || null;
+                    e.upgradable = !!d.upgradable; e.target = d.target || ''; e.osNote = d.note || '';
+                    e.excluded = !!d.excluded; e.rb = d.rb || null;
                 });
+                // the fleet OS actions (osUpgradeFleet) count over osApp.status - feed it from the same answer
+                // instead of keeping a second copy of the device list
+                osApp.status = rs[0] || null;
                 ((rs[1] && rs[1].devices) || []).forEach(function (d) {
                     var e = ensure(d); if (!e.platform) { e.platform = 'windows'; }
-                    e.appUpdates = d.last ? (d.last.would || 0) : null; e.appError = d.last && d.last.error ? d.last.error : '';
+                    e.isWindows = true;
+                    e.appUpdates = d.last ? (d.last.would || 0) : null;
+                    e.appOk = d.last ? (d.last.ok || 0) : null;
+                    e.appFailed = d.last ? (d.last.failed || 0) : null;
+                    e.appDry = d.last ? (d.last.dry === true) : false;
+                    e.appError = (d.last && d.last.error) ? d.last.error : '';
+                    e.appWinget = d.last ? (d.last.winget !== false) : false;
+                    e.appTime = d.last ? (d.last.time || '') : '';
+                    e.wgPending = d.pending || null;
+                    if (d.excluded != null) { e.excluded = !!d.excluded; }
                 });
+                // wgDevLabel() (used by the winget actions) reads this - one source, no second device list
+                wgApp.status = rs[1] || null;
                 ((rs[2] && rs[2].devices) || []).forEach(function (d) {
                     var e = ensure(d); if (!e.platform) { e.platform = 'windows'; }
-                    e.resetReady = !!d.hasProbe; e.resetModes = d.modes || null;
+                    e.isWindows = true; e.resetReady = !!d.hasProbe; e.resetModes = d.modes || null;
                 });
                 ((rs[3] && rs[3].devices) || []).forEach(function (d) {
-                    var e = ensure(d); e.license = d.collected ? (d.collected.found || 0) : null;
+                    var e = ensure(d); if (!e.platform) { e.platform = 'windows'; }
+                    e.isWindows = true; e.license = d.collected ? (d.collected.found || 0) : null;
                 });
                 var fx = rs[4] || {};
-                for (var id in (fx.byDevice || {})) { if (byId[id]) { byId[id].cve = (fx.byDevice[id].cve || 0); byId[id].cveSev = fx.byDevice[id].maxSeverity || ''; } }
+                for (var id in (fx.byDevice || {})) {
+                    if (byId[id]) { byId[id].cve = (fx.byDevice[id].cve || 0); byId[id].cveSev = fx.byDevice[id].maxSeverity || ''; }
+                }
                 var arr = Object.keys(byId).map(function (k) { return byId[k]; });
-                arr.sort(function (a, b2) { return (a.group === b2.group) ? String(a.given || a.host).localeCompare(String(b2.given || b2.host)) : String(a.group).localeCompare(String(b2.group)); });
                 dlApp.byId = byId; dlApp.devices = arr;
+                var cur = (rs[0] && rs[0].current) || {};
+                var ref = [];
+                ref.push(cur.windows11 ? ('Windows 11 ' + cur.windows11) : ('Windows 11: unknown (' + (cur.windows11Reason || 'no data') + ')'));
+                ref.push(cur.ubuntuLts ? ('Ubuntu ' + cur.ubuntuLts + ' LTS') : ('Ubuntu: unknown (' + (cur.ubuntuLtsReason || 'no data') + ')'));
+                var cnt = (rs[0] && rs[0].counts) || {};
+                $('dlOsRefInfo').textContent = 'Upgrade reference: ' + ref.join(' · ')
+                    + ' · outdated: ' + (cnt.outdated || 0) + ', urgent: ' + (cnt.urgent || 0)
+                    + ((rs[0] && rs[0].urgentDays != null) ? (' · a release counts as urgent ' + rs[0].urgentDays + ' day(s) before its support ends (Settings)') : '');
+                // the OS batch state that the former OS register showed (issue #9: it lives here now)
+                var ors = $('dlOsRunState');
+                if (ors) {
+                    ors.textContent = (rs[0] && rs[0].running)
+                        ? ('OS ' + (rs[0].mode || '') + ' batch running - ' + (rs[0].active || 0) + ' active, ' + (rs[0].queued || 0) + ' queued')
+                        : '';
+                }
                 renderDeviceList();
+                dlPollIfBusy();
             }).catch(function (e) { if (b) { b.textContent = ''; } showMsg('dlMsg', 'Failed to load the device list: ' + e.message, false); });
         }
 
-        function renderDeviceList() {
-            var html = '';
+        /** @brief Re-read while any engine still has work in flight, so the row states catch up. */
+        function dlPollIfBusy() {
+            if (dlPollTimer != null) { clearTimeout(dlPollTimer); dlPollTimer = null; }
+            var busy = (osApp.status && osApp.status.running) || dlApp.devices.some(function (d) { return !!d.wgPending; });
+            if (busy) { dlPollTimer = setTimeout(loadDeviceList, 10000); }
+        }
+
+        function dlSortValue(d, key) {
+            switch (key) {
+                case 'device': return String(d.given || d.host || '').toLowerCase();
+                case 'group': return String(d.group || '').toLowerCase();
+                case 'online': return d.online ? 1 : 0;
+                case 'os': return String(d.os || '').toLowerCase();
+                case 'apps': return (d.appUpdates == null) ? -1 : (d.appUpdates || 0);
+                case 'osstate': return { urgent: 3, available: 2, unknown: 1, current: 0 }[d.osState] != null ? { urgent: 3, available: 2, unknown: 1, current: 0 }[d.osState] : -1;
+                case 'vulns': return d.cve || 0;
+                case 'license': return (d.license == null) ? -1 : (d.license || 0);
+                default: return String(d.given || d.host || '').toLowerCase();
+            }
+        }
+
+        function dlVisible() {
+            var f = dlApp.filter.toLowerCase();
+            var out = [];
             for (var i = 0; i < dlApp.devices.length; i++) {
                 var d = dlApp.devices[i];
-                var on = d.online ? 'yes' : 'no';
-                var pf = d.platform === 'windows' ? 'Win' : (d.platform === 'linux' ? 'Linux' : '?');
-                var apps = d.appUpdates == null ? '<span style="color:#888">not run</span>' : (d.appUpdates ? ('<b>' + d.appUpdates + ' avail</b>') : 'none');
-                var oss = d.osState ? (d.osState + (d.urgent ? ' <span class="sev sev-HIGH">urgent</span>' : (d.outdated ? ' outdated' : ''))) : '<span style="color:#888">-</span>';
-                var rb = d.rb ? (String(d.rb.state || d.rb.kind || 'ran')) : '<span style="color:#888">-</span>';
-                var rst = pf === 'Win' ? (d.resetReady ? 'ready' : 'not checked') : '<span style="color:#888">n/a</span>';
-                var lic = d.license == null ? '<span style="color:#888">-</span>' : (d.license + ' found');
+                if (f !== '') {
+                    var hay = (String(d.given || '') + ' ' + String(d.host || '') + ' ' + String(d.group || '') + ' ' + String(d.os || '')).toLowerCase();
+                    if (hay.indexOf(f) < 0) { continue; }
+                }
+                out.push(d);
+            }
+            var key = dlApp.sortKey, dir = dlApp.sortDir;
+            out.sort(function (a, b) {
+                var va = dlSortValue(a, key), vb = dlSortValue(b, key);
+                var r = (typeof va === 'number' && typeof vb === 'number') ? (va - vb) * dir : String(va).localeCompare(String(vb)) * dir;
+                if (r !== 0) { return r; }
+                return String(a.given || a.host).localeCompare(String(b.given || b.host));
+            });
+            return out;
+        }
+
+        function renderDeviceList() {
+            var rows = dlVisible();
+            var html = '';
+            for (var i = 0; i < rows.length; i++) {
+                var d = rows[i];
+                var win = (d.platform === 'windows') || d.isWindows === true;
+                var lin = (d.platform === 'linux');
+                var pf = win ? 'Win' : (lin ? 'Linux' : (d.platform || '?'));
+                var dis = d.online ? '' : 'disabled ';
+
+                // software updates cell
+                var apps;
+                if (d.appUpdates == null) { apps = '<span style="color:#888">not run yet</span>'; }
+                else if (d.appError) { apps = '<span style="color:#a33">' + esc(d.appError).substring(0, 60) + '</span>'; }
+                else if (!d.appWinget) { apps = '<span style="color:#888">winget not available</span>'; }
+                else if (d.appDry) { apps = '<b>' + (d.appUpdates || 0) + '</b> would update'; }
+                else { apps = (d.appOk || 0) + ' updated' + (d.appFailed ? ', <b style="color:#a33">' + d.appFailed + ' failed</b>' : ''); }
+                if (d.wgPending) { apps = '<span style="color:#06c">running...</span>'; }
+
+                // OS cell
+                var oss;
+                if (!d.osState) { oss = '<span style="color:#888">-</span>'; }
+                else if (d.osState === 'urgent') { oss = '<span style="color:#a33;font-weight:600">Upgrade urgent</span>' + (d.target ? ' &rarr; ' + esc(d.target) : ''); }
+                else if (d.osState === 'available') { oss = '<span style="color:#8a6d3b;font-weight:600">Upgrade available</span>' + (d.target ? ' &rarr; ' + esc(d.target) : ''); }
+                else if (d.osState === 'unknown') { oss = '<span style="color:#8a6d3b">unknown</span>'; }
+                else { oss = '<span style="color:#1d7a3a">current</span>'; }
+                if (d.excluded) { oss += '<div class="hint">excluded from batches</div>'; }
+
                 html += '<tr>'
                     + '<td><input type="checkbox" class="dlc" value="' + esc(d.id) + '" data-online="' + (d.online ? '1' : '0') + '"></td>'
                     + '<td><b>' + esc(d.given || d.host) + '</b><div class="hint">' + esc(d.host) + '</div></td>'
                     + '<td>' + esc(d.group) + '</td>'
-                    + '<td>' + on + '</td>'
-                    + '<td>' + pf + '</td>'
-                    + '<td>' + apps + '</td>'
-                    + '<td>' + oss + '</td>'
-                    + '<td>' + rb + '</td>'
-                    + '<td>' + rst + '</td>'
+                    + '<td>' + (d.online ? 'yes' : '<span style="color:#a33">offline</span>') + '</td>'
+                    + '<td style="font-size:11px">' + esc(d.os || '') + '<div class="hint">' + pf + '</div></td>'
+                    + '<td style="font-size:11px">' + apps
+                    + (win ? '<div style="margin-top:4px;white-space:nowrap"><button class="small" data-dlact="wgdry" data-id="' + esc(d.id) + '" ' + dis + 'data-help="wg.dry">Dry run</button> '
+                        + '<button class="small green" data-dlact="wgrun" data-id="' + esc(d.id) + '" ' + dis + 'data-help="wg.run1">Update</button> '
+                        + '<button class="small' + (d.excluded ? '' : ' red') + '" data-dlact="' + (d.excluded ? 'wgincl' : 'wgexcl') + '" data-id="' + esc(d.id) + '" data-help="' + (d.excluded ? 'wg.incl' : 'wg.excl') + '">' + (d.excluded ? 'Include' : 'Exclude') + '</button></div>' : '')
+                    + '</td>'
+                    + '<td style="font-size:11px">' + oss
+                    + '<div style="margin-top:4px;white-space:nowrap"><button class="small green" data-dlact="osupd" data-id="' + esc(d.id) + '" ' + dis + 'data-help="os.devupd">OS updates</button>'
+                    + (d.upgradable ? ' <button class="small purple" data-dlact="osupg" data-id="' + esc(d.id) + '" ' + dis + 'data-help="os.devupg">OS Upgrade</button>' : '')
+                    + '</div></td>'
+                    + '<td style="font-size:11px;white-space:nowrap">'
+                    + (win ? '<button class="small" data-dlact="wudiag" data-id="' + esc(d.id) + '" ' + dis + 'data-help="os.wud">Diagnose</button> '
+                        + '<button class="small red" data-dlact="wurepair" data-id="' + esc(d.id) + '" ' + dis + 'data-help="os.wur">Troubleshoot</button><br>' : '')
+                    + ((win || lin) ? '<button class="small" data-dlact="rbnotify" data-id="' + esc(d.id) + '" ' + dis + 'data-help="os.rbn">Notify user</button> '
+                        + '<button class="small red" data-dlact="rbreboot" data-id="' + esc(d.id) + '" ' + dis + 'data-help="os.rbr">Reboot</button>' : '<span style="color:#888">n/a</span>')
+                    + '</td>'
                     + '<td>' + dlSevBadge(d.cve || 0, d.cveSev) + '</td>'
-                    + '<td>' + lic + '</td>'
-                    + '<td>' + (pf === 'Win' ? '<button class="small dlGo" data-op="reset" data-id="' + esc(d.id) + '">Reset</button> ' : '')
-                    + '<button class="small red dlGo" data-op="reboot" data-id="' + esc(d.id) + '">Restart</button></td>'
+                    + '<td>' + (d.license == null ? '<span style="color:#888">-</span>' : (d.license + ' found')) + '</td>'
+                    + '<td><button class="small" data-dlact="details" data-id="' + esc(d.id) + '" data-help="dl.details">' + (dlApp.open[d.id] ? 'Hide' : 'Details') + '</button></td>'
                     + '</tr>';
+                html += '<tr class="dldetail" style="display:' + (dlApp.open[d.id] ? 'table-row' : 'none') + '"><td colspan="11" style="background:#f6f8fb" id="dld-' + esc(d.id.replace(/[^A-Za-z0-9]/g, '')) + '"><span class="hint">Loading...</span></td></tr>';
             }
-            if (html === '') { html = '<tr><td colspan="13" style="color:#888">No devices found.</td></tr>'; }
+            if (html === '') { html = '<tr><td colspan="11" style="color:#888">No devices found.</td></tr>'; }
             $('dlDeviceBody').innerHTML = html;
-            var ri = $('dlRunInfo'); if (ri) { ri.textContent = dlApp.devices.length + ' device(s).'; }
-            var sa = $('dlSelectAll'); if (sa) { sa.checked = false; }
+            var ri = $('dlRunInfo'); if (ri) { ri.textContent = dlApp.devices.length + ' device(s)' + (dlApp.filter ? ', filtered' : '') + '.'; }
+            var heads = document.querySelectorAll('#tab-devicelist th[data-dlkey]');
+            for (var h = 0; h < heads.length; h++) {
+                var k = heads[h].getAttribute('data-dlkey');
+                heads[h].classList.remove('sorted-asc', 'sorted-desc');
+                if (k === dlApp.sortKey) { heads[h].classList.add(dlApp.sortDir === 1 ? 'sorted-asc' : 'sorted-desc'); }
+            }
+            // re-open the details that were open before the re-render
+            for (var id in dlApp.open) { if (dlApp.open[id] && dlApp.byId[id]) { dlLoadDetails(id); } }
+        }
+
+        /** @brief Fetch and render everything stored about one device (on demand, never on load). */
+        function dlLoadDetails(id) {
+            var cell = document.getElementById('dld-' + id.replace(/[^A-Za-z0-9]/g, ''));
+            if (!cell) { return; }
+            cell.innerHTML = '<span class="hint">Loading the details of this device...</span>';
+            post('dev_details', { nodeId: id }).then(function (d) {
+                if (d.error) { cell.innerHTML = '<span style="color:#a33">' + esc(d.error) + '</span>'; return; }
+                cell.innerHTML = dlDetailsHtml(d);
+            }).catch(function (e) { cell.innerHTML = '<span style="color:#a33">' + esc(e.message) + '</span>'; });
+        }
+
+        function dlDetailsHtml(d) {
+            var h = '';
+            var sec = function (title, body) { return '<div style="margin:6px 0"><b style="color:#0b3d6b">' + title + '</b>' + body + '</div>'; };
+            var hw = d.hardware || {};
+            h += sec('Hardware', '<div class="hint">' + esc(hw.manufacturer || '') + ' ' + esc(hw.model || '')
+                + (hw.serial ? ' · serial ' + esc(hw.serial) : '') + (hw.cpu ? ' · ' + esc(hw.cpu) : '')
+                + (hw.memoryTotalText ? ' · ' + esc(hw.memoryTotalText) + ' RAM' : '')
+                + ((hw.gpus && hw.gpus.length) ? ' · GPU ' + esc(hw.gpus.join(', ')) : '')
+                + ((hw.storage && hw.storage.length) ? ' · ' + hw.storage.length + ' disk(s)' : '')
+                + (hw.bios && hw.bios.version ? ' · BIOS ' + esc(hw.bios.version) : '')
+                + (hw.network && hw.network.ip ? ' · IP ' + esc(hw.network.ip) : '') + '</div>');
+            h += sec('Operating system', '<div class="hint">' + esc(d.device.os || '') + (d.device.windowsBuild ? ' (build ' + esc(d.device.windowsBuild) + ')' : '')
+                + ' · support: ' + esc(d.device.osSupport || 'unknown') + '</div>');
+            var f = d.findings || [];
+            h += sec('Findings (' + f.length + ')', f.length === 0 ? '<div class="hint">none</div>'
+                : '<div style="max-height:160px;overflow:auto">' + f.map(function (x) {
+                    return '<div style="font-size:11px"><span class="sev sev-' + esc(/^(CRITICAL|HIGH|MEDIUM|LOW|UNKNOWN)$/.test(x.severity) ? x.severity : 'UNKNOWN') + '">' + esc(x.severity) + '</span> '
+                        + '<b>' + esc(x.id) + '</b> ' + esc(x.software) + ' ' + esc(x.version) + ' <span class="hint">' + esc(x.status) + '</span></div>';
+                }).join('') + '</div>');
+            var cov = d.coverage || [];
+            if (cov.length) { h += sec('Not covered (' + cov.length + ')', '<div class="hint">' + cov.slice(0, 12).map(function (x) { return esc(x.software) + ': ' + esc(x.status); }).join(' · ') + '</div>'); }
+            var sw = d.software || [];
+            h += sec('Installed programs (' + sw.length + ')', '<div style="max-height:160px;overflow:auto;font-size:11px">'
+                + (sw.length ? sw.map(function (s) { return '<div>' + esc(s.name) + ' <span class="hint">' + esc(s.version) + '</span></div>'; }).join('') : '<span class="hint">nothing collected yet</span>') + '</div>');
+            var wg = d.winget || {};
+            h += sec('Last software update run', (!wg.last && !wg.pending) ? '<div class="hint">never run</div>'
+                : (wg.pending ? '<div class="hint">running since ' + esc(fmtLocal(wg.pending.since)) + '</div>'
+                    : '<div class="hint">' + esc(fmtLocal(wg.last.time)) + (wg.last.dry ? ' (dry run)' : '') + (wg.last.error ? ' · ' + esc(wg.last.error) : '') + '</div>'
+                    + ((wg.rows || []).length ? '<div class="hint">Every package of that run with its outcome - a failed row shows the exit code (decimal and hex) and winget\'s own message.</div><div style="max-height:140px;overflow:auto;font-size:11px">' + wg.rows.map(function (r) {
+                        return '<div>' + esc(r.name) + ' <code>' + esc(r.id) + '</code> ' + esc(r.from) + ' &rarr; ' + esc(r.to) + ' <b>' + esc(r.state) + '</b>'
+                            + (r.exit != null ? ' (exit ' + r.exit + ' / 0x' + wgHexExit(r.exit) + ')' : '') + (r.log ? ' <span class="hint">' + esc(r.log) + '</span>' : '') + '</div>';
+                    }).join('') + '</div>' : '')));
+            var osi = d.os || {};
+            // osLastText/osWuText/rbText return HTML and escape their own dynamic values - no extra esc() here
+            h += sec('Last OS run', (!osi.last && !osi.pending) ? '<div class="hint">never run</div>'
+                : (osi.pending ? '<div class="hint">' + esc(osi.pending.kind || 'run') + ' in flight</div>'
+                    : '<div class="hint">' + osLastText({ last: osi.last, pending: null }) + '</div>'));
+            var wu = d.wu;
+            h += sec('Windows Update troubleshooter', wu ? osWuText({ wu: wu, wuPending: d.wuPending }) : '<div class="hint">never run</div>');
+            var rb = d.rb;
+            h += sec('Restart / user notice', rb ? rbText({ rb: rb, rbPending: d.rbPending }) : '<div class="hint">never run</div>');
+            var rs = d.reset || {};
+            h += sec('PC reset', !rs.hasProbe && !rs.last ? '<div class="hint">never checked</div>'
+                : '<div class="hint">' + (rs.hasProbe ? ('check passed: ' + (rs.modes && rs.modes.keepfiles ? '"Keep my files" ready' : '') + (rs.modes && rs.modes.clean ? ', "Remove everything" ready' : '')) : 'no fresh check')
+                + (rs.last ? ' · last reset: ' + esc(rs.last.state || '') + ' ' + esc(fmtLocal(rs.last.time || '')) : '') + '</div>');
+            var li = d.license || {};
+            h += sec('License collection', '<div class="hint">' + (li.enabled ? 'enabled' : 'disabled (Software &gt; License keys)')
+                + (li.time ? ' · last: ' + esc(fmtLocal(li.time)) + ', ' + (li.found || 0) + ' key(s) + ' + (li.ms || 0) + ' Microsoft key(s) stored on this server' : ' · never collected')
+                + ' - the values are never shown here</div>'
+                + '<div style="margin-top:4px"><button class="small purple" data-dlact="liccollect" data-id="' + esc(d.device.id) + '" data-help="lic.collect"'
+                + (d.device.online ? '' : ' disabled') + '>Collect licenses on this device</button></div>');
+            return h;
         }
 
         function dlCheckedOnline() {
@@ -94,7 +279,8 @@
             var ri = $('dlRunInfo');
             if (d && d.busy) { if (ri) { ri.textContent = 'another batch is already running - try again when it finishes.'; } return; }
             if (d && d.error) { showMsg('dlMsg', d.error, false); return; }
-            if (ri) { ri.textContent = 'started - follow the device result in the matching sub-tab (these run in the background).'; }
+            if (ri) { ri.textContent = 'started - the row states update while the run is in flight.'; }
+            dlPollIfBusy();
         }
 
         function dlRun(op) {
@@ -113,24 +299,72 @@
             }
         }
 
-        function dlGo(op) {
-            // reboot and reset are NEVER batched: jump to the panel that does the per-device typed-name confirm.
-            if (op === 'reboot') { selectSub('devices', 'os'); }
-            else if (op === 'reset') { selectSub('devices', 'reset'); }
-            showMsg('dlMsg', 'Restart/Reset run per device with a typed-name confirmation - use the panel you were taken to.', true);
+        /** @brief One device on/off the winget exclusion list - atomic route, never the whole form. */
+        function dlToggleExclude(id, want) {
+            post('wg_toggle_exclude', { nodeId: id, excluded: want ? 'true' : 'false' }).then(function (d) {
+                if (d.error) { showMsg('dlMsg', d.error, false); return; }
+                var e = dlApp.byId[id]; if (e) { e.excluded = !!d.excluded; }
+                floatMsg((d.excluded ? 'Excluded ' : 'Included ') + (e ? (e.given || e.host) : id) + ' - saved, the batches honour it immediately.', true);
+                renderDeviceList();
+            }).catch(function (ex) { showMsg('dlMsg', ex.message, false); });
         }
 
         function dlRunClick() { dlRun(this.getAttribute('data-op')); }
-        function dlGoClick() { dlGo(this.getAttribute('data-op')); }
         function dlSelectAllClick() {
             var cbs = document.querySelectorAll('#dlDeviceBody input.dlc');
             var on = $('dlSelectAll').checked;
             for (var i = 0; i < cbs.length; i++) { cbs[i].checked = on; }
         }
 
+        function dlLoadOsLog() {
+            var pre = $('dlOsLog');
+            pre.style.display = '';
+            post('get_log', { type: 'os' }).then(function (data) {
+                if (data.error) { pre.textContent = data.error; return; }
+                pre.textContent = (data.lines && data.lines.length) ? localizeLog(data.lines).join(String.fromCharCode(10)) : (data.note || '(empty)');
+                $('dlOsLogInfo').textContent = data.note || ((data.lines || []).length + ' line(s) · ' + (data.file || ''));
+            }).catch(function (e) { pre.textContent = 'Failed to load the log: ' + e.message; });
+        }
+
         $('dlRefreshBtn').addEventListener('click', loadDeviceList);
         $('dlSelectAll').addEventListener('click', dlSelectAllClick);
+        $('dlOsLogBtn').addEventListener('click', dlLoadOsLog);
+        $('dlOsUpdAllBtn').addEventListener('click', osFleetUpdates);
+        $('dlOsUpgUrgentBtn').addEventListener('click', function () { osUpgradeFleet('urgent'); });
+        $('dlOsUpgAllBtn').addEventListener('click', function () { osUpgradeFleet('all'); });
+        $('dlFilter').addEventListener('input', function () { dlApp.filter = this.value || ''; renderDeviceList(); });
         var dlRunBtns = document.querySelectorAll('.dlRun');
         for (var dri = 0; dri < dlRunBtns.length; dri++) { dlRunBtns[dri].addEventListener('click', dlRunClick); }
-        $('dlDeviceBody').addEventListener('click', function (e) { var t = e.target; if (t && t.classList && t.classList.contains('dlGo')) { dlGo(t.getAttribute('data-op')); } });
-
+        var dlHeads = document.querySelectorAll('#tab-devicelist th[data-dlkey]');
+        for (var dhi = 0; dhi < dlHeads.length; dhi++) {
+            dlHeads[dhi].addEventListener('click', function () {
+                var k = this.getAttribute('data-dlkey');
+                if (dlApp.sortKey === k) { dlApp.sortDir = -dlApp.sortDir; } else { dlApp.sortKey = k; dlApp.sortDir = 1; }
+                renderDeviceList();
+            });
+        }
+        $('dlDeviceBody').addEventListener('click', function (e) {
+            var b = e.target;
+            while (b && b !== this && !(b.getAttribute && b.getAttribute('data-dlact'))) { b = b.parentNode; }
+            if (!b || b === this) { return; }
+            var act = b.getAttribute('data-dlact'), id = b.getAttribute('data-id');
+            if (act === 'wgdry') { wgRunOne(id, true); dlPollIfBusy(); }
+            else if (act === 'wgrun') { wgRunOne(id, false); dlPollIfBusy(); }
+            else if (act === 'wgexcl') { dlToggleExclude(id, true); }
+            else if (act === 'wgincl') { dlToggleExclude(id, false); }
+            else if (act === 'osupd') { osDeviceUpdate(id); dlPollIfBusy(); }
+            else if (act === 'osupg') { osDeviceUpgrade(id); dlPollIfBusy(); }
+            else if (act === 'wudiag') { wuDiag(id); dlPollIfBusy(); }
+            else if (act === 'wurepair') { wuDeviceRepair(id); dlPollIfBusy(); }
+            else if (act === 'rbnotify') { rbNotify(id); dlPollIfBusy(); }
+            else if (act === 'rbreboot') { rbRestart(id); dlPollIfBusy(); }
+            else if (act === 'liccollect') { licCollectOne(id); }
+            else if (act === 'details') {
+                dlApp.open[id] = !dlApp.open[id];
+                var row = b.parentNode && b.parentNode.parentNode;
+                var detail = row && row.nextElementSibling;
+                if (detail) { detail.style.display = dlApp.open[id] ? 'table-row' : 'none'; }
+                b.textContent = dlApp.open[id] ? 'Hide' : 'Details';
+                if (dlApp.open[id]) { dlLoadDetails(id); }
+            }
+        });

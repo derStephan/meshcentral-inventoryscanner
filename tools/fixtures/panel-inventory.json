@@ -51,7 +51,16 @@
   "cpeTableSourceInfo",
   "cpeVendor",
   "dlDeviceBody",
+  "dlFilter",
   "dlMsg",
+  "dlOsLog",
+  "dlOsLogBtn",
+  "dlOsLogInfo",
+  "dlOsRefInfo",
+  "dlOsRunState",
+  "dlOsUpdAllBtn",
+  "dlOsUpgAllBtn",
+  "dlOsUpgUrgentBtn",
   "dlRefreshBtn",
   "dlRunInfo",
   "dlSelectAll",
@@ -62,14 +71,18 @@
   "drMsg",
   "drRefreshBtn",
   "drRunState",
+  "exportGo",
+  "exportType",
   "filterSeverity",
   "filterStatus",
   "filterText",
   "groupTableBody",
+  "helpBox",
+  "helpText",
+  "helpTitle",
   "invFloat",
   "licCollectAllBtn",
   "licCustomBody",
-  "licDeviceBody",
   "licLabel",
   "licLog",
   "licLogInfo",
@@ -81,32 +94,20 @@
   "licenseMsg",
   "locAll",
   "locApply",
-  "locClose",
   "locCountTxt",
   "locList",
   "locationPanel",
-  "locationToggle",
   "mainnav",
   "msg",
   "nvdLog",
   "nvdLogInfo",
-  "osCurrentInfo",
-  "osDevBody",
+  "nvdMsg",
   "osLifecycleInfo",
-  "osLog",
-  "osLogInfo",
   "osMsg",
-  "osRefreshBtn",
-  "osRunState",
-  "osUpdBtn",
-  "osUpgBtn",
-  "osUpgUrgentBtn",
-  "osUrgentDaysInfo",
   "pageTitle",
   "refreshDrLogBtn",
   "refreshLicLogBtn",
   "refreshNvdLogBtn",
-  "refreshOsLogBtn",
   "refreshSwLogBtn",
   "refreshWgLogBtn",
   "resetSettingsBtn",
@@ -114,6 +115,7 @@
   "saveSettingsBtn",
   "saveSettingsBtn2",
   "saveSettingsBtn3",
+  "saveSettingsBtn4",
   "scanBtn",
   "scanStatus",
   "setAnyAge",
@@ -177,19 +179,21 @@
   "swfUpdateAllBtn",
   "tab-assessment",
   "tab-asset",
+  "tab-cpe",
   "tab-deploy",
   "tab-devicelist",
+  "tab-devreport",
+  "tab-exports",
   "tab-license",
-  "tab-os",
+  "tab-nvd",
   "tab-reset",
   "tab-settings",
   "tab-swlist",
   "tab-updates",
-  "tab-vulndata",
+  "tab-vulnreport",
   "updateNvdInfo",
   "updateNvdNowBtn",
   "vulnDataMsg",
-  "wgDevBody",
   "wgDryAllBtn",
   "wgEnabled",
   "wgGroupBody",
@@ -201,17 +205,14 @@
   "wgLogInfo",
   "wgMsg",
   "wgPinSync",
-  "wgPkgBody",
-  "wgPkgInfo",
-  "wgPkgRefresh",
   "wgRunBtn",
   "wgRunState",
   "wgSaveBtn"
  ],
  "prose": [
   {
-   "head": "Select the locations to assess via the floating panel on the right. The table sh",
-   "len": 860
+   "head": "Tick the locations to assess in the row below and press Apply . The table shows ",
+   "len": 835
   },
   {
    "head": "Values saved here go into scanner-settings.json inside the plugin's data folder ",
@@ -262,12 +263,8 @@
    "len": 163
   },
   {
-   "head": "CSV export (all devices): Hardware &middot; Software &middot; Vulnerabilities",
-   "len": 77
-  },
-  {
-   "head": "Fetches missing years and refreshes the current year immediately (rate-limited, ",
-   "len": 143
+   "head": "The printable vulnerability report : one overview page plus one page per locatio",
+   "len": 416
   },
   {
    "head": "Every NVD CVE names the affected software with a technical code, a CPE like cpe:",
@@ -280,6 +277,26 @@
   {
    "head": "https only. Only change this if you maintain your own table copy.",
    "len": 65
+  },
+  {
+   "head": "The vulnerability data comes from the public NVD 2.0 feeds , downloaded to this ",
+   "len": 465
+  },
+  {
+   "head": "168 = weekly (the default). The timer is due-aware: a feed that is older than th",
+   "len": 223
+  },
+  {
+   "head": "Fetches missing years and refreshes the current year immediately (rate-limited, ",
+   "len": 143
+  },
+  {
+   "head": "The printable device inventory report : one page per location listing every devi",
+   "len": 500
+  },
+  {
+   "head": "The three inventory lists as Excel-safe CSV (UTF-8 with BOM, formula injection n",
+   "len": 437
   },
   {
    "head": "Master switch for the License keys section below. Off by default; nothing reads ",
@@ -306,12 +323,20 @@
    "len": 1304
   },
   {
-   "head": "One row per device (merged live from the update, OS, reset and license engines p",
-   "len": 345
+   "head": "Per device: the Device list shows how many keys were collected on each machine, ",
+   "len": 336
   },
   {
-   "head": "Every distinct installed program across all devices, with how many carry it and ",
-   "len": 285
+   "head": "One row per device, merged from the data already stored on this server - no comm",
+   "len": 688
+  },
+  {
+   "head": "force OS updates runs on every non-excluded Windows and Linux device: on Windows",
+   "len": 3717
+  },
+  {
+   "head": "Every distinct installed program across all devices, with how many devices carry",
+   "len": 1370
   },
   {
    "head": "This is the only place where this plugin sends data OFF the server. Everything e",
@@ -354,24 +379,12 @@
    "len": 51
   },
   {
-   "head": "Automatic software updates via winget on Windows devices. Nothing runs automatic",
-   "len": 966
+   "head": "Automatic software updates via winget on Windows devices. This page holds the co",
+   "len": 1252
   },
   {
-   "head": "Every change on this tab (switches, groups, ignore list, exclusions, \"+ ignore\" ",
-   "len": 180
-  },
-  {
-   "head": "Every Windows device with its winget actions. Excluded machines stay out of all ",
-   "len": 469
-  },
-  {
-   "head": "Every winget package your devices reported in their most recent run - aggregate ",
-   "len": 431
-  },
-  {
-   "head": "force OS updates runs on every non-excluded Windows and Linux device: on Windows",
-   "len": 2775
+   "head": "Every change on this page (switches, groups, ignore list) is saved immediately; ",
+   "len": 268
   },
   {
    "head": "Install an MSI / MSP / EXE / DEB / RPM / shell / BIN installer on selected devic",
@@ -386,38 +399,100 @@
    "len": 1151
   },
   {
-   "head": "Every package of this run with its outcome - failed rows carry the exit code and",
-   "len": 185
-  },
-  {
    "head": "' + devs.length + ' device(s)",
    "len": 29
   },
   {
    "head": "' + esc(fmtLocal(t.created)) + ' by ' + esc(t.createdBy || '?') + (t.sourceType ",
    "len": 125
+  },
+  {
+   "head": "' + esc(hw.manufacturer || '') + ' ' + esc(hw.model || '') + (hw.serial ? ' · se",
+   "len": 522
+  },
+  {
+   "head": "' + esc(d.device.os || '') + (d.device.windowsBuild ? ' (build ' + esc(d.device.",
+   "len": 165
+  },
+  {
+   "head": "' + cov.slice(0, 12).map(function (x) { return esc(x.software) + ': ' + esc(x.st",
+   "len": 105
+  },
+  {
+   "head": "running since ' + esc(fmtLocal(wg.pending.since)) + '",
+   "len": 53
+  },
+  {
+   "head": "' + esc(fmtLocal(wg.last.time)) + (wg.last.dry ? ' (dry run)' : '') + (wg.last.e",
+   "len": 123
+  },
+  {
+   "head": "Every package of that run with its outcome - a failed row shows the exit code (d",
+   "len": 122
+  },
+  {
+   "head": "' + esc(osi.pending.kind || 'run') + ' in flight",
+   "len": 48
+  },
+  {
+   "head": "' + osLastText({ last: osi.last, pending: null }) + '",
+   "len": 53
+  },
+  {
+   "head": "' + (rs.hasProbe ? ('check passed: ' + (rs.modes && rs.modes.keepfiles ? '\"Keep ",
+   "len": 301
+  },
+  {
+   "head": "' + (li.enabled ? 'enabled' : 'disabled (Software &gt; License keys)') + (li.tim",
+   "len": 281
+  },
+  {
+   "head": "' + vs.map(function (v) { return esc(v.version) + ' on ' + v.count + ' device(s)",
+   "len": 101
+  },
+  {
+   "head": "no CVE matched this program",
+   "len": 27
+  },
+  {
+   "head": "' + cov.map(function (c) { return esc(c.status) + ' (' + c.count + ')'; }).join(",
+   "len": 90
+  },
+  {
+   "head": "' + (d.licenseDevices > 0 ? ('collected on ' + d.licenseDevices + ' device(s) - ",
+   "len": 225
+  },
+  {
+   "head": "' + esc(wg.pkgId) + ' · ' + (wg.ready || 0) + ' ready, ' + (wg.ok || 0) + ' ok, ",
+   "len": 198
+  },
+  {
+   "head": "no winget package id matches this program - it cannot be updated or uninstalled ",
+   "len": 94
   }
  ],
  "links": [
   "action=deviceReport",
+  "action=export",
   "action=export&type=hardware",
-  "action=export&type=hardware",
-  "action=export&type=software",
   "action=export&type=software",
   "action=export&type=vulns",
   "action=report"
  ],
  "panels": [
   "devices/devicelist",
-  "devices/os",
+  "devices/devreport",
   "devices/reset",
-  "devices/updates",
+  "exports/files",
   "settings/asset",
   "settings/general",
   "software/deploy",
   "software/license",
   "software/softwarelist",
+  "software/updates",
   "vulns/assessment",
-  "vulns/data"
+  "vulns/cpe",
+  "vulns/nvd",
+  "vulns/vulnreport"
  ]
 }

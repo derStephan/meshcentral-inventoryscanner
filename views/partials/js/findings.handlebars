@@ -54,8 +54,17 @@
             var key = state.sortKey, dir = (state.sortDir === 'asc') ? 1 : -1;
             out.sort(function (a, b) {
                 var va = sortValue(a, key), vb = sortValue(b, key);
-                if (typeof va === 'number' && typeof vb === 'number') { return (va - vb) * dir; }
-                return String(va).localeCompare(String(vb)) * dir;
+                var r = (typeof va === 'number' && typeof vb === 'number')
+                    ? (va - vb) * dir
+                    : String(va).localeCompare(String(vb)) * dir;
+                if (r !== 0) { return r; }
+                // issue #9: inside the same effective severity the higher CVSS comes first (independent of the
+                // direction, so it stays predictable), then the CVE id for a stable order.
+                if (key !== 'cvss') {
+                    var ca = Number(a.cvss) || 0, cb2 = Number(b.cvss) || 0;
+                    if (ca !== cb2) { return cb2 - ca; }
+                }
+                return String(a.cve || '').localeCompare(String(b.cve || ''));
             });
             return out;
         }

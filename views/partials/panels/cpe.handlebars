@@ -1,30 +1,4 @@
-        <div class="tab-content" id="tab-vulndata" data-main="vulns" data-sub="data">
-            <h3>Vulnerability reports &amp; CSV export</h3>
-            <div class="controls">
-                <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=report" target="_blank" rel="noopener">Vulnerability Report</a>
-                <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=deviceReport" target="_blank" rel="noopener">Device Report</a>
-            </div>
-            <div class="info">CSV export (all devices):
-                <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=export&amp;type=hardware" target="_blank" rel="noopener">Hardware</a>
-                &middot; <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=export&amp;type=software" target="_blank" rel="noopener">Software</a>
-                &middot; <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=export&amp;type=vulns" target="_blank" rel="noopener">Vulnerabilities</a>
-            </div>
-
-            <h3>NVD database</h3>
-            <div class="setgrid">
-                <label for="setUpdateHours">NVD feed refresh (hours)</label>
-                <div><input type="text" id="setUpdateHours" class="num">
-                    <select id="setUpdateHoursSrc" class="srcsel"></select></div>
-                <label>&nbsp;</label>
-                <div><button id="updateNvdNowBtn" class="green">Update NVD database now</button>
-                    <span id="updateNvdInfo" class="hint"></span>
-                    <div class="hint">Fetches missing years and refreshes the current year immediately (rate-limited, can
-                    take a while - progress appears in the download log below).</div></div>
-            </div>
-            <div><button id="refreshNvdLogBtn" class="small">Refresh log</button>
-                <span id="nvdLogInfo" class="hint"></span></div>
-            <pre id="nvdLog" style="max-height:260px;overflow:auto;background:#0f1720;color:#cfe3f5;padding:8px;border-radius:6px;font-size:11px;margin-top:6px;white-space:pre-wrap;">(not loaded yet)</pre>
-
+        <div class="tab-content" id="tab-cpe" data-main="vulns" data-sub="cpe">
             <h3>CPE mapping (installed program name &rarr; CVE codes)</h3>
             <div class="info">
                 Every NVD CVE names the affected software with a technical code, a <strong>CPE</strong> like
@@ -78,9 +52,9 @@
                 <input id="cpeRegex" type="text" placeholder="Regex, e.g. ^SAS Studio" style="min-width:220px;">
                 <input id="cpeVendor" type="text" placeholder="CPE vendor, e.g. mozilla" style="min-width:160px;">
                 <input id="cpeProduct" type="text" placeholder="CPE product, e.g. firefox" style="min-width:160px;">
-                <button id="addCpeBtn">Add</button>
+                <button id="addCpeBtn" data-help="cpe.add">Add</button>
             </div>
             <div id="cpeMsg"></div>
-            <div class="controls" style="margin-top:16px;"><button id="saveSettingsBtn2">Save NVD &amp; CPE settings</button></div>
+            <div class="controls" style="margin-top:16px;"><button id="saveSettingsBtn2" data-help="set.save">Save CPE settings</button></div>
             <div id="vulnDataMsg"></div>
         </div>

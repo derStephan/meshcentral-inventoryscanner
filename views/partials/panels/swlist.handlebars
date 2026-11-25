@@ -1,26 +1,47 @@
         <div class="tab-content" id="tab-swlist" data-main="software" data-sub="softwarelist">
             <div class="info">
-                Every distinct installed program across all devices, with how many carry it and whether it has a
-                CVE, a winget update, or a collected license. "Update everywhere" runs the existing winget update
-                for that package on every device in scope (it needs a winget id; rows without one cannot).
+                Every distinct installed program across all devices, with how many devices carry it, which
+                findings matched it, whether a license was collected and what the last winget run reported for
+                it. The list is built from the inventory already stored on this server - opening it contacts no
+                device.
+                <br><br>
+                The three package actions need a <strong>winget package id</strong>, because winget works by id and
+                not by display name. Rows without one show the buttons disabled: the program is installed (the
+                inventory proves it) but winget does not manage it, so it can neither be updated nor uninstalled
+                this way. <em>Ignore</em> puts the id on the ignore list, so no automatic or batch run upgrades it
+                any more. <em>Update everywhere</em> queues exactly this one package on every non-excluded Windows
+                device. <em>Uninstall everywhere</em> REMOVES it from every device that has it - devices without it
+                report "not installed" rather than a failure - and asks for confirmation; it never runs as a dry run.
+                In the "Last winget run" column, <em>ready</em> counts the devices where an update was available,
+                <em>ok</em> where it was installed, <em>failed</em> where the install failed (the Details view shows
+                the exit code in decimal and hex plus winget's own message) and <em>skipped</em> counts ignored,
+                version-less and not-installed entries. Those numbers come from the stored last runs, so start a
+                <em>Dry run all devices</em> under Software &gt; Software updates to populate them.
             </div>
             <div class="controls">
                 <input type="text" id="swfFilter" class="filter-input" placeholder="Filter by software or publisher..." style="min-width:260px;">
-                <button id="swfRefreshBtn" class="small">Refresh</button>
-                <label class="dlselall"><input type="checkbox" id="swfSelectUpdatable"> select updatable</label>
+                <button id="swfRefreshBtn" class="small" data-help="swf.refresh">Refresh</button>
+                <label class="dlselall" data-help="swf.selectupdatable"><input type="checkbox" id="swfSelectUpdatable"> select updatable</label>
                 <span id="swfRunInfo" class="hint"></span>
             </div>
             <div class="table-container">
                 <table>
                     <thead><tr>
-                        <th style="width:26px;"></th><th style="cursor:default">Software</th>
-                        <th style="cursor:default">Version</th><th style="cursor:default">Publisher</th>
-                        <th style="width:64px;cursor:default">Devices</th><th style="width:118px;">Vulnerabilities</th>
-                        <th style="width:80px;">Update</th><th style="width:66px;">License</th><th style="width:130px;">Actions</th>
+                        <th style="width:26px;" class="nosort"></th>
+                        <th style="cursor:default">Software</th>
+                        <th style="cursor:default;width:130px;">Version</th>
+                        <th style="cursor:default;width:150px;">Publisher</th>
+                        <th style="width:58px;cursor:default">Devices</th>
+                        <th style="width:110px;cursor:default">Findings</th>
+                        <th style="width:170px;cursor:default">Last winget run</th>
+                        <th style="width:60px;cursor:default">License</th>
+                        <th style="width:290px;" class="nosort">Actions</th>
                     </tr></thead>
                     <tbody id="swfBody"><tr><td colspan="9" style="color:#888">Loading...</td></tr></tbody>
                 </table>
             </div>
-            <div class="controls"><button class="green" id="swfUpdateAllBtn">Update the selected packages everywhere</button></div>
+            <div class="controls">
+                <button class="green" id="swfUpdateAllBtn" data-help="swf.updateall">Update the selected packages everywhere</button>
+            </div>
             <div id="swfMsg"></div>
         </div>

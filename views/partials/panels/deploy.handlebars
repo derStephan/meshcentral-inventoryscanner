@@ -14,9 +14,9 @@
             <h3>Installer library</h3>
             <div class="controls">
                 <input type="file" id="swFileInput">
-                <button id="swUploadBtn" class="green">Upload to library</button>
+                <button id="swUploadBtn" class="green" data-help="sw.upload">Upload to library</button>
                 <span id="swUploadInfo" class="hint"></span>
-                <button id="swRescanBtn" class="small">Rescan server folder</button>
+                <button id="swRescanBtn" class="small" data-help="sw.rescan">Rescan server folder</button>
             </div>
             <div class="table-container"><table>
                 <thead><tr><th style="width:280px;">Name</th><th style="width:60px;">Type</th><th style="width:100px;">Size</th><th style="width:140px;">SHA-256</th><th style="width:150px;">Added</th><th>By</th><th style="width:90px;"></th></tr></thead>
@@ -44,7 +44,7 @@
                 <tbody id="swTargetBody"><tr><td colspan="2" style="color:#888">Loading...</td></tr></tbody>
             </table></div>
             <div class="controls">
-                <button id="swDeployBtn" class="purple">Deploy (now or on next connect)</button>
+                <button id="swDeployBtn" class="purple" data-help="sw.create">Deploy (now or on next connect)</button>
                 <span id="swSelInfo" class="hint"></span>
             </div>
             <div id="swMsg"></div>

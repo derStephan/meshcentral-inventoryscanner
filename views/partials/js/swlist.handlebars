@@ -1,6 +1,12 @@
-        // ---------- unified software list (v4.9.5, issue #8) ----------
+        // ---------- unified software list (v4.9.5, reworked by issue #9) ----------
+        //
+        // One row per distinct installed program across the fleet, joined with what the last winget runs
+        // reported for it (the former "Packages across all devices" view). The three package actions reuse the
+        // existing winget routes: wg_run with a pkgId (update / uninstall) and the atomic wg_toggle_ignore, which
+        // changes only the ignore list server-side - the old wg_save_config path reads the whole Updates-tab form
+        // from the DOM and would have wiped the updater settings when called from here.
 
-        var swfApp = { software: [], wgMap: {}, devices: 0 };
+        var swfApp = { software: [], wgMap: {}, devices: 0, open: {} };
 
         function loadSwFleet() {
             var ri = $('swfRunInfo'); if (ri) { ri.textContent = 'building the fleet index...'; }
@@ -10,7 +16,13 @@
                     if (data.error) { showMsg('swfMsg', data.error, false); return; }
                     var map = {};
                     var pkgs = (rs[1] && rs[1].packages) || [];
-                    for (var i = 0; i < pkgs.length; i++) { if (pkgs[i] && pkgs[i].name) { map[String(pkgs[i].name).toLowerCase()] = { id: pkgs[i].id, ready: pkgs[i].ready || 0 }; } }
+                    for (var i = 0; i < pkgs.length; i++) {
+                        var p = pkgs[i];
+                        if (!p || !p.name) { continue; }
+                        map[String(p.name).toLowerCase()] = {
+                            id: p.id, ready: p.ready || 0, ok: p.ok || 0, failed: p.failed || 0, skipped: p.skipped || 0
+                        };
+                    }
                     swfApp.software = data.software || []; swfApp.wgMap = map; swfApp.devices = data.devices || 0;
                     renderSwFleet();
                 })
@@ -25,33 +37,119 @@
                 var low = String(s.name).toLowerCase();
                 if (f !== '' && low.indexOf(f) < 0 && String(s.publisher || '').toLowerCase().indexOf(f) < 0) { continue; }
                 var w = swfApp.wgMap[low];
-                var upd = w ? '<span class="badge badge-custom">winget</span>' : (s.updatable ? '<span style="color:#888">avail</span>' : '<span style="color:#888">-</span>');
+                var pkgId = w ? String(w.id || '') : '';
+                var run = w
+                    ? ((w.ready > 0 ? '<b style="color:#06c">' + w.ready + '</b>' : '0') + ' ready, ' + w.ok + ' ok, '
+                        + (w.failed > 0 ? '<b style="color:#a33">' + w.failed + '</b>' : '0') + ' failed, <span style="color:#777">' + w.skipped + ' skipped</span>')
+                    : (s.updatable ? '<span style="color:#888">update available</span>' : '<span style="color:#888">not winget-managed</span>');
                 var vuln = s.vulnerable ? dlSevBadge(s.cve || 1, s.maxSeverity) : '<span style="color:#888">none</span>';
                 var lic = s.hasLicense ? '<span class="badge badge-custom">yes</span>' : '<span style="color:#888">-</span>';
                 var ver = esc(s.version || '') + (s.versions > 1 ? ' <span class="badge badge-varies" title="' + s.versions + ' versions installed">+' + (s.versions - 1) + '</span>' : '');
+                var noId = pkgId === '';
+                var why = noId ? ' title="No winget package id for this display name - winget cannot manage it, so update/uninstall/ignore are unavailable."' : '';
                 html += '<tr>'
-                    + '<td><input type="checkbox" class="swfc" value="' + esc(low) + '" data-pkg="' + esc(w ? w.id : '') + '" data-ready="' + (w && w.ready ? '1' : '0') + '"></td>'
-                    + '<td><b>' + esc(s.name) + '</b></td>'
-                    + '<td>' + ver + '</td>'
-                    + '<td>' + esc(s.publisher || '') + '</td>'
+                    + '<td><input type="checkbox" class="swfc" value="' + esc(low) + '" data-pkg="' + esc(pkgId) + '" data-ready="' + (w && w.ready ? '1' : '0') + '"></td>'
+                    + '<td><b>' + esc(s.name) + '</b>' + (pkgId ? '<div><code style="font-size:11px;color:#556">' + esc(pkgId) + '</code></div>' : '') + '</td>'
+                    + '<td style="font-size:12px">' + ver + '</td>'
+                    + '<td style="font-size:12px">' + esc(s.publisher || '') + '</td>'
                     + '<td>' + s.deviceCount + '</td>'
                     + '<td>' + vuln + '</td>'
-                    + '<td>' + upd + '</td>'
+                    + '<td style="font-size:11px;white-space:nowrap">' + run + '</td>'
                     + '<td>' + lic + '</td>'
-                    + '<td>' + (w ? '<button class="small green swfUpd" data-pkg="' + esc(w.id) + '" data-name="' + esc(s.name) + '">Update everywhere</button>' : '<span style="color:#888">no winget id</span>') + '</td>'
+                    + '<td style="white-space:nowrap">'
+                    + '<button class="small" data-swfact="ignore" data-pkg="' + esc(pkgId) + '" data-name="' + esc(s.name) + '" ' + (noId ? 'disabled ' : '') + 'data-help="swf.ignore"' + why + '>Ignore</button> '
+                    + '<button class="small green" data-swfact="update" data-pkg="' + esc(pkgId) + '" data-name="' + esc(s.name) + '" ' + (noId ? 'disabled ' : '') + 'data-help="swf.update"' + why + '>Update everywhere</button> '
+                    + '<button class="small red" data-swfact="uninstall" data-pkg="' + esc(pkgId) + '" data-name="' + esc(s.name) + '" ' + (noId ? 'disabled ' : '') + 'data-help="swf.uninstall"' + why + '>Uninstall</button> '
+                    + '<button class="small" data-swfact="details" data-name="' + esc(s.name) + '" data-pkg="' + esc(pkgId) + '" data-help="swf.details">' + (swfApp.open[low] ? 'Hide' : 'Details') + '</button>'
+                    + '</td>'
                     + '</tr>';
+                html += '<tr class="swfdetail" style="display:' + (swfApp.open[low] ? 'table-row' : 'none') + '"><td colspan="9" style="background:#f6f8fb" id="swfd-' + i + '"><span class="hint">Loading...</span></td></tr>';
             }
             if (html === '') { html = '<tr><td colspan="9" style="color:#888">No installed software collected yet (run an inventory collection first).</td></tr>'; }
             $('swfBody').innerHTML = html;
             var ri = $('swfRunInfo'); if (ri) { ri.textContent = swfApp.software.length + ' distinct program(s) across ' + swfApp.devices + ' device(s).'; }
+            // re-open the details that were open before the re-render
+            for (var k in swfApp.open) {
+                if (!swfApp.open[k]) { continue; }
+                for (var j = 0; j < swfApp.software.length; j++) {
+                    if (String(swfApp.software[j].name).toLowerCase() === k) { swfLoadDetails(swfApp.software[j].name, (swfApp.wgMap[k] || {}).id || '', j); break; }
+                }
+            }
         }
 
-        function swfUpdateOne(pkgId, name) {
-            if (!pkgId) { showMsg('swfMsg', 'That package has no winget id and cannot be updated this way.', false); return; }
+        /** @brief Everything stored about one program, fetched on demand (never on load). */
+        function swfLoadDetails(name, pkgId, rowIndex) {
+            var cell = document.getElementById('swfd-' + rowIndex);
+            if (!cell) { return; }
+            cell.innerHTML = '<span class="hint">Loading the details of this program...</span>';
+            var body = { name: name };
+            if (pkgId) { body.pkgId = pkgId; }
+            post('sw_details', body).then(function (d) {
+                if (d.error) { cell.innerHTML = '<span style="color:#a33">' + esc(d.error) + '</span>'; return; }
+                cell.innerHTML = swfDetailsHtml(d);
+            }).catch(function (e) { cell.innerHTML = '<span style="color:#a33">' + esc(e.message) + '</span>'; });
+        }
+
+        function swfDetailsHtml(d) {
+            var h = '';
+            var sec = function (title, body) { return '<div style="margin:6px 0"><b style="color:#0b3d6b">' + title + '</b>' + body + '</div>'; };
+            var vs = d.versions || [];
+            h += sec('Versions (' + vs.length + ')', vs.length === 0 ? '<div class="hint">no version reported</div>'
+                : '<div class="hint">' + vs.map(function (v) { return esc(v.version) + ' on ' + v.count + ' device(s)'; }).join(' · ') + '</div>');
+            var devs = d.devices || [];
+            h += sec('Devices (' + (d.deviceCount || devs.length) + ')', devs.length === 0 ? '<div class="hint">none</div>'
+                : '<div style="max-height:150px;overflow:auto;font-size:11px">' + devs.map(function (x) {
+                    return '<div>' + esc(x.given || x.host) + ' <span class="hint">' + esc(x.group) + ' · ' + esc(x.version) + (x.online ? '' : ' · offline') + '</span></div>';
+                }).join('') + '</div>');
+            var cves = d.cves || [];
+            h += sec('Findings (' + cves.length + ')', cves.length === 0 ? '<div class="hint">no CVE matched this program</div>'
+                : '<div style="max-height:150px;overflow:auto;font-size:11px">' + cves.map(function (c) {
+                    return '<div><span class="sev sev-' + esc(/^(CRITICAL|HIGH|MEDIUM|LOW|UNKNOWN)$/.test(c.severity) ? c.severity : 'UNKNOWN') + '">' + esc(c.severity) + '</span> '
+                        + '<b>' + esc(c.id) + '</b> ' + esc(c.version) + (c.cvss !== '' && c.cvss != null ? ' <span class="hint">CVSS ' + esc(c.cvss) + '</span>' : '') + '</div>';
+                }).join('') + '</div>');
+            var cov = d.coverage || [];
+            if (cov.length) {
+                h += sec('Why parts could not be checked', '<div class="hint">' + cov.map(function (c) { return esc(c.status) + ' (' + c.count + ')'; }).join(' · ') + '</div>');
+            }
+            h += sec('License', '<div class="hint">' + (d.licenseDevices > 0
+                ? ('collected on ' + d.licenseDevices + ' device(s) - the values stay on this server and are only in the software CSV export')
+                : 'nothing collected for this program (Software &gt; License keys)') + '</div>');
+            var wg = d.winget || {};
+            h += sec('winget', wg.pkgId
+                ? ('<div class="hint"><code>' + esc(wg.pkgId) + '</code> · ' + (wg.ready || 0) + ' ready, ' + (wg.ok || 0) + ' ok, ' + (wg.failed || 0) + ' failed, ' + (wg.skipped || 0) + ' skipped'
+                    + (wg.ignored ? ' · <b>on the ignore list</b>' : '') + '</div>'
+                    + ((wg.perDevice || []).length ? '<div style="max-height:140px;overflow:auto;font-size:11px">' + wg.perDevice.map(function (p) {
+                        return '<div>' + esc(p.node) + ' <b>' + esc(p.state) + '</b> ' + esc(p.from) + ' &rarr; ' + esc(p.to) + (p.dry ? ' <span class="hint">(dry)</span>' : '')
+                            + (p.exit != null ? ' exit ' + p.exit + ' / 0x' + wgHexExit(p.exit) : '') + (p.log ? ' <span class="hint">' + esc(p.log) + '</span>' : '') + '</div>';
+                    }).join('') + '</div>' : ''))
+                : '<div class="hint">no winget package id matches this program - it cannot be updated or uninstalled through winget</div>');
+            return h;
+        }
+
+        function swfUpdate(pkgId, name) {
+            if (!pkgId) { showMsg('swfMsg', 'That program has no winget id and cannot be updated this way.', false); return; }
             post('wg_run', { pkgId: pkgId, mode: 'update' }).then(function (d) {
-                if (d.busy) { showMsg('swfMsg', 'A winget batch is already running.', false); return; }
                 if (d.error) { showMsg('swfMsg', d.error, false); return; }
-                showMsg('swfMsg', 'Update of ' + name + ' started on every in-scope device (follow the winget tab).', true);
+                if (d.busy) { showMsg('swfMsg', 'A winget batch is already running - try again in a moment.', false); return; }
+                showMsg('swfMsg', 'Update of ' + name + ' started on every device in scope (follow it under Software > Software updates).', true);
+            }).catch(function (e) { showMsg('swfMsg', e.message, false); });
+        }
+
+        function swfUninstall(pkgId, name) {
+            if (!pkgId) { showMsg('swfMsg', 'That program has no winget id and cannot be uninstalled this way.', false); return; }
+            if (!window.confirm('UNINSTALL ' + name + ' (' + pkgId + ') on EVERY device in scope?\n\nThis removes the program from all devices that have it. Devices without it report "not installed" rather than a failure. This never runs as a dry run and cannot be undone by the plugin.')) { return; }
+            post('wg_run', { pkgId: pkgId, mode: 'uninstall' }).then(function (d) {
+                if (d.error) { showMsg('swfMsg', d.error, false); return; }
+                if (d.busy) { showMsg('swfMsg', 'A winget batch is already running - try again in a moment.', false); return; }
+                showMsg('swfMsg', 'Uninstall of ' + name + ' started on every device in scope.', true);
+            }).catch(function (e) { showMsg('swfMsg', e.message, false); });
+        }
+
+        function swfIgnore(pkgId, name) {
+            if (!pkgId) { showMsg('swfMsg', 'That program has no winget id, so it cannot be put on the ignore list.', false); return; }
+            post('wg_toggle_ignore', { pkgId: pkgId, ignore: 'true', note: 'added from the software list' }).then(function (d) {
+                if (d.error) { showMsg('swfMsg', d.error, false); return; }
+                showMsg('swfMsg', pkgId + ' is on the ignore list now - no automatic or batch run upgrades it any more.', true);
             }).catch(function (e) { showMsg('swfMsg', e.message, false); });
         }
 
@@ -66,17 +164,35 @@
                 n++;
             }
             if (n === 0) { showMsg('swfMsg', 'Tick at least one winget-managed package.', false); }
-            else { showMsg('swfMsg', n + ' package update batch(es) started on every in-scope device.', true); }
+            else { showMsg('swfMsg', n + ' package update batch(es) started on every device in scope.', true); }
         }
-
-        function swfRowClick(e) { var t = e.target; if (t && t.classList && t.classList.contains('swfUpd')) { swfUpdateOne(t.getAttribute('data-pkg'), t.getAttribute('data-name')); } }
 
         $('swfRefreshBtn').addEventListener('click', function () { post('sw_fleet', { refresh: '1' }).catch(function () { }); loadSwFleet(); });
         $('swfFilter').addEventListener('input', renderSwFleet);
         $('swfUpdateAllBtn').addEventListener('click', swfUpdateAll);
-        $('swfBody').addEventListener('click', swfRowClick);
         $('swfSelectUpdatable').addEventListener('click', function () {
             var cbs = document.querySelectorAll('#swfBody input.swfc'); var on = $('swfSelectUpdatable').checked;
             for (var i = 0; i < cbs.length; i++) { cbs[i].checked = on && cbs[i].getAttribute('data-ready') === '1'; }
         });
-
+        $('swfBody').addEventListener('click', function (e) {
+            var b = e.target;
+            while (b && b !== this && !(b.getAttribute && b.getAttribute('data-swfact'))) { b = b.parentNode; }
+            if (!b || b === this) { return; }
+            var act = b.getAttribute('data-swfact'), pkg = b.getAttribute('data-pkg'), name = b.getAttribute('data-name');
+            if (act === 'update') { swfUpdate(pkg, name); }
+            else if (act === 'uninstall') { swfUninstall(pkg, name); }
+            else if (act === 'ignore') { swfIgnore(pkg, name); }
+            else if (act === 'details') {
+                var low = String(name).toLowerCase();
+                swfApp.open[low] = !swfApp.open[low];
+                var row = b.parentNode && b.parentNode.parentNode;
+                var detail = row && row.nextElementSibling;
+                if (detail) { detail.style.display = swfApp.open[low] ? 'table-row' : 'none'; }
+                b.textContent = swfApp.open[low] ? 'Hide' : 'Details';
+                if (swfApp.open[low] && detail) {
+                    var holder = detail.querySelector ? detail.querySelector('[id^="swfd-"]') : null;
+                    var idx = holder ? parseInt(String(holder.id).replace('swfd-', ''), 10) : NaN;
+                    swfLoadDetails(name, pkg, isNaN(idx) ? -1 : idx);
+                }
+            }
+        });

@@ -1,39 +1,106 @@
         <div class="tab-content" id="tab-devicelist" data-main="devices" data-sub="devicelist">
             <div class="info">
-                One row per device (merged live from the update, OS, reset and license engines plus the fleet
-                index - it sends nothing new). Tick the devices, then pick <strong>one</strong> operation to run on
-                them. Non-destructive operations run as a batch; <strong>Restart</strong> and <strong>Reset</strong>
-                open their own panel and always need the per-device typed-name confirmation - they are never batched.
+                One row per device, merged from the data already stored on this server - no command is sent to a
+                device just to show this list. Click a column header to sort. The buttons in a row act on
+                <strong>that one device</strong>; tick several devices and use the batch buttons to run one
+                operation on all of them.
+                <br><br>
+                <strong>Restart</strong> and <strong>Reset</strong> are the only actions that reboot a machine. They are
+                never batched and never automatic: a restart needs a grace period, a message to the logged-on user and
+                the device name typed to confirm; a reset needs a fresh read-only check first. Everything else here
+                (updates, OS updates, upgrades, Windows Update repair, license collection) never reboots - a needed
+                restart is only reported.
+            </div>
+            <div class="info">
+                <strong>force OS updates</strong> runs on every non-excluded Windows and Linux device: on Windows, the built-in
+                Windows Update agent searches, downloads and installs all pending updates (feature upgrades excluded). On Linux,
+                the distribution's package manager runs (<code>apt-get update &amp;&amp; apt-get upgrade</code>, <code>dnf upgrade</code>,
+                <code>yum update</code>, <code>zypper update</code>, <code>pacman -Syu</code> or <code>apk upgrade</code>). A distribution
+                repository that is broken only warns - the device is not reported as failed unless no repository could be refreshed at all.<br>
+                <strong>OS Upgrade</strong> only targets devices whose OS release is <em>provably not current</em> (the current release
+                according to the endoflife.date data is shown in the line above the buttons). There is no built-in fallback version: without
+                fresh data (at most 30 days old) the release state is shown as <em>unknown</em> with the reason, and such devices are
+                not upgraded. An outdated release is <strong>Upgrade urgent</strong> when its own support has ended or ends within the
+                configured window (Settings), otherwise <strong>Upgrade available</strong>; without a known support end it is never called
+                urgent. <em>force OS Upgrade (urgent)</em> covers only the urgent devices, <em>force OS Upgrade (all)</em> every outdated
+                device. On Windows 10/11, Windows Update is pointed at the current release with the documented TargetReleaseVersion policy
+                and installs it; the previous policy is restored afterwards. On Ubuntu, <code>apt-get dist-upgrade</code> runs, followed by
+                <code>do-release-upgrade</code>, which moves one release per run. Other distributions and Windows Server are shown but never
+                upgraded automatically.<br>
+                <strong>Reboot policy:</strong> these OS runs never reboot the device themselves - if the updates
+                need a reboot, that is reported per device and Windows performs it at its own
+                automatic-restart deadline / outside the active hours, or you reboot it yourself.<br>
+                <strong>Windows Update troubleshooter (per Windows device):</strong> <em>Diagnose</em> reads the WU
+                services, whether a reboot is pending (and when Windows will restart automatically), the download
+                cache size and the last <code>WindowsUpdateClient</code> errors - it changes nothing.
+                <em>Troubleshoot</em> applies the repairs the built-in troubleshooter would: it restarts
+                BITS/wuauserv/appidsvc/cryptsvc/msiserver, resets <code>SoftwareDistribution\Download</code> and
+                <code>catroot2</code> and re-asserts the Automatic start types. It does not reboot - any pending
+                reboot is reported with when it will happen. The winget exclusion list applies here too, and an OS
+                batch never runs at the same time as a winget batch or a troubleshooter run on that device.<br>
+                <strong>Reboot / Notify user (per Windows or Linux device):</strong> <em>Notify user</em>
+                shows a message to the logged-on user (Windows <code>msg</code>, Linux <code>wall</code>) without
+                rebooting. <em>Reboot</em> restarts the device on purpose after a short grace, sending that same
+                message through the OS shutdown banner - this and the PC Reset page are the ONLY two places this
+                plugin ever restarts a machine, and both are explicit, per-device and need the device name typed
+                (never automatic, never a batch, never scheduled). Use it to reboot before or after an upgrade.<br>
+                <strong>Software updates (per Windows device):</strong> <em>Dry run</em> lists what winget would
+                update without touching the machine; <em>Update</em> installs the pending packages one at a time,
+                silently, and never reboots. <em>Exclude</em> keeps the device out of every automatic batch and out
+                of "Run now"/"Dry run all" - a run you start for that one device still works on purpose. After any
+                run, <em>Details</em> lists every package of that run with its outcome; a failed package shows the
+                exit code (decimal and hex) and winget's own message.<br>
+                <strong>License collection (per Windows device):</strong> <em>Collect licenses</em> reads the keys
+                named by your rules - read-only, no reboot - and stores them on this server only. The values are
+                never displayed; the row shows how many were found, and the software CSV export contains them.
             </div>
             <div class="controls">
-                <button id="dlRefreshBtn" class="small">Refresh</button>
-                <span class="exportlabel">Export:</span>
-                <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=export&amp;type=hardware" target="_blank" rel="noopener">Hardware CSV</a>
-                <a href="/pluginadmin.ashx?pin={{shortName}}&amp;action=export&amp;type=software" target="_blank" rel="noopener">Software CSV</a>
-                <label class="dlselall"><input type="checkbox" id="dlSelectAll"> select all</label>
+                <button id="dlRefreshBtn" class="small" data-help="dl.refresh">Refresh</button>
+                <label class="dlselall" data-help="dl.selectall"><input type="checkbox" id="dlSelectAll"> select all</label>
+                <span id="dlOsRefInfo" class="hint"></span>
             </div>
             <div class="controls">
                 <span class="hint">Run on the selected devices:</span>
-                <button class="green dlRun" data-op="appupdates">Software updates</button>
-                <button class="dlRun" data-op="osupdate">OS updates</button>
-                <button class="dlRun" data-op="osupgrade">OS upgrade</button>
-                <button class="dlRun" data-op="troubleshoot">Windows Update repair</button>
-                <button class="purple dlRun" data-op="licenses">Collect licenses</button>
-                <button class="dlRun" data-op="asset">Push to asset system</button>
+                <button class="green dlRun" data-op="appupdates" data-help="dl.appupdates">Software updates</button>
+                <button class="dlRun" data-op="osupdate" data-help="dl.osupdate">OS updates</button>
+                <button class="dlRun" data-op="osupgrade" data-help="dl.osupgrade">OS upgrade</button>
+                <button class="dlRun" data-op="troubleshoot" data-help="dl.troubleshoot">Windows Update repair</button>
+                <button class="purple dlRun" data-op="licenses" data-help="dl.licenses">Collect licenses</button>
+                <button class="dlRun" data-op="asset" data-help="dl.asset">Push to asset system</button>
                 <span id="dlRunInfo" class="hint"></span>
+            </div>
+            <div class="controls">
+                <span class="hint">All devices (fleet scope, not the selection):</span>
+                <button id="dlOsUpdAllBtn" class="green" data-help="os.upd">force OS updates</button>
+                <button id="dlOsUpgUrgentBtn" class="red" data-help="os.upgurgent">force OS Upgrade (urgent)</button>
+                <button id="dlOsUpgAllBtn" class="purple" data-help="os.upg">force OS Upgrade (all)</button>
+                <span id="dlOsRunState" class="hint"></span>
+            </div>
+            <div class="filter-row">
+                <input type="text" id="dlFilter" class="filter-input" placeholder="Filter by device, group or operating system...">
             </div>
             <div class="table-container">
                 <table>
                     <thead><tr>
-                        <th style="width:26px;"></th><th style="cursor:default">Device</th><th style="cursor:default">Group</th>
-                        <th style="width:70px;">Online</th><th style="width:60px;">OS</th>
-                        <th style="width:96px;">App updates</th><th style="width:120px;">OS state</th>
-                        <th style="width:84px;">Reboot</th><th style="width:84px;">Reset</th>
-                        <th style="width:88px;">Vulnerabilities</th><th style="width:70px;">License</th>
-                        <th style="width:150px;">Device actions</th>
+                        <th style="width:26px;" class="nosort"></th>
+                        <th data-dlkey="device">Device</th>
+                        <th data-dlkey="group" style="width:130px;">Group</th>
+                        <th data-dlkey="online" style="width:62px;">Online</th>
+                        <th data-dlkey="os" style="width:150px;">OS</th>
+                        <th data-dlkey="apps" style="width:196px;">Software updates</th>
+                        <th data-dlkey="osstate" style="width:196px;">OS</th>
+                        <th class="nosort" style="width:250px;">Troubleshoot / restart</th>
+                        <th data-dlkey="vulns" style="width:86px;">Findings</th>
+                        <th data-dlkey="license" style="width:70px;">License</th>
+                        <th class="nosort" style="width:74px;"></th>
                     </tr></thead>
-                    <tbody id="dlDeviceBody"><tr><td colspan="13" style="color:#888">Loading...</td></tr></tbody>
+                    <tbody id="dlDeviceBody"><tr><td colspan="11" style="color:#888">Loading...</td></tr></tbody>
                 </table>
             </div>
             <div id="dlMsg"></div>
+            <div id="osMsg"></div>
+
+            <h3>OS update log</h3>
+            <div><button id="dlOsLogBtn" class="small">Show / refresh the OS update log</button> <span id="dlOsLogInfo" class="hint"></span></div>
+            <pre id="dlOsLog" style="display:none;max-height:260px;overflow:auto;background:#0f1720;color:#cfe3f5;padding:8px;border-radius:6px;font-size:11px;margin-top:6px;white-space:pre-wrap;">(not loaded yet)</pre>
         </div>
