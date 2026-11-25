@@ -104,7 +104,7 @@
                     + '<td>' + (l ? (l.status === 'ok' ? '<span class="badge badge-custom">ok</span>' : (l.status === 'skipped' ? '<span class="badge badge-mixed">skipped</span>' : '<span class="sev sev-HIGH">error</span>')) : '-') + '</td>'
                     + '<td>' + (l && l.httpCode ? l.httpCode : '-') + '</td>'
                     + '<td>' + esc(l && l.externalId ? String(l.externalId) : '') + '</td>'
-                    + '<td><button class="small asPushOne" data-id="' + esc(d.id) + '">Push</button></td>'
+                    + '<td><button class="small asPushOne" data-id="' + esc(d.id) + '" data-help="as.push">Push</button></td>'
                     + '</tr>';
             }
             if (html === '') { html = '<tr><td colspan="7" style="color:#888">No devices.</td></tr>'; }
@@ -205,7 +205,14 @@
         }
 
         function asTargetChange() { asShowTargetFields(); }
-        function asStatusRowClick(e) { var t = e.target; if (t && t.classList && t.classList.contains('asPushOne')) { asPush(t.getAttribute('data-id')); } }
+        function asStatusRowClick(e) {
+            var t = e.target;
+            if (t && t.classList && t.classList.contains('asPushOne')) {
+                // v5.5.1 (audit 4): the per-device push sends data off the server like "Push all" - it asks too
+                if (!window.confirm('Push this device now? Its inventory leaves this server to the configured target.')) { return; }
+                asPush(t.getAttribute('data-id'));
+            }
+        }
 
         $('asTargetType').addEventListener('change', asTargetChange);
         $('asSaveBtn').addEventListener('click', asSave);

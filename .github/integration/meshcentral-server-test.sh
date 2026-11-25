@@ -36,6 +36,8 @@ bad() { FAILS=$((FAILS+1)); FAILED_NAMES="$FAILED_NAMES
  - $1"; echo "FAIL  $1"; }
 
 get_auth()   { curl -ks --max-time 30 -H "Cookie: $CKV" -o "$BODY" -w '%{http_code}' "$P$1"; }
+# v5.5.1: a LIVE scan (action=scan without cached=1) is an action and needs the panel header like a POST
+get_hdr()    { curl -ks --max-time 30 -H "Cookie: $CKV" -H "$HDRC" -o "$BODY" -w '%{http_code}' "$P$1"; }
 get_anon()   { curl -ks --max-time 30 -o "$BODY" -w '%{http_code}' "$P$1"; }
 post_auth()  { curl -ks --max-time 30 -H "Cookie: $CKV" -H "$HDRC" -o "$BODY" -w '%{http_code}' -X POST "$P" "$@"; }
 post_nohdr() { curl -ks --max-time 30 -H "Cookie: $CKV" -o "$BODY" -w '%{http_code}' -X POST "$P" "$@"; }
@@ -56,7 +58,7 @@ if [ -n "$XSIG" ]; then CKV="$CKV; xid.sig=$XSIG"; fi
 chk 'panel GET without a session is refused'           401 "$(get_anon '&action=show')"
 chk 'panel POST without a session is refused'          401 "$(post_anon --data 'action=get_locations')"
 chk 'panel GET with the session renders'               200 "$(get_auth '&action=show')"
-if grep -q "plugin v${PLUGIN_VER:-unknown}" "$BODY"; then ok 'the panel shows the running plugin version'; else bad "panel does not show plugin v${PLUGIN_VER:-unknown}"; fi
+if grep -qF "plugin v${PLUGIN_VER:-unknown}" "$BODY"; then ok 'the panel shows the running plugin version'; else bad "panel does not show plugin v${PLUGIN_VER:-unknown}"; fi
 if grep -q 'inventoryscanner' "$BODY"; then ok 'the panel references the plugin shortName'; else bad 'panel missing the shortName'; fi
 # View-modularisation spike: express-handlebars MUST resolve partials for a plugin view. pluginHandler sets
 # app.set('views', <plugin>/views) per request and webserver.js creates the engine without a partialsDir, so
@@ -68,7 +70,7 @@ chk 'POST with an unknown action 404s'                 404 "$(post_auth --data '
 chk 'GET with an unknown action 404s'                  404 "$(get_auth '&action=nope')"
 # v4.3.2: the name link on My Server -> Plugins (goPlugin) opens ?pin=inventoryscanner WITHOUT action
 chk 'GET without action (plugin list link) renders'    200 "$(get_auth '')"
-if grep -q "plugin v${PLUGIN_VER:-unknown}" "$BODY"; then ok '...and it is the panel'; else bad 'GET without action did not render the panel'; fi
+if grep -qF "plugin v${PLUGIN_VER:-unknown}" "$BODY"; then ok '...and it is the panel'; else bad 'GET without action did not render the panel'; fi
 # v4.3.2: the one-click upgrade restarts the server only when it runs as the --launch child of
 # MeshCentral's launcher (which relaunches it on "Server restart..."). Prove the image does that.
 if cat /proc/[0-9]*/cmdline 2>/dev/null | tr '\0' ' ' | grep -q -- '[-]-launch'; then ok 'server runs under the MeshCentral launcher (--launch child, upgrade restart possible)'; else bad 'no --launch child process: an upgrade would fall back to the hot swap'; fi
@@ -77,8 +79,11 @@ echo
 echo "== GET routes: scan, reports, CSV export =="
 chk 'scan with no mesh parameter'                      200 "$(get_auth '&action=scan')"
 chkjq '...answers the contract error' 'has("error")'
-chk 'scan with a location that does not exist'         200 "$(get_auth '&action=scan&mesh=mesh//CI-Location')"
+chk 'scan with a location that does not exist'         200 "$(get_hdr '&action=scan&mesh=mesh//CI-Location')"
 chkjq 'scan response shape' '(.cves|type=="array") and (.meshes|type=="array") and has("flaggedCount") and has("totalCves")'
+chk 'a LIVE scan without the panel header is refused'  403 "$(get_auth '&action=scan&mesh=mesh//CI-Location')"
+chk 'the CACHED scan read stays a plain GET'           200 "$(get_auth '&action=scan&mesh=mesh//CI-Location&cached=1')"
+chkjq '...and answers from the snapshot' '.cached==true and (.cves|type=="array")'
 chk 'vulnerability report renders'                     200 "$(get_auth '&action=report')"
 if grep -qi 'Vulnerability Report' "$BODY"; then ok 'report view content'; else bad 'report view content'; fi
 chk 'device report renders'                            200 "$(get_auth '&action=deviceReport')"
@@ -138,7 +143,8 @@ chkjq '...with an error' 'has("error")'
 chk 'rating over two locations in one request'        200 "$(post_auth --data 'action=save_assessment' --data 'meshIds=mesh//CI-A,mesh//CI-B' --data 'cveId=CVE-2099-44228' --data 'assessment=HIGH' --data-urlencode 'comment=accepted risk for CI')"
 chkjq '...success' '.success==true'
 chkfile 'assessments persisted' "$DATA/nvd/assessments.json"
-chk 'scan still answers with the rating stored'       200 "$(get_auth '&action=scan&mesh=mesh//CI-A,mesh//CI-B')"
+chk 'scan still answers with the rating stored'       200 "$(get_hdr '&action=scan&mesh=mesh//CI-A,mesh//CI-B')"
+chkjq '...as a scan result' '(.cves|type=="array") and (.meshes|length)==2'
 chk 'flag_false_positive'                             200 "$(post_auth --data 'action=flag_false_positive' --data 'meshId=mesh//CI-A' --data 'cveId=CVE-2099-44228')"
 chkjq '...flagged' '.success==true and .flagged==true'
 chk 'unflag_false_positive'                           200 "$(post_auth --data 'action=unflag_false_positive' --data 'meshId=mesh//CI-A' --data 'cveId=CVE-2099-44228')"
@@ -233,7 +239,7 @@ chk 'software CSV export'                             200 "$(get_auth '&action=e
 if grep -qw mag "$BODY"; then ok 'the CSV contains the agent host'; else bad 'agent host missing from CSV'; fi
 [ "$(wc -c < "$BODY")" -gt 400 ] && ok 'the CSV carries collected rows' || bad 'CSV still empty after collection'
 export GR_ENV="$GROUPID"
-chk 'scan the real location'                          200 "$(get_auth "&action=scan&mesh=$GROUPID")"
+chk 'scan the real location'                          200 "$(get_hdr "&action=scan&mesh=$GROUPID")"
 chkjq '...lists the real device group' 'any(.meshes[]; .id==env.GR_ENV)'
 get_auth '&action=deviceReport' >/dev/null
 if grep -qw mag "$BODY"; then ok 'the device report contains the agent'; else bad 'agent missing from the device report'; fi
@@ -260,6 +266,20 @@ done
 if [ "$STATE" = 'ok' ]; then ok "the agent ran the deployed package (state ok)"; else bad "deploy ended with state '$STATE'"; fi
 post_auth --data 'action=sw_status' >/dev/null
 chkjq '...reported exit code 0' "[.tasks[]|select(.id==\"$TID\")][0].devices[0].exit==0"
+
+echo
+echo "== Server Files with the REAL group id (audit 4: ids carry @ and \$) =="
+# The server runs /opt/meshcentral/meshcentral/meshcentral.js, so its files area is the sibling folder
+# /opt/meshcentral/meshcentral-files (meshcentral.js: filespath = __dirname/../meshcentral-files). The group
+# part of a real mesh id is base64 with @ and $ - v5.5.0 refused every such id.
+FILES=/opt/meshcentral/meshcentral-files
+GRPPART=${GROUPID#mesh//}
+mkdir -p "$FILES/domain/mesh-$GRPPART" && printf '#!/bin/sh\necho sf\n' > "$FILES/domain/mesh-$GRPPART/ci-serverfile.sh"
+chk 'sw_serverfiles with a real group folder'         200 "$(post_auth --data 'action=sw_serverfiles')"
+chkjq '...lists the file of the REAL group id' "[.folders[]|select(.meshId==env.GR_ENV)][0].files|map(.name)|index(\"ci-serverfile.sh\") != null"
+chk 'sw_create_task refuses a server-files id that leaves the files area' 200 "$(post_auth --data 'action=sw_create_task' --data 'source=serverfile' --data-urlencode 'meshId=mesh/a/../../etc' --data 'fileName=x.sh' --data "nodeIds=$AGENTID")"
+chkjq '...with an error' 'has("error")'
+rm -rf "$FILES/domain/mesh-$GRPPART/ci-serverfile.sh"
 
 echo
 echo '=================================================='

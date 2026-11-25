@@ -25,7 +25,7 @@
                 html += '<tr><td>' + esc(f.name) + '</td><td>' + esc(f.ext) + '</td><td>' + swFmtSize(f.size) + '</td>';
                 html += '<td><code>' + esc(String(f.sha256 || '').substring(0, 16)) + '…</code></td>';
                 html += '<td style="font-size:11px">' + esc(fmtLocal(f.time)) + '</td><td>' + esc(f.by || '') + '</td>';
-                html += '<td><button class="small red" data-swact="delfile" data-swfid="' + esc(f.id) + '">Delete</button></td></tr>';
+                html += '<td><button class="small red" data-swact="delfile" data-swfid="' + esc(f.id) + '" data-help="sw.delfile">Delete</button></td></tr>';
             }
             if (html === '') { html = '<tr><td colspan="7" style="color:#888">' + (list.length === 0 ? 'Library is empty - upload a package or use the server folder + Rescan.' : '') + '</td></tr>'; }
             $('swLibBody').innerHTML = html;
@@ -119,14 +119,14 @@
                 if ((c.other || 0) > 0) { res += ', ' + c.other + ' cancelled/unsupported'; }
                 var open = swApp.open[t.id] === true;
                 var hasDevices = (t.devices || []).length > 0;
-                if (hasDevices) { res += ' <button class="small" data-swact="tgl" data-swtid="' + esc(t.id) + '">' + (open ? 'hide' : 'list') + '</button>'; }
+                if (hasDevices) { res += ' <button class="small" data-swact="tgl" data-swtid="' + esc(t.id) + '" data-help="sw.list">' + (open ? 'hide' : 'list') + '</button>'; }
                 if (t.total > (t.devices || []).length) { res += ' <span class="hint">(first ' + (t.devices || []).length + ' of ' + t.total + ')</span>'; }
                 html += '<tr><td>' + esc(t.fileName) + (t.done ? '' : ' <span class="badge badge-mixed">open</span>') + '</td><td>' + esc(t.ext || '') + '</td>';
                 html += '<td style="font-size:11px"><code>' + esc(t.args || '') + '</code></td>';
                 html += '<td style="font-size:11px">' + res + '<div class="hint">' + esc(fmtLocal(t.created)) + ' by ' + esc(t.createdBy || '?') + (t.sourceType === 'serverfile' ? ' (server file)' : '') + '</div></td>';
                 html += '<td style="white-space:nowrap">';
-                html += '<button class="small" data-swact="retry" data-swtid="' + esc(t.id) + '">Retry open</button> ';
-                html += (t.done ? '' : '<button class="small red" data-swact="cancel" data-swtid="' + esc(t.id) + '">Cancel</button>');
+                html += '<button class="small" data-swact="retry" data-swtid="' + esc(t.id) + '" data-help="sw.retry">Retry open</button> ';
+                html += (t.done ? '' : '<button class="small red" data-swact="cancel" data-swtid="' + esc(t.id) + '" data-help="sw.cancel">Cancel</button>');
                 html += '</td></tr>';
                 if (open && hasDevices) {
                     html += '<tr><td colspan="5" style="background:#f6f8fb"><table style="margin:0"><thead><tr><th style="width:200px;">Device</th><th style="width:90px;">State</th><th style="width:120px;">Exit</th><th>Note</th><th style="width:140px;">Time</th></tr></thead><tbody>';

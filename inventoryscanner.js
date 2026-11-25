@@ -3,28 +3,31 @@
  * @brief MeshCentral Inventory & Vulnerability Scanner plugin - ENTRY POINT.
  *
  * Provides:
- *  - CSV exports of hardware, software and patch inventory via the device-list
- *    toolbar (Custom UI <code>devicesbarbuttons</code>) for the selected devices;
+ *  - CSV exports of hardware and software inventory via the device-list
+ *    toolbar (buttons injected into MeshCentral's devicesbarbuttons slot) for the selected devices;
  *  - an offline NVD 2.0 CVE scanner;
  *  - a per-device-group vulnerability assessment admin panel
  *    (<code>pluginadmin.ashx?pin=inventoryscanner&action=show</code>) where the
  *    administrator rates every CVE found in a group. The rating is **group-wide**
  *    (applies to all devices in the group) and requires a mandatory comment.
  *  - printable reports, scheduled scans with notifications, a winget software
- *    updater, OS update/upgrade batches and software deployment (install an
- *    MSI/EXE/DEB/... on selected devices, queued until they reconnect) -
- *    implemented in lib/, see below.
+ *    updater, OS update/upgrade batches, software deployment, PC reset, force restart,
+ *    the Windows Update troubleshooter, license collection and an optional
+ *    asset-management push - implemented in lib/, see below.
  *
  * Only existing MeshCentral plugin/DB APIs are used. All actions are gated on a
- * full site administrator (<code>user.siteadmin === 0xFFFFFFFF</code>, i.e.
- * SITERIGHT_ADMIN). No inventory data ever leaves the server; only the public
- * NVD feed is downloaded.
+ * full site administrator of the DEFAULT domain (<code>user.siteadmin === 0xFFFFFFFF</code>
+ * and <code>user.domain === ''</code>). By default no inventory data leaves the server;
+ * the only outbound data path is the optional, off-by-default asset-management connector.
+ * Downloaded: the public NVD feeds, the maintained CPE and license tables and the
+ * endoflife.date support dates.
  *
  * @author derStephan
- * @version 5.5.0
+ * @version 5.5.1
  *
  * Transparency: This plugin was created with the assistance of Qwen 3.6 27B and Qwen 3.8 Flash Next.
- * Audits: 2026-11-06 (NVIDIA Nemotron 3 550B A55B), 2026-11-11 (Claude Opus 5.5, v3.0.1) and 2026-11-14 (Claude Opus 5.5, v4.3.0) via opencode - see AUDIT.md.
+ * Audits: 2026-11-06 (NVIDIA Nemotron 3 550B A55B), 2026-11-11 (Claude Opus 5.5, v3.0.1), 2026-11-14 (Claude Opus 5.5, v4.3.0)
+ * and 2026-11-25 (Claude Opus 5.5, v5.5.1) via opencode - see AUDIT.md.
  */
 
 "use strict";
@@ -62,15 +65,16 @@ try { MODULE_CODE_VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, 'con
  *   lib/winget.js           winget engine: script builder, transport, queue, replies, scheduling
  *   lib/winget-handlers.js  winget POST handlers (config, batch run, device status, packages)
  *   lib/osupdate.js         OS update / OS release upgrade engine + its handlers
- *   lib/devreset.js         per-device Windows PC reset (systemreset) + its handlers - the ONLY
- *                           feature that reboots the device, by design (issue #4, v4.5.0)
+ *   lib/devreset.js         per-device Windows PC reset (systemreset) + its handlers - one of the
+ *                           TWO features that reboot a device on purpose (issue #4, v4.5.0)
  *   lib/wutroubleshoot.js   per-device Windows Update troubleshooter (issue #3, v4.6.0): read-only
  *                           diagnose + the WU-component-reset repairs, run directly, no reboot
  *   lib/devreboot.js        per-device force restart + user notice (issue #6, v4.7.0): the second
  *                           EXPLICIT reboot path (grace + message), Windows and Linux
  *   lib/license.js          license keys/info in the software CSV (issue #7, v4.8.0): a curated + remote +
- *                           custom rule table (name -> registry/file/WMI extraction), on-demand read-only
- *                           collection per Windows device, stored locally and added to the software CSV
+ *                           custom rule table (name -> registry/file/WMI extraction), read-only collection per
+ *                           Windows device (on demand, optionally scheduled since v5.2.0), stored locally and
+ *                           added to the software CSV
  *   lib/fleetindex.js       read-only fleet index for the two unified views (issue #8, v4.9.5): a distinct
  *                           software table and a per-device CVE count, built only from data already on this
  *                           server (stored software + the same matcher the CSV/reports use + winget + licenses);
@@ -203,11 +207,11 @@ module.exports.inventoryscanner = function (parent) {
     obj.swLogPath = path.join(obj.meshServer.datapath, 'plugins', 'inventoryscanner', 'software-deploy.log');
     /** @type {string} last probe/reset per Windows node (state file, lib/devreset.js, v4.5.0). */
     obj.devResultsPath = path.join(obj.meshServer.datapath, 'plugins', 'inventoryscanner', 'device-reset.json');
-    /** @type {string} device-reset audit log (shown in the PC Reset tab, rotated at ~5 MB). */
+    /** @type {string} device-reset audit log (shown on the PC reset page, rotated at ~5 MB). */
     obj.devLogPath = path.join(obj.meshServer.datapath, 'plugins', 'inventoryscanner', 'device-reset.log');
     /** @type {string} last diagnose/repair per Windows node (state file, lib/wutroubleshoot.js, v4.6.0). */
     obj.wuResultsPath = path.join(obj.meshServer.datapath, 'plugins', 'inventoryscanner', 'wu-troubleshoot.json');
-    /** @type {string} Windows Update troubleshooter log (shown under the OS tab, rotated at ~5 MB). */
+    /** @type {string} Windows Update troubleshooter log (rotated at ~5 MB). */
     obj.wuLogPath = path.join(obj.meshServer.datapath, 'plugins', 'inventoryscanner', 'wu-troubleshoot.log');
     /** @type {string} last restart/notice per device (state file, lib/devreboot.js, v4.7.0). */
     obj.rbResultsPath = path.join(obj.meshServer.datapath, 'plugins', 'inventoryscanner', 'device-reboot.json');

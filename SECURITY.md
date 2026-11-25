@@ -40,7 +40,11 @@ Please report security vulnerabilities by opening an issue.
 - **Cross-site request guard:** MeshCentral authenticates `pluginadmin.ashx` by session cookie only (no CSRF
   token). Every POST must therefore carry the header `X-InvScanner-Request: 1`, which only the plugin's own page
   sends (a foreign site cannot add a custom header without a CORS preflight, which MeshCentral never permits);
-  otherwise the answer is 403 (since v3.0.1). GET routes do not change state.
+  otherwise the answer is 403 (since v3.0.1). Since v5.5.1 the same applies to the one GET that is an ACTION - a live
+  scan (`action=scan` without `cached=1`) queries every device of the selected locations, so a foreign link or
+  `<img src>` could otherwise start a fleet pass in the admin's name. The remaining GETs (panel, cached scan, reports,
+  CSV) only read. The gate (401 non-admin, 401 sub-domain admin, 403 no header, 400 non-object body) is pinned by a
+  test for ALL POST actions.
 - Toolbar exports accept only well-formed node ids (`node/<domain>/<id>`), because MeshCentral does not
   rights-check the top-level `selectedDevices` list it passes to plugins.
 - Server notifications (scan results, NVD stale, deploy summary) carry `domain: ''`: MeshCentral subscribes every
@@ -71,17 +75,23 @@ Please report security vulnerabilities by opening an issue.
   script block of every view, failing when an opening tag has no extracted block (since v4.3.0/4.3.1), so no
   variant of the tag can hide a block from the syntax check.
 - **Ids:** CVE ids `CVE-\d{4}-\d{4,}`, `WINDOWS-UPDATES` or `OS-EOL`; mesh ids `^mesh/[^:]+$` (prevents key poisoning in
-  `assessments.json`) on every write and on the scan query; node ids `^node/[^:]{1,100}$` for the updater.
+  `assessments.json`) on every write and on the scan query; node ids `^node/[^:]{1,100}$` for the updater. Where a
+  mesh id becomes a PATH (Server Files deploy) both parts are validated separately since v5.5.1 - the group part as
+  MeshCentral generates it (base64 with `@`/`$`), the domain part as a plain name - and the resulting folder is
+  prefix-checked against `<filespath>` (before, `mesh/a\..\..\x/g` passed the generic id check and resolved
+  outside it). Node ids become a folder name only through `safeNodeDir`, which can no longer return `.`/`..`.
 
 ### Integrity of downloaded data (OWASP A08)
 - NVD feeds and the mapping table are fetched over HTTPS only; table redirects must stay on HTTPS and are capped
   at 2 MB.
-- Every mapping regex (remote table and custom entries) passes `isSafeTableRegex`: nested quantifiers and
-  backreferences are rejected, because one catastrophic-backtracking pattern would stall the server for every
-  scan (CWE-1333).
+- Every mapping regex (remote table, license table and custom entries) passes `isSafeTableRegex`: a repeated group
+  must not contain a quantifier or an alternation at ANY depth, and backreferences (numbered and named) are rejected,
+  because one catastrophic-backtracking pattern would stall the server for every scan (CWE-1333). Hardened in v5.5.1:
+  the earlier check missed `((a+))+$` (measured 45 s on 29 characters) and `(a|a)+$` (72 s).
 - NVD `.meta` SHA-256 mismatches are logged as warnings (NVD serves stale `.meta` files); the feed content itself
   is only trusted as public data.
-- OS lifecycle data (endoflife.date) is size-capped (512 KB per product), every field is type-checked and cycle
+- OS lifecycle data (endoflife.date) is size-capped (512 KB per product - actually applied since v5.5.1; before, the
+  2 MB table cap was used), every field is type-checked and cycle
   names are whitelisted before use. A wrong date could only change the support state shown for distribution
   packages; it can never cause commands on devices. Without data the state is *unknown*, never *supported*.
 
@@ -129,7 +139,8 @@ Please report security vulnerabilities by opening an issue.
   the only place where data leaves the server, and every push asks for confirmation. Controls: the endpoint must
   be **https** (rejected otherwise, also at request-build time); credentials are stored in
   `scanner-settings.json` on this server, are **never returned to the browser in the clear** (masked, with an
-  explicit "clear" action) and are **never written to a log**; the log records only device, HTTP status and an
+  explicit "clear" action; since v5.5.1 this includes the literal values of the generic target's extra headers, which
+  often carry an API key - they were returned in the clear before) and are **never written to a log**; the log records only device, HTTP status and an
   external id - **never a request/response body**. The push is entirely server-side from stored inventory: it
   sends **no agent command**, so it cannot reach a device and does not touch the one-session-per-agent rule.
   What is sent is the same data the admin could already export as CSV. Because the destination is
@@ -156,7 +167,7 @@ Please report security vulnerabilities by opening an issue.
   `ProfileList` read-only; a per-user registry rule reads only **already-loaded** hives (`HKEY_USERS\<SID>` of
   logged-on users) - offline hives are **never** mounted (`reg load`/`LoadKey` are rejected by the script-shape
   test), because mounting a hive is a system modification. A per-user file rule reads only existing profile
-  directories. Wildcards are capped (20 registry subkeys, 5 file candidates, 20 user profiles per run). The only
+  directories. The well-known service accounts (LocalSystem, LocalService, NetworkService) are never treated as users. Wildcards are capped (20 registry subkeys, 5 file candidates, 20 user profiles per run). The only
   per-user datum that leaves the device is the profile leaf NAME in the answer's `user` field (and thereby in the
   CSV's License Source, e.g. `registry (user: alice)`) - a name, not a secret; the key itself is stored server-side
   as before.
@@ -169,7 +180,8 @@ Please report security vulnerabilities by opening an issue.
 
 ### Input validation
 - Severity values whitelisted (CRITICAL, HIGH, MEDIUM, LOW, UNKNOWN); numeric settings range-checked
-  (e.g. intervals 0-87600 h); comments ≤ 1000 characters; ignore list ≤ 500 entries.
+  (scan interval 0-87600 h, feed refresh 1-87600 h, collection 0-525600 min, license and asset schedules 0-8760 h,
+  urgency window 0-3650 days); comments ≤ 1000 characters; ignore list ≤ 500 entries.
 - Deploy: extensions whitelisted (msi/msp/exe/deb/rpm/sh/bin), upload chunks 48 KiB below the server's 100 kb
   body limit, files ≤ 2 GiB, ≤ 500 devices per task, ≤ 100 stored tasks, ids regexed before any object lookup
   or path join.
@@ -184,17 +196,23 @@ Please report security vulnerabilities by opening an issue.
 | Version-less CVE suppression | older than 5 years |
 | winget updater | **off** |
 | Software deploy | manual-only, no automation exists |
+| License collection | **off**; when switched on: on demand, schedule 0 (= off) |
+| Asset-management connector | **off**, automatic push interval 0 (= off) |
+| OS updates / upgrades, PC reset, restart, Windows Update repair | manual only, no automation exists |
 
 ### Known limitations (accepted)
-- GET endpoints (reports, CSV export) can be opened by any page the admin visits, like every MeshCentral page; the
-  browser's same-origin policy prevents a foreign page from reading the answer.
+- The read-only GET endpoints (reports, CSV export, the cached scan) can be opened by any page the admin visits, like
+  every MeshCentral page; the browser's same-origin policy prevents a foreign page from reading the answer. Building a
+  report or an export still walks the fleet on the server (paced) - a foreign page can cause that load, not read it.
 - Response headers (CSP, `X-Frame-Options: sameorigin`, `nosniff`, `Referrer-Policy`) come from MeshCentral's
   global middleware, which also covers `pluginadmin.ashx` (verified in webserver.js). Its CSP allows
   `'unsafe-inline'` scripts, which the panel needs; XSS protection therefore relies on output escaping.
 - The winget script travels as ONE cmd.exe line; an ignore list of more than roughly 150-200 entries exceeds
   cmd's 8191-character limit and the run then ends visibly as "no marker in output". Keep the list short.
 - Generated scripts are executed by tests only partially: the deploy flow was run end to end on Windows 11 and
-  with a POSIX shell during audit 3, the CI runs one live Linux `.sh` deploy; Windows Update, winget runs and
+  with a POSIX shell during audit 3; audit 4 ran the winget dry run, the winget uninstall of a non-existent package
+  and the license extraction (machine, per-user registry wildcard, per-user file) through the real cmd.exe transport
+  on Windows 11; the CI runs one live Linux `.sh` deploy. Windows Update installs, real winget upgrades and
   `dpkg`/`rpm`/`apt` are verified against their documentation and by syntax parsers, not executed by CI.
 
 ---
@@ -208,6 +226,7 @@ Please report security vulnerabilities by opening an issue.
 | 2026-11-13 | GitHub Code Scanning (CodeQL, javascript-typescript) | - | Whole JS tree of v4.2.1 | 1 alert (`js/bad-tag-filter`, tools/check.js) - fixed in v4.2.2 |
 | 2026-11-14 | AI (opencode) | Claude Opus 5.5 | Independent full audit of v4.2.2: server, agents, winget/OS/deploy scripts (Windows + Linux), OWASP Top 10, tests, GitHub Actions, texts, docs | 10 findings + 7 test/CI + 10 text, all fixed in v4.3.0 |
 | 2026-11-14 | Follow-up (Claude Opus 5.5) + GitHub Code Scanning | - | DLL planting next to the deploy installer; CodeQL `js/bad-tag-filter` #3 in tools/check.js | both fixed in v4.3.1 |
+| 2026-11-25 | AI (opencode) | Claude Opus 5.5 | Independent full audit of v5.5.0: server, agent scripts (executed on Windows 11), update/uninstall/delete paths, OWASP Top 10, texts, docs, the test suite itself | 5 functional + 4 security + 2 hardening findings, all fixed in v5.5.1 |
 
 See [AUDIT.md](AUDIT.md) for the detailed reports in chronological order.
 
@@ -216,5 +235,5 @@ See [AUDIT.md](AUDIT.md) for the detailed reports in chronological order.
 ## Transparency Note
 
 This plugin was originally created with the assistance of **Qwen 3.6 27B** and **Qwen 3.8 Flash Next** (AI coding
-assistants). The 2026-11-06 audit was performed by **NVIDIA Nemotron 3 550B A55B**, the 2026-11-11 and 2026-11-14
-audits by **Claude Opus 5.5**, all via the opencode agent.
+assistants). The 2026-11-06 audit was performed by **NVIDIA Nemotron 3 550B A55B**, the 2026-11-11, 2026-11-14 and
+2026-11-25 audits by **Claude Opus 5.5**, all via the opencode agent.

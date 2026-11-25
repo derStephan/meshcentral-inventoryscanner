@@ -1,4 +1,4 @@
-# AGENTS.md â€” MeshCentral Inventory & Vulnerability Scanner Plugin
+# AGENTS.md — MeshCentral Inventory & Vulnerability Scanner Plugin
 
 Guide for AI agents working on this repository. Everything stated here was verified against the running code and
 the test suite in `tools/`; trust the code and these notes over assumptions.
@@ -13,18 +13,18 @@ FLAT layout - required by the MeshCentral web installer: it unpacks the reposito
 MUST stay at repository root (never re-nest them in a folder - that silently breaks the installer).
 Sub-folders INSIDE the repository (views/, tools/, lib/) are unpacked as-is and are fine.
 
-  inventoryscanner.js          ENTRY POINT only: identity, file layout, module wiring (~175 lines)
+  inventoryscanner.js          ENTRY POINT only: identity, file layout, module wiring (~235 lines; check.js fails above 300)
   lib/<module>.js              the actual functionality, one module per feature area, see "Architecture" below
   config.json                  plugin manifest: installer metadata (and MeshCentral-side config file)
   cpe-table.json               THE maintained mapping table: downloaded by running servers, edit = no release needed
-  views/assessment.handlebars  admin panel SHELL (v5.3.0): head/CSS, two-layer nav, container, the floating
-                               location panel and the IIFE brackets of the inline <script>; every panel and every
+  views/assessment.handlebars  admin panel SHELL (v5.3.0): head/CSS, two-layer nav, container, the toast
+                               (#invFloat), the hover help box (#helpBox) and the IIFE brackets of the inline <script>; every panel and every
                                JS area is a partial included from views/partials/
-  views/partials/panels/*.handlebars  one file per panel (assessment, settings, vulndata, license, devicelist,
-                               swlist, asset, updates, os, deploy, reset) - included as {{> panels/<name> }}
+  views/partials/panels/*.handlebars  one file per panel (assessment, settings, cpe, nvd, license, devicelist,
+                               swlist, asset, updates, deploy, reset) - included as {{> panels/<name> }}
   views/partials/js/*.handlebars      one file per JS area (prelude, core, state, nav, winget, os, deploy,
                                locations, scan, findings, filters, cpe, settings, reset, license, devicelist,
-                               swlist, asset, init) - included INSIDE the shell's IIFE, so the closure and all
+                               swlist, asset, help, init) - included INSIDE the shell's IIFE, so the closure and all
                                its helpers stay exactly as they were; each fragment holds complete declarations
                                only and is syntax-checked on its own by tools/check.js
   views/partials/probe.handlebars     the canary that proves partials resolve on a real server (CI asserts its
@@ -49,7 +49,7 @@ package-lock.json              committed on purpose: pins the dev dependency tre
 ## Architecture: the lib/ modules (v3.5.1)
 
 Until v3.5.0 everything lived in one 6,000-line `inventoryscanner.js`. It is now split by
-**functionality** into `lib/`, one concern per file (100-600 lines each), with the entry file reduced
+**functionality** into `lib/`, one concern per file (roughly 100-650 lines each), with the entry file reduced
 to wiring. No behaviour, no route, no data shape changed - the split is purely structural.
 
 **The pattern (attach/mixin, deliberately not `module.exports = {fn}`):** every module exports
@@ -84,16 +84,16 @@ Consequences an agent must respect:
 - **The only `__dirname` user allowed is `inventoryscanner.js` itself**, and `MODULE_CODE_VERSION` is
   read there once at module load (the hot-swap check depends on it - see "Plugin upgrade path").
 - **Attach order is wiring, not logic.** Nothing is called at attach time (the factory body of every
-  module contains only assignments), so the order in `modules` only documents layering: lifecycle â†’
-  settings/assessments â†’ data (nvd, nvdindex, cpetable, matching, oslifecycle, osscan, inventory) â†’
+  module contains only assignments), so the order in `modules` only documents layering: lifecycle →
+  settings/assessments → data (nvd, nvdindex, cpetable, matching, oslifecycle, osscan, inventory) →
   collectors/engines (collector, scheduling, winget, winget-handlers, osupdate, swstore, swdeploy,
-  swdeploy-handlers) â†’ output (reports, csv, nodes) â†’ routes â†’ browser.
+  swdeploy-handlers) → output (reports, csv, nodes) → routes → browser.
 - **ONE collection, many consumers (v5.1.0 - a hard rule).** A device's inventory is collected in exactly
   one place: `obj.fetchNodeSoftware(node, cb)` returns the raw software rows (plugin store AND sysinfo doc)
   and `obj.collectNodeInventory(node, cb)` returns the whole canonical record - identity, `hardwareSummary`,
   the raw rows, the output projection (`softwareProjection`), the per-software scan rows, the FULL findings
   list (software CVEs + OS CVEs + `WINDOWS-UPDATES` + `OS-EOL`) and the counts. **Never** re-implement that
-  chain (`fetchSysinfo` â†’ `getStoredSoftware` â†’ `scanNodeSoftware` â†’ OS findings) in a consumer, and
+  chain (`fetchSysinfo` → `getStoredSoftware` → `scanNodeSoftware` → OS findings) in a consumer, and
   **never** hand the matcher a reduced projection of the rows: `isDistroPackage`/`isDistroMaintained` read
   `location`/`installLocation`, so projecting before scanning silently turns distribution packages into
   false-positive CVEs. Consumers are `csv.js` (all three exports), `reports.js` (both scan paths),
@@ -119,7 +119,7 @@ Consequences an agent must respect:
 | `lib/nvd.js` | feed download + `.meta` check, `runNvdUpdate` (`nvdUpdateRunning` guard), `ensureNvdData`, `scheduleUpdate` (**due-aware since v5.2.0**: the delay is measured from `lastUpdate`, a stale/missing feed runs after `NVD_MIN_DELAY_MS` (60 s) and a FAILED run retries after `NVD_RETRY_MS` (6 h) - never a tight loop against the rate-limited NVD), feed loading, `nvdLog`, NVD log tailing |
 | `lib/nvdindex.js` | `processNvdData`, `productIndex`/`cpeProductTokens`/`cpeVendorTokens`/`allCves`, `compareCpeVersions`, `normalizeCveVersion`, `defMatches`, `searchCves*`, the `anyCveMaxAgeYears` age rule |
 | `lib/cpetable.js` | maintained table apply/fetch/cache (`cpe-table.json` - the ONLY curated copy since v4.2.0, the old in-code seed is gone), custom UI entries, `isSafeTableRegex`, the CPE handlers |
-| `lib/matching.js` | `classifySoftware`, `matchTableEntry`, `guessDriverFirmware`, `cpeTokenize`, `autoMatchProductTokens`, publisherâ†’vendor evidence, `scanDeviceSoftware` |
+| `lib/matching.js` | `classifySoftware`, `matchTableEntry`, `guessDriverFirmware`, `cpeTokenize`, `autoMatchProductTokens`, publisher→vendor evidence, `scanDeviceSoftware` |
 | `lib/oslifecycle.js` | endoflife.date cache + sanitizer, `osReleaseOf`, `osSupportState`, `isDistroPackage`/`isDistroMaintained`, `osEolFinding` |
 | `lib/osscan.js` | `OS_CPE_TABLE`, `mapOsToCpe`, `windowsOsTarget`, `searchOsCves`, `scanDeviceOs` |
 | `lib/inventory.js` | stored software/patch maps, `pruneSuperseded` (+ `pruneNameKey`/`pruneArchSig`/`pruneNameToken`), `getStoredSoftware`, `getWindowsUpdates` |
@@ -128,7 +128,7 @@ Consequences an agent must respect:
 | `lib/winget.js` | `wgBuildScript`/`wgTransport`/queue/pump/watchdogs, results+log persistence, `wgNodeDue`/`wgSweepOnce`/`scheduleWingetUpdates`, `psTranscriptLines`, `wingetConfig` |
 | `lib/winget-handlers.js` | `wg_get_config`, `wg_save_config`, `wg_toggle_exclude` + `wg_toggle_ignore` (v5.4.0: the atomic single-key routes - see the "never save a whole config form from another view" rule), `wg_run`, `wg_status`, `wg_programs` handlers |
 | `lib/osupdate.js` | OS batch engine: `osBuildWindowsScript`, `osBuildLinuxScript`, `osLinuxTransport`, targeting/`osUpgradeInfo`/`osUrgency`, `os_run` + `os_status` handlers |
-| `lib/devreset.js` | per-device Windows PC reset (v4.5.0, the ONLY rebooting feature): `devBuildProbeScript`/`devBuildResetScript`, `devDispatch`, `devModeAllowed`/`devProbeFresh`/`devBitlockerState` gates, `devHandleResponse`/`devResetTimeout`, `dr_status`/`dr_probe`/`dr_reset` handlers, `device-reset.json` + `device-reset.log` |
+| `lib/devreset.js` | per-device Windows PC reset (v4.5.0, one of the TWO rebooting features - the other is `lib/devreboot.js`): `devBuildProbeScript`/`devBuildResetScript`, `devDispatch`, `devModeAllowed`/`devProbeFresh`/`devBitlockerState` gates, `devHandleResponse`/`devResetTimeout`, `dr_status`/`dr_probe`/`dr_reset` handlers, `device-reset.json` + `device-reset.log` |
 | `lib/wutroubleshoot.js` | per-device Windows Update troubleshooter (v4.6.0): `wuBuildDiagnoseScript`/`wuBuildRepairScript`/`wuHead`, `wuDispatch`, `wuHandleResponse`/`wuTimeout`, reboot-state reporting, `wu_diag`/`wu_repair` handlers, `wu-troubleshoot.json` + `wu-troubleshoot.log` |
 | `lib/devreboot.js` | per-device force restart + user notice (v4.7.0): `rbBuild*Script`/`rbBuildScript`/`rbProbeLines`/`rbCleanMessage`/`rbB64`, `rbDispatch`, `rbHandleResponse`/`rbTimeout`, `reboot_now`/`reboot_notify` handlers, `device-reboot.json` + `device-reboot.log` |
 | `lib/license.js` | license keys/info in the software CSV (v4.8.0): curated `license-table.json` + remote fetch + custom rules (`applyLicenseTableText`/`sanitizeLicenseRules`/`licenseRulesForApp`), read-only `licenseBuildScript`, `licenseAppRules(rows)` (since v5.1.0 fed by `obj.fetchNodeSoftware`, so a program that only exists in the sysinfo doc is matched too - it used to see fewer programs than the CSV listed), `licDispatch`/`licHandleResponse`/`licTimeout`, `licSweepOnce` (one pass over all online Windows devices - used by BOTH the `all=true` route and the scheduler, v5.2.0), `scheduleLicenseCollection` (only when the master switch is on AND `licenseCollectIntervalHours` > 0; default 0 = on demand only), per-node `data/<node>/license.json`, `lic_status`/`lic_collect`/`get_license_table`/`add_license`/`remove_license`, `license-collection.log`. Since v5.5.0 (issue #10) rules may carry `perUser:true` (registry path written `HKCU:\...` read from every ALREADY-LOADED hive `Registry::HKEY_USERS\<SID>`; file path with a `{{profile}}` placeholder per profile dir) and ONE `*` wildcard (registry subkey segment enumerated, <=20 matches; file leaf pattern, <=5 files); users come read-only from ProfileList, capped at `LIC_MAX_USERS` (20); offline hives are NEVER loaded (`reg load`/`LoadKey` are rejected by the script-shape test); answer items carry `user`; `licenseMapForNode` is FIRST-OK-WINS (the old last-wins let a failing rule mask a found value) and puts the user into the source string (`registry (user: alice)`) for the CSV |
@@ -156,14 +156,15 @@ sub-domain admins of a multi-tenant server are refused since v3.0.1):
 
 1. **Device-list toolbar CSV exports** (hardware / software) and a **panel-open button** (`assessment`),
    all on the device-list toolbar auto-injected by the exported `onWebUIStartupEnd` browser hook (no server
-   config) â†’ `uiCustomEvent(command, myparent)` â†’ CSV pushed over the websocket â†’
+   config) → `uiCustomEvent(command, myparent)` → CSV pushed over the websocket →
    browser `saveAs()` via the exported `inventoryCsv` function. Whole-inventory CSV downloads additionally exist as
    plain URLs (`action=export&type=...`), linked in the panel top nav and suitable for bookmarks (MeshCentral has no config-driven main-menu links).
 2. **Offline CVE scan** against locally cached NVD 2.0 feeds (`<datapath>/nvd/`): curated CPE table + automatic
    evidence matcher (name tokens validated against the NVD product index, publisher -> vendor).
 3. **Assessment panel** (`pluginadmin.ashx?pin=inventoryscanner&action=show`): multi-location CVE review, group-wide
    ratings (mandatory comment), false-positive flags (optional comment), filter/sort, and a **Settings tab** for
-   all scanner/collection options including the CPE mapping table (overrides config.json, applies without restart).
+   all scanner/collection options (overrides config.json, applies without restart); the CPE mapping table has its own
+   page under Vulnerabilities > CPE table since v4.9.0.
 4. **Printable reports** (`action=report`, `action=deviceReport`): overview page + one page per location, with a
    stated **CPE coverage percentage** so findings-only views can't be misread as "all clean".
 5. **Scheduled scans + notifications** (server-side Node timers, restart-proof, monthly-capable) with per-group
@@ -173,17 +174,17 @@ sub-domain admins of a multi-tenant server are refused since v3.0.1):
    the plugin's server folder; optional command-line arguments; offline devices are QUEUED and install on reconnect;
     every delivery is SHA-256 verified on the device before it runs; results per device (state + exit code) plus
     toast/event-log feedback. Nothing ever installs on its own - a task exists only because an admin created it.
- 7. **Windows PC reset** (PC Reset tab, v4.5.0, issue #4): reset ONE chosen Windows device with the built-in
+ 7. **Windows PC reset** (Devices > PC reset, v4.5.0, issue #4): reset ONE chosen Windows device with the built-in
     `systemreset` tool, "Keep my files" or "Remove everything". One of the two features that reboot a device (a reset
     runs in Windows RE, not inside the booted OS), so it is strictly manual and per-device: a read-only Check must
     pass, the exact device name has to be typed to confirm, and "Remove everything" is blocked while BitLocker
     protection is on until the recovery key is confirmed. Never scheduled, never a fleet action.
- 8. **Windows Update troubleshooter** (OS Updates tab, v4.6.0, issue #3): per-Windows-device *Diagnose*
+ 8. **Windows Update troubleshooter** (Devices > Device list, v4.6.0, issue #3; an "OS Updates tab" until v5.4.0): per-Windows-device *Diagnose*
     (read-only: WU services, whether a reboot is pending and when Windows will restart, download-cache size,
     last `WindowsUpdateClient` errors) and *Troubleshoot* (the repairs the built-in troubleshooter applies -
     restart the update services, reset `SoftwareDistribution\Download` + `catroot2`, re-assert start types).
     Runs as SYSTEM through the agent; **it never reboots** and reports any pending reboot instead.
-9. **Force restart + user notice** (OS Updates tab, v4.7.0, issue #6): per-Windows/Linux *Notify user*
+9. **Force restart + user notice** (Devices > Device list, v4.7.0, issue #6; an "OS Updates tab" until v5.4.0): per-Windows/Linux *Notify user*
    (send a message to the logged-on user via `msg`/`wall`, no reboot) and *Restart* (reboot after a grace,
    messaging the user through the OS shutdown banner) - for before/after an upgrade. The second explicit
    reboot path: per-device, manual, device name typed, never automatic, never a batch or schedule.
@@ -225,13 +226,13 @@ Based on official MeshCentral source (`pluginHandler.js`, `webserver.js`, `db.js
   sub-folders such as lib/, views/ and tools/ are unpacked with their contents).
   Loading newly enabled plugins needs a server restart. Update detection = refetch configUrl and compare
   the version field (NO tags needed). versionHistoryUrl is intentionally absent: no downgrade picker.
-- **`pluginadmin.ashx` GET** â†’ `handleAdminReq(req,res,user)`, `POST` (urlencoded body â†’ `req.body`) â†’
+- **`pluginadmin.ashx` GET** → `handleAdminReq(req,res,user)`, `POST` (urlencoded body → `req.body`) →
   `handleAdminPostReq`. Session auth only (cookie `xid`, SameSite from `sessionsamesite`, default `lax`; no CSRF
-  token, verified in webserver.js) â€” the plugin does its own admin gate AND requires the header
+  token, verified in webserver.js) — the plugin does its own admin gate AND requires the header
   `X-InvScanner-Request: 1` on every POST (`obj.isSameOriginRequest`, 403 otherwise; a cross-site page cannot set
   a custom header without a CORS preflight, which MeshCentral never answers). Host/Origin are not compared on
   purpose (reverse proxies rewrite Host).
-- **Views:** `res.render('<name>', data)` â†” `views/<name>.handlebars` â€” **case-sensitive** on Linux.
+- **Views:** `res.render('<name>', data)` ↔ `views/<name>.handlebars` — **case-sensitive** on Linux.
   Only core Handlebars helpers exist (`each if unless with @index @last @key`); no `Object.keys`, no custom helpers.
 - **Handlebars PARTIALS work for plugin views (verified v5.3.0, proven live in CI).** `pluginHandler.handleAdminReq`
   does `serv.app.set('views', <pluginPath>/<pin>/views)` before calling the plugin, and `webserver.js` creates the
@@ -268,7 +269,7 @@ Based on official MeshCentral source (`pluginHandler.js`, `webserver.js`, `db.js
   `doc.hardware.windows.osinfo.BuildRevision` = `Version + '.' + UBR`, e.g. `10.0.26200.9711` (verified in
   agents/modules_meshcore/computer-identifiers.js; `BuildNumber` = bare `26200` as fallback). Only the full form
   can be compared with the NVD Windows ranges (see the OS matching paragraph below).
-- **Sysinfo structure** (verified against meshagent.js): hardware lives under `doc.hardware` â€”
+- **Sysinfo structure** (verified against meshagent.js): hardware lives under `doc.hardware` —
   `identifiers.{cpu_name,gpu_name[],bios_*,board_*,product_name,chassis_*,storage_devices[]}`,
   `windows.memory[]`, `tpm`, `network.dns[]`.
 - **Software & Windows updates are NOT in any MeshCentral DB** (meshagent.js has an open TODO for it). The plugin
@@ -281,25 +282,25 @@ Based on official MeshCentral source (`pluginHandler.js`, `webserver.js`, `db.js
   tab); it is then consumed (not broadcast). Error answers (`{error:...}`) never overwrite the last good list.
   Stored per node under `<datapath>/plugins/inventoryscanner/data/<nodeid>/{software,windowsupdates}.json`.
   Only Critical/Important pending updates count towards the `WINDOWS-UPDATES` finding.
-- **Notifications:** `obj.meshServer.DispatchEvent(['*'], obj, {type:'notify', domain:'', ...})` â€” ephemeral browser toast for
+- **Notifications:** `obj.meshServer.DispatchEvent(['*'], obj, {type:'notify', domain:'', ...})` — ephemeral browser toast for
    logged-in admins + entry in the server event log. No built-in email. `domain:''` is REQUIRED (v4.3.0):
    webserver.js `obj.subscribe` puts every `siteadmin == 0xFFFFFFFF` user - sub-domain admins too - on `'*'`, and
    meshuser.js `HandleEvent` filters only by `event.domain`; without it tenant admins received our scan toasts.
    Device events (`wgRaiseNodeEvent`) carry the node's own domain.
-- **Server â†’ device file delivery (v4.0.0, verified in webserver.js `handleUploadFileBatch` +
+- **Server → device file delivery (v4.0.0, verified in webserver.js `handleUploadFileBatch` +
   `handleAgentDownloadFile` and agents/meshcore.js `case 'wget'`/`serverFetchFile`):** a message
   `{action:'wget', overwrite:true, createFolder, urlpath:'/<domainurl>agentdownload.ashx?c='+cookie, path, folder,
   servertlshash}` sent over the agent's websocket makes the agent HTTPS-GET that URL **from its own server target**
-  (`getServerTargetUrlEx('*/')` â†’ `mesh.ServerUrl`) and stream the body to `path`. The URL is served WITHOUT a
+  (`getServerTargetUrlEx('*/')` → `mesh.ServerUrl`) and stream the body to `path`. The URL is served WITHOUT a
   session: `agentdownload.ashx` requires `?c=` = `parent.encodeCookie({a:'tmpdl', d:domainId, nid:nodeid, f:file},
   parent.loginCookieEncryptionKey)` and then serves `<filespath>/tmp/<f>` (`f` through `common.IsFilenameValid`);
-  the cookie is decoded with a **5-minute** timeout â†’ mint it at dispatch time, never earlier. TLS is trusted by
+  the cookie is decoded with a **5-minute** timeout → mint it at dispatch time, never earlier. TLS is trusted by
   comparing the server certificate to the control-channel hash (`servertlshash` = hex of
-  `webserver.webCertificateFullHashs[domain]`, unless `args.ignoreagenthashcheck`) â€” no certificate import on
+  `webserver.webCertificateFullHashs[domain]`, unless `args.ignoreagenthashcheck`) — no certificate import on
   devices. **wget answers NOTHING to the server** (failures surface only as session-less console text), and a
-  non-`overwrite` wget silently skips an existing file â†’ the deploy engine always uses `overwrite:true` + a unique
+  non-`overwrite` wget silently skips an existing file → the deploy engine always uses `overwrite:true` + a unique
   random file name and lets the install script verify the SHA-256 before executing. Upstream batch upload sends
-  wget only to agents connected to THIS server (its own `TODO: peer servers`) â€” same limitation here.
+  wget only to agents connected to THIS server (its own `TODO: peer servers`) — same limitation here.
 - **MeshCentral's file layout (verified `getServerFilePath`/`handleUploadFileBatch`):** server files live under
   `parent.filespath` (= `<install>/meshcentral-files` or `settings.filespath`) as
   `domain[-<x>]/mesh-<group>` (Server Files of a device group) and `domain[-<x>]/user-<id>` (My Files);
@@ -315,82 +316,86 @@ GET `pluginadmin.ashx?pin=inventoryscanner`:
 | `scan` | `assessmentScan` | JSON via `scanMultiMeshCves(meshIds, cb, opts)`; `?mesh=<id>,<id>,...` (comma-separated). `?cached=1` answers **only** from the stored snapshot `obj.scanResults` (no device is touched; payload carries `cached:true`, `cacheTime`, `missing:[meshIds]`, and `scanning:true` when a live pass is running) - that is what opening the page does since v4.4.0. Without it the devices are really scanned (`opts.store` writes the new snapshot); a second live request with the same sorted mesh set **joins** the running one (`obj.scanInFlight`) instead of doubling the work. |
 | `report` | `vulnerabilityReport` | renders `report` with `{shortName, report: buildOverallReport(), totalCves, lastUpdate}` |
 | `deviceReport` | `deviceReport` | renders `deviceReport`, same data |
-| `export` | `exportCsv` | streams a CSV **attachment** for ALL non-deleted nodes (`type=hardware|software|vulns`, default vulns; invalid â†’ 400). UTF-8 BOM, `Content-Disposition: attachment; filename=<Base>_<timestamp>.csv`; built with the same `buildCsvForNodes` as the toolbar exports - **sorted column by column, left to right** (Group, Host Name, then the rest) since v4.4.0. Intended for bookmarks and the panel top nav. |
+| `export` | `exportCsv` | streams a CSV **attachment** for ALL non-deleted nodes (`type=hardware|software|vulns`, default vulns; invalid → 400). UTF-8 BOM, `Content-Disposition: attachment; filename=<Base>_<timestamp>.csv`; built with the same `buildCsvForNodes` as the toolbar exports - **sorted column by column, left to right** (Group, Host Name, then the rest) since v4.4.0. Intended for bookmarks and the panel top nav. |
 
 POST body `action=`:
 
 | action | Keys | Notes |
 |---|---|---|
-| `save_assessment` | `meshId` or `meshIds` (comma list), `cveId`, `assessment`, `comment` | comment **mandatory**; id must match `CVE-\d{4}-\d{4,}` or be `WINDOWS-UPDATES` / `OS-EOL`; mesh ids validated `^mesh/[^:]+$`; comment trimmed, â‰¤1000 chars, stored **raw** |
+| `save_assessment` | `meshId` or `meshIds` (comma list), `cveId`, `assessment`, `comment` | comment **mandatory**; id must match `CVE-\d{4}-\d{4,}` or be `WINDOWS-UPDATES` / `OS-EOL`; mesh ids validated `^mesh/[^:]+$`; comment trimmed, ≤1000 chars, stored **raw** |
 | `flag_false_positive` | `meshId(s)`, `cveId`, `comment?` | comment **optional** (empty stays empty); sets `assessment:'UNKNOWN', flagged:true` |
 | `unflag_false_positive` | `meshId(s)`, `cveId` | deletes flagged entries for all given meshes |
-| `get_cpe_table` | â€” | `{entries:[{match,vendor,product,source:'remote'|'custom'}], cpeTable:{source:'remote'|'none',updated,url,enabled,entries}}`; a `kind`
+| `get_cpe_table` | — | `{entries:[{match,vendor,product,source:'remote'|'custom'}], cpeTable:{source:'remote'|'none',updated,url,enabled,entries}}`; a `kind`
     (driver/firmware) table row is shown as `vendor:'-', product:'excluded: <kind>'` instead of a CPE pair; `source:'none'`
     means NO table file could be loaded - the curated stage is then empty (there is no in-code fallback list since v4.2.0) |
 | `delete_cpe_table` | `match`,`vendor`,`product` | custom entries only (table rows live in cpe-table.json and can be shadowed, not deleted) |
 | `add_cpe` | `match`,`vendor`,`product` | regex validated via `new RegExp`; custom wins over the maintained table |
-| `wg_get_config` | â€” | effective wingetUpdater config + per-key sources + queue state |
+| `wg_get_config` | — | effective wingetUpdater config + per-key sources + queue state |
 | `wg_save_config` | enabled, updateMeshes(csv), excludeNodes(csv), ignorePackages(JSON), pinSync (intervalHours accepted but ignored) | validates EVERYTHING, writes overlay, `rescheduleAll()`; the panel calls it automatically on EVERY Updates-tab change (switches, groups, ignore add/remove, exclusions, "+ ignore" buttons) - no manual-save footgun since v2.7.0 |
 | `wg_run` | optional `nodeIds`(csv; overrides scope+exclusions), `dry`('true'), `pkgId` + `mode`('update'\|'uninstall') | manual batch; per-device or dry test runs; {busy} while one runs. With `pkgId` the whole batch runs restricted to that ONE package (`$invOnly` guard in the script) - `mode:'uninstall'` needs a valid `pkgId`, is never a dry run and never without one (rejected). Scope without `nodeIds` = `wgTargetNodes`: `updateMeshes` gates
     scheduled/sweep runs ONLY, every manual and package run covers ALL non-excluded Windows nodes |
-| `wg_status` | â€” | every non-deleted WINDOWS node (`wgIsWindowsNode`: reported `osdesc` must contain 'windows'; no osdesc yet = kept; phones/Linux hidden). Each row: `host` (rname-first) + `given` (admin name, used for labels/sort); malformed records tolerated. `last.rows:[{id,name,from,to,state,exit,log}]` = EVERY package of the last run
-    (dry or real, â‰¤200) - the panel's row expander shows them with the outcome (failed rows carry exit code
+| `wg_status` | — | every non-deleted WINDOWS node (`wgIsWindowsNode`: reported `osdesc` must contain 'windows'; no osdesc yet = kept; phones/Linux hidden). Each row: `host` (rname-first) + `given` (admin name, used for labels/sort); malformed records tolerated. `last.rows:[{id,name,from,to,state,exit,log}]` = EVERY package of the last run
+    (dry or real, ≤200) - the panel's row expander shows them with the outcome (failed rows carry exit code
     incl. hex + winget's own message), "+ ignore" pushes one onto `ignorePackages` and saves immediately;
     failed packages additionally get one `FAILED` line per package in `winget-update.log`, and upgraded
      packages that match (exactly or as substring) an ignore entry raise a `WARNING` line there |
-| `wg_programs` | â€” | the PACKAGES view (v3.0.0): aggregates `wgResults` per package id -> `{packages:[{id,name,ready,ok,failed,skipped,devices:[{node,label,state,from,to,time,dry}]}],note}` (â‰¤400 packages, â‰¤200 devices each, sorted by ready+failed). `label` = admin given name first, then host name, then id; results of deleted devices are dropped; `not-installed` counts into `skipped` |
-| `get_log` | `type` = nvd\|winget\|os\|deploy\|reset\|wu\|reboot\|license | whitelisted log tail (last 300 lines) |
-| `sw_files` | â€” | installer library `{files:[{id,name,ext,size,sha256,time,by}], parts:[{uploadId,bytes}], limits:{chunkBytes,maxBytes,exts}, note}` |
-| `sw_upload` | `uploadId` (hex 8..40), `name`, `index`, `data` (base64url â‰¤ `chunkBytes` raw), `last` | chunked upload into `software/parts/<id>.part`; `{ok,next}`, order-error `{error,next,have}` or `{done,file}` (hash computed, committed as immutable `<newid>.<ext>`) |
+| `wg_programs` | — | the PACKAGES view (v3.0.0): aggregates `wgResults` per package id -> `{packages:[{id,name,ready,ok,failed,skipped,devices:[{node,label,state,from,to,time,dry}]}],note}` (≤400 packages, ≤200 devices each, sorted by ready+failed). `label` = admin given name first, then host name, then id; results of deleted devices are dropped; `not-installed` counts into `skipped` |
+| `get_log` | `type` = nvd\|winget\|os\|deploy\|reset\|wu\|reboot\|license\|asset | whitelisted log tail (last 300 lines) |
+| `sw_files` | — | installer library `{files:[{id,name,ext,size,sha256,time,by}], parts:[{uploadId,bytes}], limits:{chunkBytes,maxBytes,exts}, note}` |
+| `sw_upload` | `uploadId` (hex 8..40), `name`, `index`, `data` (base64url ≤ `chunkBytes` raw), `last` | chunked upload into `software/parts/<id>.part`; `{ok,next}`, order-error `{error,next,have}` or `{done,file}` (hash computed, committed as immutable `<newid>.<ext>`) |
 | `sw_delete_file` | `fileId` | removes an unused library entry + its file; refused (error) while a NOT-done task references it |
-| `sw_rescan_library` | â€” | indexes NEW files placed in `software/files/` on the server (renamed to `<id>.<ext>`, display name kept; files that already are `<id>.<ext>` of an index entry are left alone - before v4.3.0 every rescan re-imported and renamed them), drops vanished entries; `{added,removed,failed,files}` |
-| `sw_serverfiles` | â€” | MeshCentral Server Files listing `{folders:[{meshId,name,files:[{name,size,time}]}], note}` from `<filespath>/domain[-x]/mesh-<grp>`, dot-files/invalid names hidden |
-| `sw_devices` | â€” | every non-deleted node `{devices:[{id,host,given,group,meshid,online,platform:'windows'\|'linux'\|'other',os}]}` (platform via `osPlatformOf`) |
-| `sw_create_task` | `source` ('library'\|'serverfile'), `fileId` or (`meshId`+`fileName`), `args?`, `nodeIds`(csv) and/or `meshIds`(csv) | validates everything (ids, name, ext âˆˆ SW_EXTS, args via `swSafeArgs`), expands locations, caps at `SW_MAX_DEVICES` (500), creates the task and queues all devices â†’ `{taskId, devices, note}`; offline devices stay 'queued' until connect/sweep |
-| `sw_status` | â€” | `{tasks:[{id,created,fileName,ext,args,size,sha256,done,sourceType,createdBy,counts:{ok,failed,queued,running,other},devices:[â‰¤150 {node,state,time,exit,note,platform,reboot}],total}], active, queued, running}` (open tasks first, â‰¤60) |
-| `sw_retry_task` | `taskId` (hex-validated, hasOwnProperty), optional `nodeIds` | re-queues not-ok devices (default: everything but ok/running) â†’ `{success, devices}` |
-| `sw_cancel_task` | `taskId` | queued devices â†’ 'cancelled' (running sessions finish normally), queue entries dropped â†’ `{success, cancelled, note}` |
+| `sw_rescan_library` | — | indexes NEW files placed in `software/files/` on the server (renamed to `<id>.<ext>`, display name kept; files that already are `<id>.<ext>` of an index entry are left alone - before v4.3.0 every rescan re-imported and renamed them), drops vanished entries; `{added,removed,failed,files}` |
+| `sw_serverfiles` | — | MeshCentral Server Files listing `{folders:[{meshId,name,files:[{name,size,time}]}], note}` from `<filespath>/domain[-x]/mesh-<grp>`, dot-files/invalid names hidden |
+| `sw_devices` | — | every non-deleted node `{devices:[{id,host,given,group,meshid,online,platform:'windows'\|'linux'\|'other',os}]}` (platform via `osPlatformOf`) |
+| `sw_create_task` | `source` ('library'\|'serverfile'), `fileId` or (`meshId`+`fileName`), `args?`, `nodeIds`(csv) and/or `meshIds`(csv) | validates everything (ids, name, ext ∈ SW_EXTS, args via `swSafeArgs`), expands locations, caps at `SW_MAX_DEVICES` (500), creates the task and queues all devices → `{taskId, devices, note}`; offline devices stay 'queued' until connect/sweep |
+| `sw_status` | — | `{tasks:[{id,created,fileName,ext,args,size,sha256,done,sourceType,createdBy,counts:{ok,failed,queued,running,other},devices:[≤150 {node,state,time,exit,note,platform,reboot}],total}], active, queued, running}` (open tasks first, ≤60) |
+| `sw_retry_task` | `taskId` (hex-validated, hasOwnProperty), optional `nodeIds` | re-queues not-ok devices (default: everything but ok/running) → `{success, devices}` |
+| `sw_cancel_task` | `taskId` | queued devices → 'cancelled' (running sessions finish normally), queue entries dropped → `{success, cancelled, note}` |
 | `os_run` | `mode` = update\|upgrade, optional `nodeIds` (csv) | v3.5.0 manual OS batch (`osStartBatch`); `update` = every non-excluded node with `osPlatformOf` windows\|linux, `upgrade` = only nodes where `osUpgradeInfo` says outdated AND has a method; explicit ids are filtered by the same rule; {busy} while a winget or OS batch runs |
-| `os_status` | â€” | every Windows/Linux node: `platform, os, online, excluded, outdated, upgradable, target, note, last, pending` + `running, mode, active, queued, current:{windows11, ubuntuLts}` |
-| `dr_status` | â€” | (v4.5.0) every Windows node `{devices:[{id,host,given,group,os,online,excluded,probe,hasProbe,modes:{clean,keepfiles},last,pending}], minBuild, pending:[nodeids]}` - cached probe + last reset, no agent command sent |
+| `os_status` | — | every Windows/Linux node: `platform, os, online, excluded, outdated, upgradable, target, note, last, pending` + `running, mode, active, queued, current:{windows11, ubuntuLts}` |
+| `dr_status` | — | (v4.5.0) every Windows node `{devices:[{id,host,given,group,os,online,excluded,probe,hasProbe,modes:{clean,keepfiles},last,pending}], minBuild, pending:[nodeids]}` - cached probe + last reset, no agent command sent |
 | `dr_probe` | `nodeId` | (v4.5.0) dispatches the read-only probe on `invscanner-dr-<node>` (runcommands type 1); {started} or {error} (offline / non-Windows / a busy session). The answer arrives on the route hook |
-| `dr_reset` | `nodeId`, `mode` (`clean`\|`keepfiles`), `confirm` (typed device name), `bitlockerAck` (`true` for a clean reset past BitLocker) | (v4.5.0) the ONLY rebooting action: gated on a fresh passing probe + a correctly typed name + (clean) BitLocker ack, then dispatches `systemreset -cleanpc/-keepfiles -noUI`; {started,mode} or {error}. The device restarts into WinRE, so the reply is often replaced by the offline transition |
+| `dr_reset` | `nodeId`, `mode` (`clean`\|`keepfiles`), `confirm` (typed device name), `bitlockerAck` (`true` for a clean reset past BitLocker) | (v4.5.0) one of the TWO rebooting actions (the other is `reboot_now`): gated on a fresh passing probe + a correctly typed name + (clean) BitLocker ack, then dispatches `systemreset -cleanpc/-keepfiles -noUI`; {started,mode} or {error}. The device restarts into WinRE, so the reply is often replaced by the offline transition |
 | `wu_diag` | `nodeId` | (v4.6.0, issue #3) dispatches the read-only Windows Update diagnose on `invscanner-wu-<node>` (runcommands type 1): WU services + start types, whether a reboot is pending + when Windows will restart automatically, the download-cache size and the last `WindowsUpdateClient` errors. {started} or {error} (offline / non-Windows / busy). Changes nothing on the device |
 | `wu_repair` | `nodeId` | (v4.6.0) applies the troubleshooter's "fix" steps DIRECTLY (the `Get/Invoke-TroubleshootingPack` cmdlets are gone since Win10 1709): restart BITS/wuauserv/appidsvc/cryptsvc/msiserver, reset `SoftwareDistribution\Download` + `System32\catroot2`, re-assert Automatic start types. {started} or {error}. **Never reboots** - the answer reports `rebootTriggered=false` and any pending reboot with when Windows handles it; a locked file shows as a `partial` step |
 | `reboot_notify` | `nodeId`, `message` | (v4.7.0, issue #6) sends a message to the logged-on user of a Windows/Linux device WITHOUT rebooting (Windows `msg *`, Linux `wall`); also reports whether a reboot is already pending and who is logged on. {started} or {error} (offline / macOS or no reported OS / busy). Message is sanitized (control chars + quoting chars stripped, ≤200) and travels base64 |
 | `reboot_now` | `nodeId`, `secs` (0..3600, default 60 grace), `message`, `confirm` (typed device name) | (v4.7.0) the SECOND explicit reboot path: after a typed-name confirm, restarts one Windows/Linux device with a grace period, messaging the user through the OS shutdown banner (`shutdown /r /t` / `shutdown -r +m`, plus a `msg`/`wall` heads-up). {started,platform,secs} or {error}. Never batched/scheduled; abort within the grace with `shutdown /a` (Win) / `shutdown -c` (Linux) is noted in the result |
-| `lic_status` | â€” | (v4.8.0, issue #7) Windows devices `{devices:[{id,host,given,group,os,online,collected:{time,found,ms,apps,error}|null,pending}], enabled, running}` - collected license summary per device, no command sent |
+| `lic_status` | — | (v4.8.0, issue #7) Windows devices `{devices:[{id,host,given,group,os,online,collected:{time,found,ms,apps,error}|null,pending}], enabled, running}` - collected license summary per device, no command sent |
 | `lic_collect` | `nodeId` OR `all:'true'` | (v4.8.0) runs the READ-ONLY license extraction (registry value / file regex-jsonfield-line / WMI property) built from the curated+custom rule table on one (or all online) Windows device(s). Refused while `licenseCollectionEnabled` is off (default). {started} / {started,devices} or {error}; the marker answer is stored in `data/<node>/license.json` |
-| `get_license_table` | â€” | (v4.8.0) the full license rule table `{entries:[{match,label,rules,source:'table'|'custom'}], licenseTable:{source,origin,updated,url,tableEnabled,entries,custom}}` |
+| `get_license_table` | — | (v4.8.0) the full license rule table `{entries:[{match,label,rules,source:'table'|'custom'}], licenseTable:{source,origin,updated,url,tableEnabled,entries,custom}}` |
 | `add_license` / `remove_license` | match, label, rules (JSON array) / index | (v4.8.0) custom rule editor; every field validated (`isSafeTableRegex`, type ∈ registry/file/wmi, lengths, ≤8 rules) before storing to `license-custom.json`; custom wins over the table |
 | `sw_fleet` | `refresh` (optional '1') | (v4.9.5, issue #8) READ-ONLY fleet index that powers the two unified views: `{devices, software:[{name, version, versions, publisher, deviceCount, vulnerable, cve, maxSeverity, updatable, hasLicense}], byDevice:{<nodeId>:{cve, maxSeverity}}, generated}`. Built only from data already on the server (stored software + the report/CSV matcher + winget results + local license maps); sends nothing to any agent and makes no new outbound request. Cached ~60 s so switching between the two views does not re-scan. |
 | `dev_details` | `nodeId` | (v5.4.0, issue #9) READ-ONLY everything stored about ONE device, fetched on demand by the Device list's *Details* button: identity + `hardwareSummary` + the installed programs + the FULL `findings` (shaped like the CSV rows) + the `coverage` rows + counts, plus the last run of every engine (`winget.rows`, `os`, `wu`, `rb`, `reset` probe/modes/last) and the license **counts**. Built from `obj.collectNodeInventory` - never a second collection. Contains NO license value and sends NO agent command. |
 | `sw_details` | `name`, optional `pkgId` | (v5.4.0, issue #9) READ-ONLY everything stored about ONE installed program across the fleet: `devices` (with version, capped 300), `versions`, `cves` (capped 200), `coverage` statuses, `licenseDevices` (a COUNT - never a value) and the `winget` aggregate for that package (ready/ok/failed/skipped + per-device rows + whether it is ignored). Paced walk over `collectNodeInventory`, cached ~60 s per name. |
 | `wg_toggle_exclude` | `nodeId`, `excluded` ('true'/'false') | (v5.4.0, issue #9) puts ONE device on the winget exclusion list or takes it off, changing ONLY that key server-side. Exists because `wg_save_config` reads the whole form from the Updates-tab DOM - calling it from another view would have saved `enabled:false` with empty `updateMeshes`/`ignorePackages`. Keys that came from config.json are not copied into the plugin file. |
 | `wg_toggle_ignore` | `pkgId`, `ignore` ('true'/'false'), optional `note` | (v5.4.0, issue #9) the same for ONE package id on the ignore list (validated against `WINGET_ID_RE`, list capped at 500). Used by the Software list's *Ignore* button. |
-| `as_get_config` / `as_save_config` | full asset-management form | (v5.0.0, issue #5) the connector configuration in its OWN `assetManagement` section of scanner-settings.json (so the Settings-tab save/reset cannot wipe it and vice versa). Validated: https-only endpoint, method whitelist, JSON headers + JSON body template, Jira needs a project key, enabling needs a URL. Secrets (token/password/header value) are NEVER returned in the clear - the GET answers with a mask + `has*` flags; on save a blank secret KEEPS the stored value and `__AS_CLEAR__` erases it. |
+| `as_get_config` / `as_save_config` | full asset-management form | (v5.0.0, issue #5) the connector configuration in its OWN `assetManagement` section of scanner-settings.json (so the Settings-tab save/reset cannot wipe it and vice versa). Since v5.5.1 the literal values of the generic `headersJson` are masked on the way out like every other secret (`asMaskHeadersJson`; placeholder values stay visible) and a masked value on save keeps the stored one. Validated: https-only endpoint, method whitelist, JSON headers + JSON body template, Jira needs a project key, enabling needs a URL. Secrets (token/password/header value) are NEVER returned in the clear - the GET answers with a mask + `has*` flags; on save a blank secret KEEPS the stored value and `__AS_CLEAR__` erases it. |
 | `as_status` | - | (v5.0.0) `{devices:[{id,host,given,group,last:{time,status,httpCode,externalId,error}|null}], running, config}` - the masked config summary plus the last push per device. |
 | `as_test` | - | (v5.0.0) sends ONE synthetic sample record to the configured target and reports `{ok, httpCode}` - verifies URL/auth/mapping without pushing the fleet. |
 | `as_push` | `nodeIds` (csv, optional; absent = all devices) | (v5.0.0) pushes the aggregated hardware/software/vulnerability record of each device to the target (Jira issue, Snipe-IT hardware asset, or the generic template). Refused while disabled. Server-side only: **no agent command is sent**. Create on the first push, update on later ones via the stored external id. Result per device goes to `asset-sync.json`; the log records status only. |
-| `update_nvd` | â€” | starts `runNvdUpdate(true)` (background) and answers {started:true} / {alreadyRunning:true}; concurrent runs skip via the `nvdUpdateRunning` flag |
-| `get_nvdlog` | â€” | `{lines:[...last 200 of nvd-download.log], size, file}`; `note` if file missing |
-| `get_locations` | â€” | all non-deleted meshes `{locations:[{id,name}]}` (also feeds the Settings tab group table) |
+| `update_nvd` | — | starts `runNvdUpdate(true)` (background) and answers {started:true} / {alreadyRunning:true}; concurrent runs skip via the `nvdUpdateRunning` flag |
+| `get_nvdlog` | — | `{lines:[...last 200 of nvd-download.log], size, file}`; `note` if file missing |
+| `get_locations` | — | all non-deleted meshes `{locations:[{id,name}]}` (also feeds the Settings tab group table) |
 | `remove_cpe` | `index` | legacy index-based removal |
-| `get_settings` | â€” | `{settings:{...effective...}, sources:{key:'file'|'config.json'|'default', notifyPerGroup:{meshId:src}, revertAllowed:{key:bool}}}` |
+| `get_settings` | — | `{settings:{...effective...}, sources:{key:'file'|'config.json'|'default', notifyPerGroup:{meshId:src}, revertAllowed:{key:bool}}}` |
 | `save_settings` | full form field set (see `saveSettingsHandler`); `osUpgradeUrgentDays` optional (0..3650, absent/empty keeps a saved value) | validates everything, writes `scanner-settings.json`, runs `rescheduleAll()`, answers with the `get_settings` payload; `reset=true` clears the overrides of THIS tab (`vulnerabilityScanner` + `inventoryScanner`). Save and reset keep every other section of the file, notably `wingetUpdater` (up to v3.5.1 both replaced the whole file and dropped it) |
 | `revert_setting` | one key of `revertScanIntervalHours`/`revertScanMeshes`/`revertNotifyOnScan`/`revertNotifyThreshold`/`revertNotifyUnratedRepeat`/`revertNotify`/`revertUpdateHours`/`revertAnyCveMaxAgeYears`/`revertAutoProductMatch`/`revertCpeTableEnabled`/`revertCpeTableUrl`/`revertDistroManaged`/`revertOsLifecycleEnabled`/`revertOsLifecycleUrl`/`revertOsUpgradeUrgentDays`/`revertCollectIntervalMinutes`/`revertCollectOnAgentConnect` = 'true' | removes that single override so config.json/default applies again |
 
-Every POST: 401 unless `isAuthorizedAdmin`, 403 without header `X-InvScanner-Request: 1`, 400 without an object body.
+Every POST: 401 unless `isAuthorizedAdmin`, 403 without header `X-InvScanner-Request: 1`, 400 without an object body
+(pinned for ALL POST actions by the audit-4 gate matrix in tools/test-plugin.js, incl. a sub-domain full admin).
+**A LIVE scan (`GET action=scan` without `cached=1`) needs the same header since v5.5.1** (403 otherwise): it queries
+every device of the selected locations, so a foreign link or `<img src>` must not be able to start it. The panel's
+`get()` helper sends the header; the cached read and the report/CSV GETs stay plain GETs.
 GET also knows `show_cpe` (legacy JSON list of custom entries with index, used by nothing in the panel).
 `save_assessment`/`flag_false_positive`/`unflag_false_positive` all validate the finding id (`CVE-...`,
 `WINDOWS-UPDATES`, `OS-EOL`; unflag since v3.0.1);
-`scan` validates every mesh id with the same `^mesh/[^:]+$` rule (since v3.0.1, â‰¤1000 ids).
+`scan` validates every mesh id with the same `^mesh/[^:]+$` rule (since v3.0.1, ≤1000 ids).
 `add_cpe` rejects regexes failing `isSafeTableRegex` and vendor/product longer than 200 characters.
 
-Assessments persist in `<datapath>/nvd/assessments.json`, key `"<meshId>:<cveId>"` â†’
+Assessments persist in `<datapath>/nvd/assessments.json`, key `"<meshId>:<cveId>"` →
 `{meshId, cveId, assessment, comment, lastModified, assessedBy, assessedById, flagged?}`.
-Scheduled results in `<datapath>/nvd/scans.json` â†’ `meshId -> {time, cves:[{cve, severity, ...}]}`.
-Maintained CPE table: repo `cpe-table.json` â†’ the installer unpacks it into `<datapath>/plugins/inventoryscanner/`, which is
+Scheduled results in `<datapath>/nvd/scans.json` → `meshId -> {time, cves:[{cve, severity, ...}]}`.
+Maintained CPE table: repo `cpe-table.json` → the installer unpacks it into `<datapath>/plugins/inventoryscanner/`, which is
 **exactly `obj.cpeTablePath`** - so on an installed server the maintained table is live from the first second without
 any download, and a refresh (`fetchCpeTable`, at startup when stale and after every NVD cycle, https only) rewrites
 that SAME file in place; a plugin upgrade re-unpacks the shipped copy (the newer shipped table then wins until the
@@ -402,11 +407,11 @@ never a code change. If neither file loads, `activeSoftwareTable()` is EMPTY (cu
 work, the panel says so loudly) - deliberately no hidden fallback list. `cpeTableStatus().origin`
 reports where the live file came from ('downloaded' | 'cache' | 'bundled'); custom (UI) entries always come first.
 Entry regexes compile with the `i` flag ONLY;
-bad JSON/regex â†’ payload rejected, current table keeps running. Keys: `cpeTableEnabled`/`cpeTableUrl` (Vulnerabilities > Reports, NVD & CPE table).
+bad JSON/regex → payload rejected, current table keeps running. Keys: `cpeTableEnabled`/`cpeTableUrl` (Vulnerabilities > Reports, NVD & CPE table).
 A table row may replace `vendor`/`product` with **`kind:'driver'|'firmware'`** (out-of-NVD-scope marker, see below);
 `applyCpeTableText` validates that shape and `matchTableEntry` returns it, kind rows win over the name heuristics.
 
-UI-managed scanner settings in `<datapath>/plugins/inventoryscanner/scanner-settings.json` â†’
+UI-managed scanner settings in `<datapath>/plugins/inventoryscanner/scanner-settings.json` →
 `{vulnerabilityScanner:{...}, inventoryScanner:{...}}`, merged over `config.settings` by
 `obj.effectiveSectionConfig(section)` (file wins per key). **The plugin never writes config.json.**
 
@@ -415,8 +420,8 @@ UI-managed scanner settings in `<datapath>/plugins/inventoryscanner/scanner-sett
 locations:[{meshId,name,devices:[device labels - admin given name first, rname/_id fallback], deviceList:[...]}], assessments:{meshId:rec|null}, assessment:rec|null,
 mixed:bool, anyFlagged:bool}], flaggedCount, totalCves, lastUpdate }`.
 **Honest aggregation (v2.8.0):** software/version are PER-DEVICE attributes - `obj.summarizeDeviceSwVer` runs
-over the merged `deviceList` (also inside `buildOverallReport` findings): uniform â†’ single value shown;
-differing â†’ `versionVaried`/`softwareVaried` + `variedVersions`/`variedSoftware` and `version` becomes '' -
+over the merged `deviceList` (also inside `buildOverallReport` findings): uniform → single value shown;
+differing → `versionVaried`/`softwareVaried` + `variedVersions`/`variedSoftware` and `version` becomes '' -
 a row must NEVER show one arbitrary device's version as truth for all (the v2.7.1 "1.2.6.0 vs 2.3.3.0" bug).
 **Unknown installed version:** version strings first pass `normalizeCveVersion`: Debian epochs stripped
   (`1:2.3.4-1` -> `2.3.4`), numeric cores without distro decoration (`22.04.0-1build1` -> `22.04.0`),
@@ -439,15 +444,16 @@ programsNotAssessable, programsOutOfScope, programsDistroManaged, osSupport, cve
 **`coverageBase` exists because Handlebars cannot add** - the reports must print `assessable/coverageBase`, never
 `assessable/totalPrograms` (drivers would silently deflate the percentage).
 
-Counting semantics: `totalCves`/`severityCounts` = deviceÃ—CVE **occurrences**; a false-positive-flagged occurrence
+Counting semantics: `totalCves`/`severityCounts` = device×CVE **occurrences**; a false-positive-flagged occurrence
 moves to `falsePositiveCves` and is excluded from severity counting; a group rating **overrides** the NVD severity
 for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like normal findings.
 
 ## Panel behavior (views/assessment.handlebars inline JS)
 
 - **View composition (v5.3.0):** the panel is no longer one 3,240-line file. `views/assessment.handlebars` is a
-  ~165-line SHELL (head/CSS, the two-layer nav, the container, `#invFloat`, the floating location panel and the
-  `(function () { … })();` brackets) that includes 11 panel partials and 19 JS partials. The JS fragments are
+  ~173-line SHELL (head/CSS, the two-layer nav, the container, `#invFloat`, the hover help box `#helpBox` - the floating
+  location panel of v5.3.0 was removed in v5.4.0 - and the
+  `(function () { … })();` brackets) that includes 11 panel partials and 20 JS partials (19 at v5.3.0, `js/help` was added in v5.4.0). The JS fragments are
   included **inside** the IIFE, so there is still exactly ONE closure and every helper (`$`, `esc`, `post`,
   `showMsg`, `selectSub`, …) resolves exactly as before - no namespace object, no global leak, no reordering.
   Rules for editing: a JS fragment must contain **complete declarations only** (never an unbalanced brace - the
@@ -469,15 +475,16 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   is ("Cached result of <time>"). **Scan & Review** is the only button that touches the devices; while it
   runs the rest of the server still answers (paced), and a second panel joins the running pass.
   Location selection = floating DIV (checkbox per mesh + "All locations"), persisted in
-  `localStorage` key `invscanner_locations`; toggle button fixed top-right.
-- Sortable columns (`data-key`, click toggles asc/desc, default cvss desc) + filters (text, effective severity,
+  `localStorage` key `invscanner_locations`; since v5.4.0 an inline row above the table (the floating panel and its
+  toggle button are gone).
+- Sortable columns (`data-key`, click toggles asc/desc, default EFFECTIVE severity desc since v5.4.0 with CVSS as the tiebreaker) + filters (text, effective severity,
   status: CVE/false positive/rated/unrated). Since v2.7.1 seven columns: CVE, Severity, CVSS, **Software & Version**
   (merged), Status, Affected Locations/Devices (device labels = given name first), **Manual Rating & Comment**
   (select + comment input + Save/False-positive buttons in one cell; sorted by the rating). The save/flag handlers
   find their controls via `tr.querySelector('.rating-sel'/'.comment-inp')` - never by cell index.
 - Save/flag/unflag post the **meshIds of all affected selected locations** in one request; after success the row
   state is patched client-side (no rescan).
-- All dynamic values rendered via `esc()` (comments stored raw â†’ escape at output; never double-escape).
+- All dynamic values rendered via `esc()` (comments stored raw → escape at output; never double-escape).
 - The page heading (`h1#pageTitle`) follows the active tab (titles map in the tab click handler).
 - The status line under the heading is tab-aware (v4.2.0): the NVD-feed/scan-schedule part (`span#statusMeta`) is
   shown only on the Assessment and Settings tabs (the tab click handler toggles it); every tab still ends with
@@ -573,8 +580,8 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   nowrap action column forced horizontal table scrolling (reported by the user). Fleet/toolbar buttons outside
   rows keep the classic green/red/purple semantics.
 
-- Deploy tab (v4.0.0): library table + `<input type=file>` upload (FileReader chunks â†’ `sw_upload`, sequential
-  POSTs with resume-on-gap, progress text), source switch plugin-library â‡„ MeshCentral Server Files (two selects,
+- Deploy tab (v4.0.0): library table + `<input type=file>` upload (FileReader chunks → `sw_upload`, sequential
+  POSTs with resume-on-gap, progress text), source switch plugin-library ⇄ MeshCentral Server Files (two selects,
   filled by `sw_files` / `sw_serverfiles`), arguments input, location+device picker from `get_locations` +
   `sw_devices` (offline flagged, non-Windows/Linux disabled), and the task list from `sw_status` with per-row
   expander (device state, decimal+hex exit code, note) plus Retry-open / Cancel buttons. Uploads and tasks poll
@@ -710,7 +717,7 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   `invscanner-wg-<node>` sessionid prefix; foreign sessions are never consumed.
 - Transport (verified end-to-end on PS 5.1): runcommands TYPE 1 (cmd.exe) with ONE line:
   `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$d=FromBase64String(
-  b64(gzip(script)));â€¦GZipStreamâ€¦;Invoke-Expression $s"` - cmd's stdin reader has no PSReadLine
+  b64(gzip(script)));…GZipStream…;Invoke-Expression $s"` - cmd's stdin reader has no PSReadLine
   trouble, PS gets the whole script atomically (exit/transcript reliable), gzip keeps the line at
   ~2KB vs cmd's 8191 limit. PowerShell is NEVER fed line-interactive anymore.
   The builder still keeps one statement per line anyway (defense in depth, guarded by a test).
@@ -757,7 +764,7 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   wgPending entry exists for that node - but a reply WITH a foreign sessionid (a browser session) never is;
   console-channel text is buffered only when it is session-less (meshcore.js echoes runcommands output via
   `sendConsoleText` without a sessionid) or on our own wg session, accumulates on the pending entry (`.cbuf`,
-  capped) and is consumed ONLY once the marker payload actually parses â€” partial chunks must never end
+  capped) and is consumed ONLY once the marker payload actually parses — partial chunks must never end
   a session (the runcommands reply or the watchdog finishes it). The payload is read up to the first
   line break after the marker (ConvertTo-Json -Compress is one line), so trailing console text cannot
   corrupt it; both Stop-Transcript calls pipe to `| Out-Null` because the cmd transport makes
@@ -875,7 +882,7 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   transcript via `psTranscriptLines('invscanner-deploy.log')` (protected folders, same as winget). Exit 3010/1641 =
   ok + reboot pending; **a reboot is never triggered**. A .msi/.msp on Linux answers failed ('Windows installer')
   without executing.
-- **Sessions**: `invscanner-sw-<node>` on the shared routeAgentCommand hook (`onAgentResponse` checks sw â†’ os â†’ wg;
+- **Sessions**: `invscanner-sw-<node>` on the shared routeAgentCommand hook (`onAgentResponse` checks sw → os → wg;
   session-less answers are only taken while `swPending[node]` exists; console text accumulates on `.cbuf` and is
   consumed only when the marker parses; console lines of an sw session are mirrored into software-deploy.log).
   Watchdog 2 h (`SW_RUN_TIMEOUT_MS`), parallel `SW_MAX_PARALLEL = 2`. The winget/OS pumps skip nodes with an sw
@@ -896,12 +903,12 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
      The scripts themselves distinguish the two physical cases: "nothing ever appeared at <stage>" vs
      "a file appeared but its SHA-256 never matched (last seen <16 hex>*)" (Windows `$invSaw`/`$invSeen`/`$invWhy`,
      Linux `SAW`/`SEEN`/`NOTE`). A re-send never renews `SW_FILE_WAIT_MIN`.
-- **Reconnect queue**: every queued device of a task is re-tried by `hook_agentCoreIsStable` â†’
+- **Reconnect queue**: every queued device of a task is re-tried by `hook_agentCoreIsStable` →
   `obj.swOnNodeConnect(nodeid)` (staggered like collection) and by `swSweepOnce` every `SW_SWEEP_MS` (10 min,
   gen-guarded chain via `scheduleSwSweep`, also invoked from `rescheduleAll`). A device still 'running' but with NO
   pending session (socket died mid-script) is reset to 'queued' on load, connect and sweep - nothing is ever lost
   to a restart (`swLoadTasks` does the same after a server crash).
-- **Task states**: `queued â†’ running â†’ ok | failed | error | no-file | timeout | unsupported | cancelled`
+- **Task states**: `queued → running → ok | failed | error | no-file | timeout | unsupported | cancelled`
   (final set `swIsFinal`); when no device is open, `swTaskDoneCheck` closes the task, deletes the staged copy,
   logs a summary and raises the admin toast; every device also gets the node event (`wgRaiseNodeEvent`, reused
   intentionally - the message text is 'Software deploy: ...').
@@ -911,9 +918,13 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   to `<id>.<ext>`. Server-side deletions are visible via the rescan button.
 - **Validation**: file ids `^[a-f0-9]{12}$`, task ids `^[a-f0-9]{8,32}$` (+ hasOwnProperty lookup), upload ids
   `^[a-f0-9]{8,40}$`, extensions must be in `SW_EXTS`, node/mesh ids as everywhere, args through `swSafeArgs`
-  (control chars â†’ spaces, â‰¤500), names through `swSanitizeName` (basename, â‰¤200); the server-file path is derived
+  (control chars → spaces, ≤500), names through `swSanitizeName` (basename, ≤200); the server-file path is derived
   ONLY from DB mesh ids + listed names and re-validated against `<filespath>/domain.../mesh-...` at dispatch
-  (traversal impossible); every staged name is server-generated. Agents scripts contain zero caller-typed text
+  (traversal impossible) - since v5.5.1 by ONE function, `obj.swServerFilesDir(meshId)`, used by the listing, by
+  `sw_create_task` and by the dispatch: the group part matches `SW_GROUP_ID_RE` (`[A-Za-z0-9@$._-]` - real MeshCentral
+  mesh ids are base64 with `@` and `$`; v5.5.0 refused every real group), the DOMAIN part `SW_DOMAIN_ID_RE` (it was
+  not validated at all - `mesh/a\..\..\x/g` resolved outside `<filespath>`), and the folder is prefix-checked
+  against `<filespath>`; every staged name is server-generated. Agent scripts contain zero caller-typed text
   beyond the quoted args/name fields.
 - **Limits**: `SW_CHUNK_BYTES 49152` raw per POST (base64url stays below body-parser's 100kb urlencoded default -
   the pluginadmin route does NOT raise it, verified in webserver.js), `SW_MAX_FILE_BYTES` 2 GB, `SW_MAX_DEVICES`
@@ -969,7 +980,7 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
 
 ## Windows Update troubleshooter (v4.6.0, issue #3, verified contracts)
 
-- One module `wutroubleshoot.js`, surfaced as two per-Windows-device buttons **in the OS Updates tab**
+- One module `wutroubleshoot.js`, surfaced as two per-Windows-device buttons (originally **in the OS Updates tab**, since v5.4.0 in the device list)
   (no new tab, it belongs to the Windows Update story). State: `obj.wuPending` (live `diag`/`repair`
   sessions), `obj.wuResults` (last result per node, persisted to `wu-troubleshoot.json` via
   `wuLoadResults`/`wuSaveResults`); audit `wu-troubleshoot.log` (`wuLog`, ~5 MB rotate). `os_status`
@@ -1038,7 +1049,7 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   and every file `regex` passes `obj.isSafeTableRegex`; fields length-capped; ≤8 rules/app, ≤60 apps/run
   (`sanitizeLicenseRules`, `licenseAppRules`).
 - **Opt-in, on-demand, read-only, never sent anywhere**: `licenseCollectionEnabled` defaults OFF and there is
-  deliberately no scheduler - `lic_collect` refuses while it is off. The script only reads (GetValue /
+  no scheduler by default (an OPTIONAL schedule exists since v5.2.0, `licenseCollectIntervalHours`, default 0) - `lic_collect` refuses while it is off. The script only reads (GetValue /
   Get-Content / Get-CimInstance) and emits no write or reboot command (a test asserts this). The collected
   values are secrets: they are stored ONLY on this server under `data/<node>/license.json` (never in a log,
   never exported anywhere but the admin's own software CSV). `licenseLog` records counts, not the keys.
@@ -1053,7 +1064,10 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
   as is `perUser` on wmi. Users are discovered read-only from
   `HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList` (SID + `ProfileImagePath`, machine env expanded),
   capped at `LIC_MAX_USERS` (20); only profiles with a loaded hive (registry) or an existing directory (files) take
-  part. Every answer item carries the `user` (the profile leaf name) it came from.
+  part. **Every profile is probed inside its own `try` (v5.5.1)**: on a real Windows 11 `Test-Path` on the profile
+  of `S-1-5-18` (systemprofile) throws "access denied", and in v5.5.0 one `try` around the whole loop ended the
+  discovery there - NO user was ever found and every per-user rule failed silently (measured in audit 4). The
+  service SIDs `S-1-5-18/19/20` are skipped (no users, they must not use up the cap). Every answer item carries the `user` (the profile leaf name) it came from.
 - **First-ok-wins mapping (v5.5.0):** `licenseMapForNode` used to let the LAST item per name win, so a later failing
   rule masked a value an earlier rule had found; now the first `ok:true` item with a non-empty license wins (a test
   pins both directions), and the CSV's `License Source` shows `registry (user: alice)` style attribution. `add_license`
@@ -1095,16 +1109,22 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
 6. **Comments stored raw**, escaped at render; validation (trim/length) still server-side.
 7. **NVD status derives from feed file mtimes** (`loadNvdFromAllFiles`), so it's truthful after restarts; the
    views only say "not downloaded" when `totalCves === 0`. Never reintroduce a download-only timestamp.
-8. **Scheduling beyond 24.8 days:** Node clamps `setTimeout` ms > 2Â³Â¹âˆ’1 to **1 ms** (hot loop!). Use
+8. **Scheduling beyond 24.8 days:** Node clamps `setTimeout` ms > 2³¹−1 to **1 ms** (hot loop!). Use
    `obj.longTimeout(fn, ms)` (chunked, wall-clock based) for every long timer. The scan schedule is
-   **restart-proof**: next delay = `interval âˆ’ (now âˆ’ lastScan)` from the persisted timestamp; no prior scan â†’
-   ~1 min after startup (baseline run).
+   **restart-proof**: next delay = `interval − (now − lastScan)` from the persisted timestamp; no prior scan →
+   ~1 min after startup (baseline run). **The next run is armed only when the running pass has FINISHED**
+   (`runScheduledScans(done)`, v5.5.1): before, `scheduleScans()` ran right after the asynchronous pass STARTED, while
+   `lastScan` was still old, so the 60 s floor applied and a new full fleet pass started every minute until the first
+   one ended (audit 4 measured 6 overlapping passes for a 5-minute scan). A watchdog plans the next run after one
+   interval if a pass never finishes.
 9. **Notification modes:** default = once per CVE (marked `(SEVERITY, new)`); `notifyUnratedRepeat:true` adds
-   everything still unrated as `(SEVERITY, open)` on every run â€” the monthly to-do list. Rated/flagged â†’ never again.
+   everything still unrated as `(SEVERITY, open)` on every run — the monthly to-do list. Rated/flagged → never again.
 10. **Security:** CSV formula-injection neutralized in `formatCsvField`; strict id validation on writes AND on the
     scan query (key-poisoning guard); `isAuthorizedAdmin` on every route and the toolbar hook; the
     `X-InvScanner-Request` header on every POST (cross-site request guard); table/custom regexes pass
-    `isSafeTableRegex` (no nested quantifiers/backreferences - one bad regex would stall the event loop for every
+    `isSafeTableRegex` (since v5.5.1 a small scanner: a group repeated by `+ * {..}` must not contain a quantifier or an
+    alternation at ANY depth, and numbered/named backreferences are refused - the v3.0.1 one-line regex missed
+    `((a+))+$` (45 s on 29 characters) and `(a|a)+$` (72 s); one bad regex would stall the event loop for every
     scan); https-only table download with RFC 3986 redirect resolution; client transcript only in admin-only folders.
 11. **Settings precedence & live application:** writing MeshCentral's config.json from a plugin is dangerous
     (comments lost, server may not boot, core reads it only at startup). The Settings tab therefore persists to
@@ -1222,7 +1242,7 @@ CI (`.github/workflows/meshcentral-integration.yml`, pure administration - it ne
 or releases): `npm test` on every push/PR (node 18 + 24), plus a live-container run: the current
 `meshcentral/meshcentral` Docker image with the plugin installed flat under `<datapath>/plugins/inventoryscanner`
 (`plugins.list` loader, a 0-CVE NVD feed file so startup never downloads gigabytes) driven by
-`.github/integration/meshcentral-server-test.sh`, which calls **every pluginadmin.ashx route** AND a **live
+`.github/integration/meshcentral-server-test.sh`, which calls the core pluginadmin.ashx routes (auth gates, scan, reports, CSV, settings, CPE, winget/OS status, deploy, logs - NOT the device-changing engine routes wg_run/os_run/dr_*/wu_*/reboot_*/lic_collect/as_*, which the mocked suite covers) AND a **live
 linux agent**: a Debian-variant container downloads the agent binary (`/meshagents?id=6`) and its install
 material (`/meshsettings?id=`, both without login, exactly like the real installers) from the server, so the
 collector round trip, the CSV/report views over a genuinely collected software list and one end-to-end .sh
@@ -1245,16 +1265,16 @@ MeshCentral install folder) and root `/*.txt` + `/*.csv` are gitignored as a gua
 - `tools/check.js`: `node --check` on the entry AND on every `lib/*.js`, the module wiring (each lib file is in the
   entry's `modules` list and vice versa, no orphan), the module rules (no `__dirname` in `lib/`, entry stays thin),
   inline-script syntax/`{{`-hazard check over EVERY `<script>` block of every view (v4.3.0; the report views must
-  contain none), JSON validity of config files, and view-nameâ†”render-name consistency over
+  contain none), JSON validity of config files, and view-name↔render-name consistency over
   the WHOLE JS tree (the `res.render()` calls live in `lib/routes.js`/`lib/reports.js` since v3.5.1).
   Must run anywhere (no dependencies).
   Since v5.3.0 it also owns the view-modularisation guards, still without any dependency: every `{{> partial }}`
   reference resolves to a file in `views/partials/` and no partial file is an unreferenced orphan (the same
-  symmetry rule as `lib/` â†” the modules list; handlebars comments are stripped first, because documentation
+  symmetry rule as `lib/` ↔ the modules list; handlebars comments are stripped first, because documentation
   legitimately quotes the partial syntax), each `js/*` fragment is `node --check`ed **on its own** (wrapped in a
   function) and screened for a stray `{{`, and the composed panel script is checked by INLINING the partials
   itself - so the combined-syntax guard survived the split without needing handlebars.
-- `tools/test-plugin.js`: 555 behavioral assertions (88 steps; on Windows with PowerShell AND a POSIX shell present) against the real module (mocked MeshCentral DB/webserver):
+- `tools/test-plugin.js`: 735 behavioral assertions at v5.5.1 (102 steps; 732 PASS + 3 SKIP on Windows without a POSIX shell) against the real module (mocked MeshCentral DB/webserver):
   the module wiring itself (every lib file attaches, a fresh instance exposes the same function surface, no
   module-level locals in `lib/`), locations grouping & counting, manual-rating severity override, FP exclusion, host-name preference, coverage
   numbers, multi-mesh scan/`mixed` logic, all POST handlers incl. validation/rejections, routes, admin gating
@@ -1286,7 +1306,7 @@ MeshCentral install folder) and root `/*.txt` + `/*.csv` are gitignored as a gua
   PowerShell is not installed (ENOENT); a parse error or exception is a FAIL (before, every failure was printed
   as "SKIP ... PowerShell not available"). On the Linux CI runner the PowerShell checks are skipped, on a machine
   without a POSIX shell the two `sh -n` checks are: the assertion count therefore depends on the platform
-  (434 on Windows with both shells present; the v4.3.1 real-run deploy check runs on Windows only).
+  (735 on Windows with both shells present at v5.5.1; the v4.3.1 real-run deploy check runs on Windows only).
   The module-state guard checks COLUMN-0 declarations in `lib/` (only `const x = require(...)` allowed) and
   additionally that the `attach` bodies hold no 4-space-indented locals.
   Requests in tests carry `headers: XHDR` (the panel header); the test admin has `domain: ''`.
@@ -1301,7 +1321,7 @@ MeshCentral install folder) and root `/*.txt` + `/*.csv` are gitignored as a gua
   every `data-main`/`data-sub` panel). Regenerate that fixture with `node tools/gen-panel-inventory.js` whenever
   something is removed ON PURPOSE, and commit both together.
 
-If you change data shapes, UPDATE these tests â€” they are the contract.
+If you change data shapes, UPDATE these tests — they are the contract.
 
 ## Commit messages (= the changelog)
 
@@ -1320,12 +1340,12 @@ message alone, without the diff:
 
 ## Maintenance pitfalls
 
-- `scanDeviceSoftware` is **async** (per-item loop; the CPE-API candidate path was removed â€” pure local now);
+- `scanDeviceSoftware` is **async** (per-item loop; the CPE-API candidate path was removed — pure local now);
   always use its callback, never a returned value.
-- `getMeshAssessment(meshId, cveId)` â€” single point where the stored rating/flag is applied; keep counting logic
+- `getMeshAssessment(meshId, cveId)` — single point where the stored rating/flag is applied; keep counting logic
   (panel aggregation, `buildOverallReport`, scheduled notifications) consistent with it.
 - Handlebars views are plain HTML+core helpers; no layout engine, no `{{{ }}}`, no helpers; anchors via `{{@index}}`.
-- `res.render('deviceReport')` â†” file `deviceReport.handlebars`: the capital **R** must match exactly (Linux FS).
+- `res.render('deviceReport')` ↔ file `deviceReport.handlebars`: the capital **R** must match exactly (Linux FS).
 - After editing the inline panel script, re-run `npm test` (the extraction check is strict on purpose).
 - **Version bumps must hit both places**: `version` in config.json (what the installer/DB and the update check
   compare) and the `@version` line in the inventoryscanner.js file header. No CHANGELOG.md file - changelogUrl
@@ -1336,7 +1356,7 @@ message alone, without the diff:
   few hundred devices made the whole server unresponsive. Every path that iterates devices (scanMeshCves,
   buildOverallReport, buildCsvForNodes) must therefore go through `obj.pacedEach`, never a bare forEach.
 - NVD feed download: go through `obj.runNvdUpdate(force, cb)` (the only sanctioned entry - it holds the nvdUpdateRunning guard); A stale-looking `.meta` mismatch is
-  a warning, not an error (verified NVD behavior). Never treat `.json.gz` presence alone as "feed exists" â€” the
+  a warning, not an error (verified NVD behavior). Never treat `.json.gz` presence alone as "feed exists" — the
   decompressed `.json` is what `loadNvdFromAllFiles` reads.
 - **Modules (v3.5.1):** a new function is a member of the shared `obj` (`obj.x = function ...` inside the module
   that owns the area) - a bare `function x()` in a `lib/` file is invisible to every other module and to the
@@ -1351,10 +1371,10 @@ message alone, without the diff:
 
 All of the above implemented and green: `node --check` OK; panel inline JS parses; 3 views render with and without
 data; full logic suite passes (see `tools/test-plugin.js`), including the monthly-scheduling and notification-mode
-tests. UI flow: floating location picker â†’ one aggregated sortable/filterable table â†’ one-click multi-location
-rating/FP â†’ Settings tab (scanner/collection options, per-key override of
-config.json, incl. the maintained CPE table with overrides) â†’ two printable reports with navigation and
-per-location pages â†’ scheduled monthly scans with toast/event-log notifications that re-list open findings.
+tests. UI flow: floating location picker → one aggregated sortable/filterable table → one-click multi-location
+rating/FP → Settings tab (scanner/collection options, per-key override of
+config.json, incl. the maintained CPE table with overrides) → two printable reports with navigation and
+per-location pages → scheduled monthly scans with toast/event-log notifications that re-list open findings.
 Since v3.0.0 also: drivers/firmware as their own out-of-scope category (kind rows in the table + name heuristics,
 excluded from the coverage denominator) and the Updates tab's Packages view with per-package update/uninstall
 across the whole fleet (`$invOnly` restricted script runs).
@@ -1854,7 +1874,7 @@ v5.4.0: issue #9 - the UI rework on the modular base.
   severity-default sort and its tiebreaker, the inline location row, the help box and registry, and the Exports
   selector. The inventory fixture was regenerated in the same commit (206 ids, 65 help texts, 6 links, 14 panels) -
   the diff shows exactly which controls were removed on purpose. Version 5.3.0 -> 5.4.0.
-v5.4.1 (this release): UI polish round on the #9 rework - seven reported defects, no server logic touched.
+v5.4.1: UI polish round on the #9 rework - seven reported defects, no server logic touched.
 - **Double documentation removed:** the per-action explanations sat both in the info box at the top of a panel AND
   in the hover help, wasting space. Info boxes now carry only what no button hover can say (page purpose, safety
   disclosures, cross-references); everything button-specific lives in `HELP` alone. The reference semantics that
@@ -1907,7 +1927,7 @@ v5.4.2: two reported defects fixed - details did nothing, and four requests died
   click, and switching pages no longer produces background requests (or 502s) for the page that was left.
 - Tests: +1 step / +3 assertions in test-plugin (682 PASS + 3 SKIP / 100 steps), +4 render assertions in
   test-views (59 PASS). check.js unchanged green (246). Version 5.4.1 -> 5.4.2.
-v5.5.0 (this release): issue #10 - per-user license rules (HKU hives / profile files) + one subkey/leaf wildcard,
+v5.5.0: issue #10 - per-user license rules (HKU hives / profile files) + one subkey/leaf wildcard,
 plus the curated table and the CONTRIBUTING process for it.
 - **Rule schema (backward compatible, all optional, still data-only):** `perUser:true` on a registry rule means the
   path is written `HKCU:\...` and read from every ALREADY-LOADED user hive (`Registry::HKEY_USERS\<SID>\...`, gated
@@ -1955,4 +1975,36 @@ plus the curated table and the CONTRIBUTING process for it.
   `registry (user: alice)`, the shipped table applying with 4 entries and both new entries well-formed with cited
   sources, and `add_license` stamping/refusing perUser. +3 render assertions in test-views (62 PASS) for the editor
   checkbox, the panel explanation and the hover help. The inventory fixture was regenerated (202 ids). check.js
-  green. The live CI integration exercises lic_collect on a real agent unchanged. Version 5.4.2 -> 5.5.0.
+  green. (Correction by audit 4: the live CI integration does NOT call lic_collect - the per-user read path was only
+  covered by the mocked suite, which is why its real-Windows failure went unnoticed.) Version 5.4.2 -> 5.5.0.
+v5.5.1 (this release): audit 4 - independent full audit of v5.5.0 by Claude Opus 5.5 (details: AUDIT.md, "Audit 4").
+- **Per-user license reads never worked on a real Windows 11 (B1, high).** `licenseBuildScript` discovered the users
+  inside ONE `try` around the whole ProfileList loop; `Test-Path` on the profile of `S-1-5-18` throws "access denied",
+  so the loop ended at its first entry and no user was found - every per-user rule (and the shipped Mountain Duck rule)
+  failed silently. Each profile now has its own `try`, service SIDs 18/19/20 are skipped. Verified by running the real
+  script through the real cmd.exe transport: registry wildcard + per-user file rules now return values with the user.
+- **Mountain Duck rule pointed at a folder that does not exist (B5).** The vendor documents `%AppData%\Cyberduck` (per
+  user) and `C:\ProgramData\Cyberduck` (machine-wide); the key file is an XML plist, the rule now extracts the
+  `Transaction` id instead of returning the whole signed file. Verified against a real installation.
+- **Server Files deploy refused every real device group (B2) + domain traversal.** Mesh ids are base64 with `@`/`$`;
+  the group regex allowed neither. The domain part was never validated (`mesh/a\..\..\x/g` resolved outside
+  `<filespath>`). One function `swServerFilesDir` now validates both parts and prefix-checks the folder.
+- **ReDoS gate bypass (B3).** `isSafeTableRegex` is a small scanner now (nested quantifiers at any depth, alternation
+  under a quantifier, numbered and named backreferences); every shipped regex still passes.
+- **Scheduled scans overlapped (B4).** The next run is armed after the pass finished, not after it started.
+- **Live scan by GET without the header (S1)**, **unmasked generic extra headers (S2)**, **programs named
+  `__proto__`/`constructor` vanished from the fleet views (S3)**, **the 512 KB lifecycle cap was never applied (S4)**,
+  `safeNodeDir('node//..')` returned `..`, the license table was only refreshed at server start (now with the NVD
+  cycle as documented), the per-device asset push asked no confirmation, double-answer guards in the HTTP getters.
+- Texts: duplicate help keys, a duplicated device-list info box, stale "Settings tab"/"OS Updates tab"/"floating
+  panel" references in UI messages, panels and comments, "the one feature that restarts" on the PC reset page,
+  101 mojibake sequences in this file.
+- Tests: realistic 64-character mesh/node ids for the new paths, a gate matrix over ALL 53 POST actions (401 non-admin,
+  401 sub-domain admin, 403 no header, 400 non-object body), direct tests for formatCsvField/safeNodeDir/rbCleanMessage/
+  swPsQuote, the removed-marker blind spot of five "marker before Stop-Transcript" checks fixed (`markerBeforeStop`),
+  two tautologies removed, the prose inventory now also checks the block length. 732 PASS + 3 SKIP / 102 steps on
+  Windows without a POSIX shell. The new suite was also run against the UNFIXED v5.5.0 code: every regression test of
+  a fixed finding (B1-B5, S1-S4, safeNodeDir, domain traversal) FAILS there; the tests that pin behaviour that was
+  already correct (gate matrix, CSV/quote helpers) pass on both, as they should.
+- CI: `persist-credentials: false`, live scans send the header, a 403 check for a header-less live scan, a Server
+  Files listing with the REAL CI group id, `grep -F` for the version check. Version 5.5.0 -> 5.5.1.

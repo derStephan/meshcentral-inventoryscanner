@@ -9,7 +9,7 @@
             // navigation (the explanation of a nav button lives here, not on a page of its own - v5.4.1)
             'nav.devices': ['Devices', 'Everything that is about single machines: the device list with every per-device action, the Windows PC reset, and the printable device inventory report.'],
             'nav.devicelist': ['Device list', 'One row per device with everything the server already knows: online state, operating system and release state, pending software updates, findings, collected licenses. Sort by clicking a column header, filter, tick devices for a batch run, and open Details per device.'],
-            'nav.reset': ['PC reset', 'Reset ONE chosen Windows machine with the built-in systemreset tool, keeping or removing the user files. Needs a fresh read-only check, the device name typed to confirm, and the BitLocker recovery key for "Remove everything" while protection is on.'],
+            'nav.reset': ['PC reset', 'Reset ONE chosen Windows machine with the built-in systemreset tool, keeping or removing the user files. Needs a fresh read-only check, the device name typed to confirm, and - for "Remove everything" while BitLocker protection is on - your confirmation that the recovery key is available.'],
             'nav.devreport': ['Device report', 'Opens the printable device inventory report in a new tab: one page per location, every device with its HOST name, operating system and support state, program count, how many programs could be checked, and the finding counts per severity. Ready for Print / Save as PDF. The vulnerability report has no device list on purpose - this is the device view.'],
             'nav.software': ['Software', 'Everything that is about programs: the fleet-wide software list, the winget updater configuration, software deployment and the license keys.'],
             'nav.softwarelist': ['Software list', 'Every distinct installed program across all devices: how many carry it, which versions, which findings matched, whether a license was collected and what the last winget run reported. Per row: ignore, update everywhere, uninstall everywhere, details.'],
@@ -38,22 +38,23 @@
 
             'dl.refresh': ['Refresh', 'Merges the device states again from the update, OS, reset, license and inventory engines. Sends no command to any device - it only reads what is already stored on this server.'],
             'dl.selectall': ['Select all', 'Ticks every listed device. Offline devices are ticked too but are skipped by the operations below.'],
-            'dl.appupdates': ['Software updates', 'Runs the winget update for the ticked ONLINE Windows devices: every pending package except the ones on the ignore list. Dry runs first if you prefer - use the per-device Dry run in the Software column. Nothing reboots a device; a pending restart is only reported.'],
+            'dl.appupdates': ['Software updates', 'Runs the winget update for the ticked ONLINE Windows devices: every pending package except the ones on the ignore list. Prefer to look first? Use the per-device Dry run in the Software column. Nothing reboots a device; a pending restart is only reported.'],
             'dl.osupdate': ['OS updates', 'Installs the pending operating-system updates on the ticked devices. Windows: the built-in Windows Update agent, feature upgrades excluded. Linux: the distribution package manager (apt/dnf/zypper/pacman/apk). Never reboots - if a restart is needed it is reported per device.'],
             'dl.osupgrade': ['OS upgrade', 'Upgrades the ticked devices to the NEXT operating-system release (Windows 10 to the current Windows 11 release, Ubuntu to the next LTS). The device must reboot afterwards - the tool never reboots it for you, so plan a maintenance window.'],
             'dl.troubleshoot': ['Windows Update repair', 'Applies the repairs the Windows Update troubleshooter performs: restart the update services, reset the download cache and catroot2, re-assert the automatic start types. Read-only diagnose first if you want to see the state. Never reboots and never resets winsock or the proxy.'],
             'dl.licenses': ['Collect licenses', 'Reads the license keys of the ticked ONLINE Windows devices with the configured rules - read-only (registry value, file, WMI property), as SYSTEM. The keys stay on this server and are never logged. Needs the master switch under Software > License keys.'],
             'dl.asset': ['Push to asset system', 'Sends the aggregated hardware, software and vulnerability data of the ticked devices to the external asset-management system configured under Settings > Asset management. This is the only action that lets data leave the server - it is off by default and asks for confirmation every time.'],
-            'dl.reboot': ['Reboot', 'Opens the OS view for this device, where a restart is done per device with a grace period, a message to the logged-on user and the device name typed to confirm. Restarts are never batched and never automatic.'],
-            'dl.reset': ['Reset', 'Opens the PC reset view for this device. A reset needs a fresh read-only check, the device name typed to confirm, and "Remove everything" is blocked while BitLocker is on until the recovery key is given. This is the one action that reinstalls Windows.'],
             'dl.details': ['Details', 'Opens everything stored about this device: hardware, installed programs, its findings and blind spots, the last software-update run with every package and its outcome (failed rows show the exit code in decimal and hex plus winget\'s message), the last OS run, the troubleshooter and restart history, the reset check and the license collection state. Fetched once and then kept in memory while the page is open - the button inside refreshes it.'],
             'dl.refreshdet': ['Refresh details', 'Re-reads this device\'s stored details from the server. Details are cached while the page is open, so sorting, filtering and status polling do not refetch them.'],
+            'dl.oslog': ['OS update log', 'Shows the tail of os-update.log: one line per device and OS run, the failed updates with their HRESULT and the Linux output tail of a failed run.'],
+            'dr.refresh': ['Refresh', 'Re-reads the stored check and reset results of the Windows devices. Contacts no device.'],
+            'dr.log': ['Refresh log', 'Shows the tail of device-reset.log - every check, every reset with who started it, and the outcome.'],
 
-            'swf.runcol': ['Last winget run', 'Aggregated over the stored last runs of all devices: ready = devices where an update for this package was available, ok = installed, failed = the install failed (Details shows the exit code in decimal and hex plus winget\'s own message), skipped = ignored, version-less or not installed. The numbers come from stored runs - start a Dry run all devices under Software > Software updates to populate them.'],
+            'swf.runcol': ['Last winget run', 'Aggregated over the stored last runs of all devices: ready = devices where an update for this package was available, ok = installed, failed = the install failed (Details shows the exit code in decimal and hex plus winget\'s own message), skipped = ignored, version-less or not installed. The numbers come from stored runs - press "Dry run all devices" under Software > Software updates to populate them.'],
             'swf.refresh': ['Refresh', 'Rebuilds the fleet software index now instead of using the cached one (the cache lives about a minute). Reads stored inventory only - no device is contacted.'],
             'swf.selectupdatable': ['Select updatable', 'Ticks every row for which winget reported an available update, so you can update them in one go.'],
             'swf.updateall': ['Update the selected packages everywhere', 'Runs the winget update for every ticked package on all devices in scope. Needs a winget package id - rows without one cannot be updated this way.'],
-            'swf.update': ['Update everywhere', 'Updates this one package on every device in scope through winget (the same restricted single-package run as the packages view).'],
+            'swf.update': ['Update everywhere', 'Updates this one package on every non-excluded Windows device through winget - a winget run restricted to this one package id.'],
             'swf.uninstall': ['Uninstall everywhere', 'Removes this one package from every device in scope. Needs the exact winget id, never runs as a dry run, and asks for confirmation - devices without the package report "not installed" rather than a failure.'],
             'swf.ignore': ['Ignore', 'Puts this package id on the ignore list and saves that immediately, so no automatic or batch run upgrades it any more (and it is pinned on the clients when pin sync is on). Manage the list under Software > Software updates.'],
             'swf.details': ['Details', 'Opens everything stored about this program: which devices have it in which versions, which CVEs matched it (and why other rows could not be checked), whether a license was collected for it and what the last winget runs reported per device. Fetched once and then kept in memory while the page is open - the button inside refreshes it.'],
@@ -62,14 +63,10 @@
             'wg.save': ['Save configuration', 'Stores the winget updater settings. Most changes are applied immediately anyway - the panel saves on every change, this button is the explicit way.'],
             'wg.run': ['Run now', 'Updates every non-excluded Windows device now, regardless of the group list (the group list only gates the AUTOMATIC runs). Nothing reboots a device.'],
             'wg.dryall': ['Dry run all devices', 'Lists what winget WOULD update on every non-excluded Windows device without installing anything. The safe way to see the fleet state before a real run.'],
-            'wg.dry': ['Dry run (device)', 'Lists the available updates for this one device without installing anything.'],
-            'wg.run1': ['Update now (device)', 'Installs the pending updates on this one device now. An explicit single-device run intentionally works even on a device that is on the exclusion list - the exclusion keeps it out of the AUTOMATIC batches and out of "Run now"/"Dry run all", it does not block a run you start for that one machine. The ignore list is still honoured.'],
             'wg.dry': ['Dry run (device)', 'Lists the available updates for this one device without installing anything - the safe way to look before you run.'],
+            'wg.run1': ['Update now (device)', 'Installs the pending updates on this one device now. An explicit single-device run intentionally works even on a device that is on the exclusion list - the exclusion keeps it out of the AUTOMATIC batches and out of "Run now"/"Dry run all", it does not block a run you start for that one machine. The ignore list is still honoured.'],
             'wg.excl': ['Exclude', 'Adds this device to the exclusion list: no automatic run and no "Run now" / dry-run-all touches it any more. A per-device manual run still works.'],
             'wg.incl': ['Include', 'Removes this device from the exclusion list.'],
-            'wg.ign': ['+ ignore', 'Puts this package id on the ignore list and saves immediately, so no run upgrades it any more.'],
-            'wg.pkgupd': ['Update everywhere', 'Runs the update restricted to this one package id on all targeted devices.'],
-            'wg.pkguninst': ['Uninstall everywhere', 'Removes this package id from all targeted devices. Needs the exact id, never dry, devices without it report "not installed".'],
 
             'os.upd': ['force OS updates', 'Installs the pending OS updates on every non-excluded Windows and Linux device. Windows: the built-in update agent, feature upgrades excluded. Linux: the distribution package manager. Never reboots.'],
             'os.upgurgent': ['force OS Upgrade (urgent)', 'Upgrades only devices whose release support has ended or ends within the configured urgency window, and only where an upgrade path exists. "Current" comes exclusively from the endoflife.date data - there is no built-in fallback version, so without fresh data a release shows as unknown and is never upgraded.'],
@@ -82,19 +79,20 @@
             'os.rbn': ['Notify user', 'Sends your message to the logged-on user (Windows msg, Linux wall) WITHOUT rebooting, and reports whether a reboot is already pending and who is logged on.'],
             'os.rbr': ['Reboot', 'Restarts this device after a grace period, with your message in the shutdown banner so the user can save work. Needs the device name typed. Abort with shutdown /a (Windows) or shutdown -c (Linux) during the grace.'],
 
-            'dr.check': ['Check', 'Read-only probe: is systemreset present, is the build new enough, is WinRE enabled, is BitLocker protecting the system drive, is it on AC power, who is logged on. Required before a reset and re-checked on the device itself.'],
+            'dr.check': ['Check', 'Read-only probe: is systemreset present, is the build new enough, is WinRE enabled, is BitLocker protecting the system drive, is the device on battery, who is logged on. Required before a reset and re-checked on the device itself (battery is only reported, not a gate).'],
             'dr.keep': ['Keep my files', 'Resets Windows while keeping the user files. Needs the device name typed to confirm. The device restarts into Windows RE - this is one of the two actions that reboot on purpose.'],
-            'dr.clean': ['Remove everything', 'Resets Windows and removes all files. Blocked while BitLocker protection is on or unknown until you confirm the recovery key. Needs the device name typed.'],
+            'dr.clean': ['Remove everything', 'Resets Windows and removes all files. Blocked while BitLocker protection is on or unknown until you confirm the recovery key is available. Needs the device name typed.'],
 
             'lic.collectall': ['Collect licenses (all online Windows)', 'Runs the read-only license extraction on every online Windows device. Off by default; the keys are stored only on this server and never logged.'],
             'lic.collect': ['Collect licenses (this device)', 'Runs the read-only license extraction on this one Windows device: the registry values, file contents and WMI properties named by the configured rules. Nothing is written and nothing is rebooted. The keys are stored on this server only (data/<node>/license.json), never logged, and appear only in the software CSV export. Needs the master switch under Software > License keys.'],
-            'lic.collect': ['Collect (device)', 'Runs the read-only license extraction on this one device.'],
             'lic.add': ['Add rule', 'Stores your own rule that maps a program name to where its license lives. Custom rules always win over the curated table. Every regex passes the same safety gate as the CPE table.'],
             'lic.peruser': ['Apply per user', 'Stamps perUser onto every registry/file rule of the JSON above: a registry path written as HKCU: is then read from each already-loaded user hive, a file path may use the profile placeholder, and one * wildcard per path is allowed (a registry subkey segment or a file leaf pattern). Hives of users who are not logged on are never loaded - the extraction stays read-only.'],
             'lic.refreshlog': ['Refresh log', 'Shows the tail of license-collection.log - it records counts and outcomes, never a key.'],
 
             'cpe.add': ['Add mapping', 'Stores your own name-to-CPE mapping. Custom entries are checked first and win over the maintained table. The regex is validated and must pass the safety check (no nested quantifiers or backreferences).'],
             'cpe.refresh': ['Refresh', 'Re-reads the mapping table from the cache and the repository copy.'],
+            'cpe.del': ['Delete', 'Removes this custom mapping. Rows of the maintained table cannot be deleted - override them with your own entry instead.'],
+            'cpe.override': ['Override', 'Copies this row into the form above so you can store a corrected custom mapping that wins over the maintained table.'],
 
             'nvd.update': ['Update NVD database now', 'Downloads the missing feed years and refreshes the current year immediately. Rate-limited by nvd.nist.gov, so it can take a while - the progress appears in the log below. The regular cycle continues unchanged.'],
             'nvd.refreshlog': ['Refresh log', 'Shows the tail of nvd/nvd-download.log, which also records plugin lifecycle events (upgrade detected, restart).'],
@@ -102,17 +100,17 @@
             'as.save': ['Save configuration', 'Stores the asset-management target. Secrets are never shown again - a blank field keeps the stored value, the "clear" tick erases it. Enabling requires a working credential for the chosen authentication mode.'],
             'as.test': ['Send a test request', 'Sends ONE synthetic sample record to the target and reports the HTTP status, so you can verify URL, authentication and mapping without pushing the fleet. No real inventory leaves the server.'],
             'as.pushall': ['Push all devices now', 'Pushes the aggregated record of every device to the target. Runs in the background and answers immediately; the table below fills in as devices complete. Asks for confirmation because this is the one action that sends data off the server.'],
-            'as.push': ['Push (device)', 'Pushes this one device now.'],
-
-            'exp.go': ['Download CSV', 'Builds the chosen list for ALL devices and downloads it: UTF-8 with BOM, formula injection neutralised, sorted column by column. For a selection of devices use the buttons on MeshCentral\'s device list toolbar.'],
+            'as.push': ['Push (device)', 'Pushes this one device now to the configured target (asks for confirmation - its inventory leaves the server).'],
 
             'set.save': ['Save settings', 'Writes the values to scanner-settings.json on this server and applies them immediately - they override the same keys in config.json, which the plugin never writes.'],
             'set.reset': ['Reset all', 'Removes every override of this area so the values from config.json (or the built-in defaults) apply again. Other sections of the settings file are kept.'],
             'sw.upload': ['Upload package', 'Stores an installer in the plugin library (chunked, resumable, SHA-256 computed on the server). Nothing is installed by uploading.'],
             'sw.create': ['Create deployment', 'Creates a task for the explicitly chosen devices or whole locations. Offline devices are queued and install as soon as they reconnect. The package is SHA-256 verified ON THE DEVICE before it runs. A deployment never happens by itself.'],
             'sw.rescan': ['Rescan library', 'Indexes installer files you placed in the plugin folder on the server yourself.'],
-            'sw.retry': ['Retry', 'Re-queues the devices of this task that did not succeed.'],
-            'sw.cancel': ['Cancel', 'Cancels the queued devices of this task; running sessions finish normally.']
+            'sw.retry': ['Retry open', 'Re-queues the devices of this task that did not succeed (failed, error, no-file, timeout, cancelled, unsupported). Running and successful devices are left alone.'],
+            'sw.cancel': ['Cancel', 'Cancels the queued devices of this task; running sessions finish normally.'],
+            'sw.delfile': ['Delete', 'Removes this installer from the library. Refused while an open task still uses it.'],
+            'sw.list': ['List', 'Shows or hides the per-device states of this task (state, exit code in decimal and hex, note).']
         };
 
         function helpShow(key) {

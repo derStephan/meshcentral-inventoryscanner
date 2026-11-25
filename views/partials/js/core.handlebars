@@ -35,7 +35,11 @@
                     url += '&' + encodeURIComponent(k) + '=' + encodeURIComponent(params[k]);
                 }
             }
-            return fetch(url, { credentials: 'same-origin' }).then(function (r) { return r.json(); });
+            // v5.5.1: the panel's GETs carry the same request header as the POSTs - a LIVE scan requires it
+            return fetch(url, { credentials: 'same-origin', headers: { 'X-InvScanner-Request': '1' } }).then(function (r) {
+                if (!r.ok) { throw new Error('HTTP ' + r.status); }
+                return r.json();
+            });
         }
 
         function floatMsg(text, ok) {

@@ -5,7 +5,7 @@
 The software-name → CPE mapping table is `cpe-table.json` in this repository root - since v4.2.0 it is the
 **only** curated table (the code holds no second copy). A pull request that improves coverage **must touch only
 this file** - every running server picks the change up automatically (fetched at startup and after each NVD
-download cycle, and the CPE section of the Settings tab shows where the active table came from). No plugin
+download cycle, and Vulnerabilities > CPE table shows where the active table came from). No plugin
 version bump, no new release.
 
 ### How to add a mapping (the verified process)
@@ -64,7 +64,8 @@ version bump, no new release.
 ## License-mapping contributions: `license-table.json` (no release needed)
 
 The program-name → license-location table is `license-table.json` in this repository root. Like the CPE table it is
-shipped inside the plugin **and** re-downloaded by running servers (with every NVD refresh cycle, https only), so a
+shipped inside the plugin **and** re-downloaded by running servers (at server start and with every NVD refresh cycle since v5.5.1 - before only at
+server start; https only), so a
 pull request that improves it **may touch only this file** - no version bump, no release. The panel section
 *Software → License keys* shows where the active table came from, and admin-custom rules always win over it.
 
@@ -92,7 +93,8 @@ pull request that improves it **may touch only this file** - no version bump, no
    * At most 20 user profiles are considered per run; keep rule lists at ≤ 8 rules per entry.
 4. **Edit `license-table.json`:** entries are matched **in order, first hit wins** (custom rules of an admin win
    over all of them), `match` is a JavaScript regex source compiled with the `i` flag only, and every `match` and
-   every file `regex` passes the same safety gate as the CPE table (no nested quantifiers, no backreferences).
+   every file `regex` passes the same safety gate as the CPE table (a repeated group must contain no quantifier and no
+   `|` at any depth, no backreferences - since v5.5.1; `node tools/test-plugin.js` checks every shipped regex against it).
    Bump the `updated` field to the day of the change. The answer for a found key carries the user it came from, and
    the software CSV's *License Source* column shows e.g. `registry (user: alice)`.
 5. **Validate before submitting:** `node -e "JSON.parse(require('fs').readFileSync('license-table.json','utf8'))"`,

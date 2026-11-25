@@ -21,11 +21,12 @@ Everything is opt-in and admin-only. Nothing runs on a device unless you start i
   A low finding count can never be misread as "everything is clean".
 * **Reports and exports** - a printable vulnerability report and a printable device inventory report (one page per
   location), plus hardware / software / vulnerability CSV for all devices or for the ones you ticked.
-* **Scheduled scans with notifications** - a toast and a server event for every site admin; optionally repeated
+* **Scheduled scans with notifications** - a toast and a server event for the full site administrators of the default
+  domain; optionally repeated
   until a finding is rated, so the notification works as a to-do list.
 * **Updates** - Windows software updates via the official **winget** package manager, and operating-system updates
   and release upgrades for Windows and Linux. Dry runs first, per device or fleet-wide.
-* **Software deployment** - install an MSI/MSP/EXE/DEB/RPM/shell package on chosen devices or whole locations.
+* **Software deployment** - install an MSI/MSP/EXE/DEB/RPM/shell/BIN package on chosen devices or whole locations.
   Offline devices are queued and install as soon as they reconnect.
 * **Windows Update troubleshooter** - a read-only diagnose and the repairs the built-in troubleshooter applies,
   for machines whose update service is stuck.
@@ -72,7 +73,9 @@ Everything is opt-in and admin-only. Nothing runs on a device unless you start i
    **Vulnerabilities → NVD database**, no shell needed).
 
 **Updates** need no ceremony: when a new version is published, the Plugins page offers **Upgrade**. One click is
-enough - the plugin notices the new files and restarts MeshCentral by itself (an admin toast announces it).
+enough - the plugin notices the new files and restarts MeshCentral by itself (an admin toast announces it). This
+needs MeshCentral's normal launcher (`node meshcentral` starts the server as a `--launch` child, which is also how the
+official Docker image runs); without it the new code is hot-swapped in instead and a later restart completes the upgrade.
 
 **Uninstall**: remove the plugin on that page. MeshCentral deletes `<datapath>/plugins/inventoryscanner/` including
 the collected inventory, the settings, the update results and the deploy library. The NVD feeds, your ratings and
@@ -88,7 +91,7 @@ button above the device list.
 
 There are five sections, each with its own sub-pages. **The address bar shows which page you are on** (`#devices/devicelist`
 and so on), so you can copy a link to a view and paste it later - and the browser's back button walks back through
-the pages you visited. Hovering any button - including the navigation itself - shows what it does in a box at the
+the pages you visited. Hovering a button - including the navigation itself - shows what it does in a box at the
 lower right corner. Documents (the two printable reports, the three CSV files) open **directly from the navigation**
 in a new tab, with one click.
 
@@ -104,13 +107,14 @@ user**, and **reboot** it. **Details** opens everything stored about that machin
 programs, its findings, the last run of every engine and the license state. Details are fetched once and kept
 while the page is open (sorting, filtering and status updates do not re-fetch them); a button inside refreshes.
 
-Fleet-wide buttons (*force OS updates*, *force OS Upgrade (urgent/all)*) act on every non-excluded device, and the
-OS update log is at the bottom of the page.
+Fleet-wide buttons (*force OS updates*, *force OS Upgrade (urgent/all)*) act on every non-excluded device with a
+reported Windows or Linux OS - the upgrade buttons only on devices that are provably outdated and have an upgrade path
+(the urgent one only on the urgent ones). The OS update log is at the bottom of the page.
 
 **PC reset** - reset one chosen Windows machine with the built-in `systemreset` tool, keeping or removing the user
 files. A read-only **Check** must pass first (tool present, build new enough, recovery environment enabled,
-BitLocker state, on AC power), you must type the device name, and "Remove everything" is blocked while BitLocker is
-on until you confirm the recovery key.
+BitLocker state; it also reports whether the device runs on battery), you must type the device name, and "Remove
+everything" is blocked while BitLocker is on until you confirm that the recovery key is available.
 
 **Device report** - the printable device inventory: host names, operating system and its support state, program and
 finding counts, one page per location.
@@ -133,12 +137,13 @@ parameters if the installer needs them, and confirm. The package is verified by 
 anything runs. Offline devices queue and install when they reconnect. Each device shows its state and the
 installer's exit code in decimal and hex (3010 = "ok, but a reboot is pending" - the plugin never reboots for you).
 A file from Server Files can have been placed there by any user with that group's *server files* right - check it
-before you deploy it to other machines.
+before you deploy it to other machines. Server Files work with every device group (real group ids contain `@` and `$`;
+versions before 5.5.1 refused them).
 
 **License keys** - the rule table that maps a program name to where its license lives (a registry value, a file, or
 a WMI property), your own rules, the collection log and the schedule. Rules can also reach **per-user** storage
 (a registry path written as `HKCU:` is read from every loaded user hive; a file path may use the profile-directory
-placeholder) and **version-dependent subkeys** (one `*` wildcard per path) - but hives of logged-off users are never
+placeholder - per-user reads work since 5.5.1, in 5.5.0 they found no user on a real Windows 11) and **version-dependent subkeys** (one `*` wildcard per path) - but hives of logged-off users are never
 loaded, so the extraction stays strictly read-only. Reading is **read-only**, the keys stay on
 this server and are **never displayed in the panel** - they appear only in the software CSV export, whose License
 Source column names the rule type and the user a value came from. Off by default;
@@ -167,7 +172,7 @@ hammering the rate-limited source.
 
 ### Exports
 
-Choose **hardware**, **software** or **vulnerabilities** and download the CSV for all devices. Every export is
+Three links - **hardware**, **software** and **vulnerabilities** - download the CSV for all devices with one click. Every export is
 sorted column by column, so a device block stays together and versions read in natural order (Firefox 9 before
 Firefox 121). For a **selection** of devices use the hardware/software buttons on MeshCentral's own device list
 toolbar - same columns, only the ticked machines.
@@ -253,8 +258,9 @@ all. Requirements: the agent runs as root (the default), the device reaches its 
 
 Update, upgrade, deployment and troubleshooter runs **never reboot** a device. If a restart is needed, it is
 reported per device and Windows performs it at its own automatic-restart deadline. Exactly two things restart a
-machine on purpose - the **Reboot** button on a device row and the **PC reset** - and both are per device, manual,
-announced to the logged-on user and need the device name typed to confirm. Never a batch, never a schedule.
+machine on purpose - the **Reboot** button on a device row and the **PC reset** - and both are per device, manual
+and need the device name typed to confirm. A reboot also messages the logged-on user (message box / `wall` plus the
+shutdown banner); a PC reset does not - it restarts into Windows RE right away, so warn the user yourself. Never a batch, never a schedule.
 
 ---
 
@@ -272,15 +278,16 @@ table** always win over it.
   `raw.githubusercontent.com` (the mapping table, https only, size-capped, every pattern checked before use) and
   `endoflife.date` (public OS support dates - a fixed list of product names, nothing about your devices).
 * **The one deliberate exception:** the optional asset-management connector. It is off by default, https only, has
-  no schedule unless you set one, sends no command to any agent, and every push asks for confirmation. Credentials
-  are stored on this server, never shown again in the clear and never written to a log; the log records the device,
+  no schedule unless you set one, sends no command to any agent, and every push you start asks for confirmation. Credentials
+  (including the values of extra headers, since 5.5.1) are stored on this server, never shown again in the clear and
+  never written to a log; the log records the device,
   the HTTP status and an external id - never a request or response body. Collected **license keys never ride along**
   in a push.
 * License keys are treated as secrets: read-only collection, stored only in
   `<datapath>/plugins/inventoryscanner/data/<node>/license.json`, never logged, never displayed - they appear only
   in your own software CSV export.
 * Admin-only everywhere: every endpoint re-checks your site-administrator rights server-side, and every changing
-  request must come from the plugin's own page (a cross-site request is refused).
+  request - including a live *Scan & Review* - must come from the plugin's own page (a cross-site request is refused).
 * Deployed packages are verified by SHA-256 on the device before they run, and the verified bytes are the executed
   bytes. Installers run as SYSTEM/root because machine-wide installation is the use case - and a task only exists
   because an admin created it.

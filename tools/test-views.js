@@ -153,18 +153,23 @@ try {
     // something ON PURPOSE means updating tools/fixtures/panel-inventory.json in the same commit, which makes
     // the loss visible in review instead of silent at runtime.
     const inv = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'panel-inventory.json'), 'utf8'));
-    // same normalisation the fixture was built with: tags replaced by a space, whitespace collapsed
-    const norm = a.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
     const missIds = inv.ids.filter((x) => a.indexOf('id="' + x + '"') < 0);
     console.log((missIds.length === 0 ? 'PASS ' : (failed++, 'FAIL ')) + 'inventory: all ' + inv.ids.length + ' static element ids are still present'
         + (missIds.length ? ' -> MISSING: ' + missIds.join(', ') : ''));
+    // audit 4: the fixture also stores the full LENGTH of each block - before only the first 80 characters
+    // were compared, so a block cut right after its head still passed. A block must now still be at least
+    // 80% of its frozen length (wording edits are fine, a dropped paragraph is not).
+    const proseBlocks = [];
+    const reBlock = /<div class="(info|hint)"[^>]*>([\s\S]*?)<\/div>/g;
+    let mb;
+    while ((mb = reBlock.exec(a)) !== null) { proseBlocks.push(mb[2].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()); }
     const missProse = inv.prose.filter((p) => {
-        const t = norm.indexOf(p.head);
-        return t < 0;
+        const hit = proseBlocks.filter((t) => t.indexOf(p.head) === 0)[0];
+        return hit == null || (typeof p.len === 'number' && hit.length < Math.floor(p.len * 0.8));
     });
     console.log((missProse.length === 0 ? 'PASS ' : (failed++, 'FAIL ')) + 'inventory: all ' + inv.prose.length + ' info/hint help texts are still present'
         + (missProse.length ? ' -> MISSING: ' + missProse.map((p) => p.head.substring(0, 50)).join(' | ') : ''));
-    const missLinks = inv.links.filter((l) => a.indexOf(l.replace('&', '&amp;')) < 0 && a.indexOf(l) < 0);
+    const missLinks = inv.links.filter((l) => a.indexOf(l.split('&').join('&amp;')) < 0 && a.indexOf(l) < 0);
     console.log((missLinks.length === 0 ? 'PASS ' : (failed++, 'FAIL ')) + 'inventory: all ' + inv.links.length + ' report/export links are still present'
         + (missLinks.length ? ' -> MISSING: ' + missLinks.join(', ') : ''));
     const missPanels = inv.panels.filter((p) => {
@@ -182,10 +187,10 @@ try {
     console.log(((a.indexOf('class="locbar"') >= 0 && a.indexOf('location-toggle') < 0 && a.indexOf('locClose') < 0) ? 'PASS ' : (failed++, 'FAIL ')) + '#9: the location selection is an inline row above the table - the floating panel and its toggle are gone');
     console.log(((a.indexOf('id="locList"') >= 0 && a.indexOf('id="locApply"') >= 0 && a.indexOf('invscanner_locations') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + '#9: the inline location row keeps its ids and the localStorage persistence');
     console.log(((a.indexOf('id="helpBox"') >= 0 && a.indexOf('function bindHelpBox') >= 0 && a.indexOf('data-help=') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + '#9: the hover help box exists and buttons carry data-help');
-    console.log(((a.indexOf("'scan.review'") >= 0 && a.indexOf("'dl.reboot'") >= 0 && a.indexOf("'swf.uninstall'") >= 0 && a.indexOf("'as.pushall'") >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + '#9: the help registry covers the actions of every area');
+    console.log(((a.indexOf("'scan.review'") >= 0 && a.indexOf("'os.rbr'") >= 0 && a.indexOf("'swf.uninstall'") >= 0 && a.indexOf("'as.pushall'") >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + '#9: the help registry covers the actions of every area');
     // v5.4.1: the reported UX defects are pinned so they cannot come back
     console.log(((a.indexOf('dlApp.details') >= 0 && a.indexOf('swfApp.details') >= 0 && a.indexOf('dlLoadDetails(id, true)') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v5.4.1: device and software details are cached - a re-render or poll does not refetch them (the reported request loop)');
-    console.log(((a.indexOf('button.rowbtn') >= 0 && a.indexOf('.cellacts') >= 0 && count(a, /class="rowbtn/g) >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v5.4.1: row buttons share one calm style (rowbtn) and wrap inside .cellacts instead of forcing a horizontal scroll');
+    console.log(((a.indexOf('button.rowbtn') >= 0 && a.indexOf('.cellacts') >= 0 && count(a, /class="rowbtn/g) >= 1) ? 'PASS ' : (failed++, 'FAIL ')) + 'v5.4.1: row buttons share one calm style (rowbtn) and wrap inside .cellacts instead of forcing a horizontal scroll');
     console.log(((a.indexOf('global threshold') >= 0 && a.indexOf('What the notify threshold does') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v5.4.1: the per-group notify threshold is explained and the Source column is never blank');
     console.log(((a.indexOf("'selectSub'") >= 0 || a.indexOf('function selectSub') >= 0) && a.indexOf('function selectLinksMain') >= 0 ? 'PASS ' : (failed++, 'FAIL ')) + 'v5.4.1: a link-only main section (Exports) renders its links without stealing the active panel');
     // v5.4.2: the two reported defects - details must reach their row, and hidden panels must not poll

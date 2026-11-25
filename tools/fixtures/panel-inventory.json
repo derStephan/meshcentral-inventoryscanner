@@ -247,8 +247,8 @@
    "len": 95
   },
   {
-   "head": "OS Updates tab: an outdated release counts as \"Upgrade urgent\" once its support ",
-   "len": 344
+   "head": "Device list (OS column): an outdated release counts as \"Upgrade urgent\" once its",
+   "len": 353
   },
   {
    "head": "Notification becomes a to-do list: findings stay listed as \"(severity, open)\" un",
@@ -315,12 +315,8 @@
    "len": 336
   },
   {
-   "head": "One row per device, merged from the data already stored on this server - no comm",
-   "len": 688
-  },
-  {
    "head": "One row per device, built from the data already stored on this server - opening ",
-   "len": 746
+   "len": 765
   },
   {
    "head": "Every distinct installed program across all devices, with how many carry it, whi",
@@ -349,6 +345,10 @@
   {
    "head": "0 = no automatic push (on-demand only). Otherwise the server pushes on this cycl",
    "len": 82
+  },
+  {
+   "head": "Stored header values are shown as -------- (they often carry an API key). Leave ",
+   "len": 156
   },
   {
    "head": "Where the target returns its own id (a dotted path, e.g. id or data.asset.id ). ",
@@ -383,8 +383,8 @@
    "len": 240
   },
   {
-   "head": "This is the one feature that restarts a device. It resets a single Windows PC wi",
-   "len": 1151
+   "head": "This is one of the two features that restart a device (the other is Reboot in th",
+   "len": 1195
   },
   {
    "head": "' + devs.length + ' device(s)",

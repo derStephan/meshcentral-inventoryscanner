@@ -8,6 +8,7 @@ written; later audits refer back to earlier ones instead of rewriting them.
 | 1 | 2026-11-06 | AI (opencode), NVIDIA Nemotron 3 550B A55B | 2.x (pre-3.0) | 1 bug fixed, dead code removed |
 | 2 | 2026-11-11 | AI (opencode), Claude Opus 5.5 | 3.0.0 | 17 findings, all fixed -> **3.0.1** |
 | 3 | 2026-11-14 | AI (opencode), Claude Opus 5.5 | 4.2.2 | 2 high, 4 medium, 4 low + tests/CI/texts, all fixed -> **4.3.0**; 2 follow-up fixes -> **4.3.1** |
+| 4 | 2026-11-25 | AI (opencode), Claude Opus 5.5 | 5.5.0 | 2 high, 5 medium, 6 low + tests/CI/texts/docs, all fixed -> **5.5.1** |
 
 Between audit 1 and audit 2 the plugin grew from ~3,000 to ~4,900 lines (v2.1 - v3.0.0: winget updater with
 per-package update/uninstall, remote CPE table, automatic product matching, driver/firmware category, hot reload).
@@ -17,6 +18,12 @@ Between audit 2 and audit 3 (v3.0.1 -> v4.2.2) the code was split into 23 `lib/`
 agent-facing features were added: OS updates / OS release upgrades (v3.5.0, v3.6.0), **software deployment** with
 upload, staging and agent `wget` (v4.0.0), plus a GitHub Actions workflow with a live MeshCentral server and agent.
 Audit 3 is the first audit of that code.
+
+Between audit 3 and audit 4 (v4.3.1 -> v5.5.0, 25 releases in 11 days) six new modules were added - PC reset
+(`devreset`), Windows Update troubleshooter (`wutroubleshoot`), force restart (`devreboot`), license collection incl.
+per-user reads (`license`), the read-only fleet index + detail routes (`fleetindex`) and the **first outbound data
+path**, the asset-management connector (`assetmgmt`) - plus the canonical collector (`nodes`), the modular panel
+(32 partials) and the issue-#9 UI rework. Audit 4 is the first audit of all of that.
 
 ---
 
@@ -792,3 +799,263 @@ directory).
 regex did not match end tags such as `</script >`. *Fix*: the end tag accepts `\b[^>]*`, and a new check fails
 when the number of opening `<script` tags differs from the number of extracted blocks, so no form of end tag can
 hide a block from the syntax checks.
+
+---
+
+# Audit 4 - 2026-11-25 - Independent full audit of v5.5.0 (result: v5.5.1)
+
+**Version audited**: 5.5.0 (commit `d5dc75a1` on `main`) -> fixes released as **5.5.1**
+**Date**: 2026-11-25
+**Auditor**: AI (opencode), model: Claude Opus 5.5 (also the auditor of audits 2 and 3)
+**Scope**: the complete current tree - entry + 29 `lib/` modules, the shell view + 32 partials (11 panels, 20 JS fragments, the probe) + both report views,
+every script sent to agents (winget, OS update/upgrade Windows + Linux, deploy Windows + Linux, PC reset probe/reset,
+Windows Update diagnose/repair, restart/notice Windows + Linux, license extraction), the update / uninstall /
+delete paths, the asset-management connector, the test suite itself (`tools/`), the GitHub Actions workflow and
+the integration script, README, AGENTS.md, SECURITY.md, CONTRIBUTING.md, both curated tables.
+
+This audit was **not** limited to re-checking audits 2 and 3. Everything added since v4.3.1 (see the table at the
+top) was reviewed for the first time; the older findings were re-checked at the end.
+
+## Method
+
+Nothing was taken on trust - not the plugin's own tests (written by the same model as the plugin), not the
+"verified" notes in AGENTS.md, not the earlier audits.
+
+1. **Baseline**: the local working copy was compared file by file (SHA-256) with a fresh clone of `main` - identical.
+   Suite before the audit: check.js 246 PASS, test-plugin 705 PASS + 3 SKIP / 101 steps, test-views 62 PASS.
+2. **Line-by-line review** of all server modules and generated scripts. Three parallel sub-agents did (a) a DOM-XSS
+   sweep over every `innerHTML`/attribute sink of the panel and `lib/browser.js`, (b) a docs-vs-code comparison and
+   (c) a text/encoding sweep plus a test-suite review. **Every finding a sub-agent reported was re-verified by hand
+   (or by running code) before it was accepted**; two of their claims were downgraded after re-checking (see
+   "Checked and found correct").
+3. **Upstream verification** against current MeshCentral `master` (fetched 2026-11-25): `webserver.js`
+   (`handlePluginAdminReq/PostReq`, the urlencoded body parser on `pluginadmin.ashx`, `handleAgentDownloadFile`
+   with its 5-minute `tmpdl` cookie, `getServerFilePath`, `routeAgentCommand`, no `Access-Control-Allow-*` /
+   `OPTIONS` handling outside the web relay), `pluginHandler.js` (`handleAdminReq` sets the views path per request),
+   `meshuser.js` (`createmesh`: mesh ids are `'mesh/' + domain + '/' + base64(48 bytes)` with `+`->`@` and
+   `/`->`$`; `uicustomevent` rights-checks only `command.src.selectedDevices`), `agents/meshcore.js` (`software` needs a
+   numeric `rights`; `runcommands` types 1/2/3 and the "already busy" console line; `wget`/`serverFetchFile` with the
+   4-request cap and the TLS hash pin; `sendConsoleText` without sessionid), `meshcentral.js` (`filespath`, domain url),
+   `common.js` (`IsFilenameValid`), systemd `shutdown` (`+m` minutes, `now`, `-c`).
+4. **Real execution on the audit machine (Windows 11 Pro build 26300, PowerShell 5.1, winget 1.29.380, standard
+   user without elevation)** through the plugin's REAL transport (`wgTransport` -> cmd.exe stdin, exactly how the
+   agent feeds runcommands type 1): the winget **dry run** (8 of 8 available upgrades reported, identical to
+   `winget list --upgrade-available`), the winget **uninstall** of a non-existent package id (`not-installed`, nothing
+   changed), the **license extraction** (machine registry value, per-user registry wildcard, per-user file rule - with
+   a temporary test key under `HKCU:\Software\InvAudit`, removed afterwards). Every winget option the scripts use was
+   checked against `winget <cmd> --help`. Nothing was installed, upgraded, reset or rebooted.
+5. **Targeted reproductions** with throw-away Node scripts against the real modules: Server Files with realistic
+   ids, the scan scheduler with a fake clock, the regex gate with timed catastrophic patterns, the HTTP getters
+   against a local HTTPS server (size caps, redirect to http), prototype-named programs.
+6. **Test-suite review**, and a **mutation check of the new tests**: the new test file was run against the UNFIXED
+   v5.5.0 code - every regression test for a fixed finding fails there.
+
+## Summary
+
+| Severity | Count | Fixed in 5.5.1 |
+|---|---|---|
+| High | 2 | 2 |
+| Medium | 5 | 5 |
+| Low | 6 | 6 |
+| Tests / CI | 9 | 9 |
+| Documentation / texts | 14 | 14 |
+
+Suite after the audit: check.js 246 PASS, **test-plugin 732 PASS + 3 SKIP / 102 steps** (the 3 SKIPs are the POSIX
+`sh` checks - this machine has no POSIX shell; CI runs them), test-views 62 PASS.
+
+## Findings
+
+### High
+
+**B1 - Per-user license reads never worked on a real Windows (agent, functional)**
+v5.5.0 (issue #10) discovers users from `ProfileList`. The whole loop sat inside ONE `try`. On a real Windows 11
+the very first entry is `S-1-5-18` (`C:\WINDOWS\system32\config\systemprofile`), and `Test-Path` on that folder
+throws "access denied" (measured as a standard admin user; whether SYSTEM is denied too was not tested), and the
+loop simply ended there. Result
+measured with the real script through the real transport: `$invUsers` empty, **every per-user rule failed** - the
+whole feature of v5.5.0 and the shipped Mountain Duck entry were dead, while the tests (which only compared script
+text) were green and AGENTS.md claimed a live CI run of `lic_collect` that does not exist.
+*Fix*: every profile is probed inside its own `try` (`Test-Path` with `-ErrorAction Stop` caught per call), the
+well-known service SIDs 18/19/20 are skipped. Verified: the registry wildcard rule and the per-user file rule now
+return their values with `user: herrmann`. Test: `audit4 B1` (fails on v5.5.0).
+
+**B2 - Server Files deploy refused every real device group; the domain part allowed path traversal (server)**
+`swSourcePath` and `sw_serverfiles` validated the group part of the mesh id with `^[A-Za-z0-9._-]{1,128}$`. Real
+MeshCentral ids are base64 with `@` and `$` (verified in `meshuser.js`), so **no real group was ever listed** and
+every Server Files task ended as `invalid server-files group` - while `sw_create_task` still accepted it. Every test
+and the CI used the simplified id `mesh//grp1`, which is why nobody saw it. While fixing it, a second defect was
+found: the **domain** part was not validated at all. `mesh/a\..\..\..\Windows/grp1` passes `parseMeshIds`
+(`^mesh/[^:]+$`) and `path.join(<filespath>, 'domain-' + dom, 'mesh-' + grp)` resolved to `C:\Windows\mesh-grp1`
+(verified). Exploitation needs a full site admin (who can already deploy any file), so the impact is "a site admin
+can deploy a file from outside the files area", but the documented guarantee "traversal impossible" was false.
+*Fix*: ONE function `obj.swServerFilesDir(meshId)` used by the listing, by `sw_create_task` (refused up front now)
+and by the dispatch: group `^[A-Za-z0-9@$._-]{1,128}$` (not `.`/`..`), domain `^[A-Za-z0-9_-]{0,64}$`, folder
+prefix-checked against `<filespath>`. Verified end to end with a realistic 64-character id (listed, staged, wget +
+runcommands sent). Tests: `audit4 B2` x5 with REAL ids; CI: a Server Files listing with the real CI group id.
+
+### Medium
+
+**B3 - The regex-safety gate (ReDoS, CWE-1333) was bypassable (server, OWASP A04/A08)**
+`isSafeTableRegex` (audit 2, L1) only saw a quantifier DIRECTLY inside a quantified group. Measured: `((a+))+$`
+was accepted and took **45 s** for 29 characters, `(a|a)+$` **72 s** - both would freeze the MeshCentral process on
+every scan if they came from a tampered remote table or a custom entry. *Fix*: a small scanner - a group repeated by
+`+ * {..}` must not contain a quantifier or an alternation at ANY depth; numbered and named backreferences are
+refused. 14 catastrophic shapes refused, all shipped `cpe-table.json` (139) and `license-table.json` entries still
+accepted. Tests: `audit4 B3` x4.
+
+**B4 - Scheduled scans overlapped: one full fleet pass per minute (server, availability)**
+`scheduleScans` armed the next timer right after `runScheduledScans()` STARTED the asynchronous pass. `lastScan` was
+still the old value, the residual delay fell to the 60 s floor, and a new full pass started every minute until the
+first one finished - measured with a fake clock: **6 overlapping passes** for a 5-minute scan. On a large fleet this
+is the "server unresponsive" pattern v4.4.0 fought. *Fix*: `runScheduledScans(done)`; the next run is armed when the
+pass finished (`lastScan` fresh), with a watchdog after one interval. Tests: `audit4 B4` x3.
+
+**S1 - A live scan could be started by a foreign page (OWASP A01, CWE-352)**
+`GET action=scan` without `cached=1` queries every device of the selected locations - an action. GETs carry the
+session cookie on top-level navigation and `<img>` loads (`SameSite=lax`), and only POSTs required the
+`X-InvScanner-Request` header. *Fix*: the live scan needs the header (403 otherwise); the panel's `get()` sends it;
+the cached read and the reports stay plain GETs. Tests: `audit4 S1`; CI: 403 without, 200 with the header.
+
+**S2 - Generic extra-header values were returned to the browser in the clear (OWASP A02/A04)**
+Token, password and custom-header value were masked, but `as_get_config` returned `headersJson` verbatim - the
+generic target is exactly where an `X-Api-Key` ends up. *Fix*: `asMaskHeadersJson` masks literal values (placeholder
+values stay visible); saving a masked value keeps the stored one; a mask without a stored value is refused.
+Tests: `audit4 S2` x3.
+
+**B5 - The shipped Mountain Duck rule pointed at a folder that does not exist (data)**
+The vendor documentation (docs.mountainduck.io, "Registration Key") names `%AppData%\Cyberduck` and
+`C:\ProgramData\Cyberduck`; v5.5.0 searched `%AppData%\Mountain Duck` and would have returned the whole signed XML
+file. Verified on a real installation. *Fix*: both documented folders, the `Transaction` id extracted by regex.
+Tests: table shape + the regex against a real-format plist.
+
+### Low
+
+| # | Finding | Fix |
+|---|---|---|
+| S3 | Programs named `__proto__`/`constructor` vanished from `sw_fleet`/`sw_details` (no prototype pollution - verified `Object.prototype` stayed clean - but a lost row) | name-keyed maps are `Object.create(null)` server- and browser-side; test |
+| S4 | `OS_LIFECYCLE_MAX_BYTES` (512 KB, documented in SECURITY.md) was declared but never applied - the 2 MB table cap was used | the cap is passed to the shared getter; verified against a local HTTPS server (1.3 MB refused) |
+| L1 | `safeNodeDir('node//..')` returned `..`, which became a path element of `data/` | dot-only names neutralised; test |
+| L2 | The license table was only refreshed at server start, although CONTRIBUTING.md and the panel promise "with every NVD cycle" | refreshed in the NVD cycle; test |
+| L3 | The per-device **Push** in the asset table sent data off the server without the confirmation every other push asks for | confirmation added |
+| L4 | The three HTTPS getters could answer twice (an oversized body destroys the request, `end` may still fire) | exactly-once guard |
+
+### Tests / CI
+
+| # | Finding | Fix |
+|---|---|---|
+| C1 | **No test used a realistic mesh/node id** - this hid B2 | the new steps use 64-character base64 ids with `@`/`$` |
+| C2 | B1 was invisible: the per-user tests only compared script TEXT; no test or CI step executes the license script | the shape test now pins the per-profile `try`; the audit executed it for real (see Method) |
+| C3 | The 401/403 gate was tested for 2 of 53 POST actions, the sub-domain admin for 1, the 400 path never | a gate matrix over ALL POST actions (non-admin, sub-domain full admin, no header, non-object body) |
+| C4 | Five "marker before Stop-Transcript" checks compared `indexOf` values - a REMOVED marker (-1) passed them (verified) | `markerBeforeStop()`: marker must exist, every emission before the next stop |
+| C5 | Tautologies: `check(..., true)` in the aptrefresh harness, `count(...) >= 0` in test-views | real conditions |
+| C6 | `formatCsvField`, `safeNodeDir` had no direct test; `rbCleanMessage`'s cap was never exercised (46-char input vs. a 200 cap); `swPsQuote` never saw U+201A/U+201B | direct tests |
+| C7 | The prose inventory compared only the first 80 characters - a help block cut after its head still passed | the frozen length is compared (>= 80 %) |
+| C8 | A raw NUL byte in `tools/test-plugin.js` (editors/grep treat the file as binary) | written as `\u0000` |
+| C9 | CI: `actions/checkout` kept the token in `.git/config`; the version check used `grep` with regex dots | `persist-credentials: false`, `grep -F` |
+
+### Documentation, texts
+
+| # | Where | Problem | Fix |
+|---|---|---|---|
+| T1 | AGENTS.md | 101 mojibake sequences (`â€”`, `â†’`, `â‰¤`, ...) and mixed CRLF/LF line endings | repaired, LF |
+| T2 | AGENTS.md | stale facts: panel partial list (`vulndata`, `os`), 19 JS partials (20), "the ONLY rebooting feature/action", "deliberately no scheduler" (license), "OS Updates tab"/"PC Reset tab", floating location panel, default sort cvss, `get_log` without `asset`, "555 / 434 assertions", two "(this release)", "calls every route", "CI exercises lic_collect" (it does not) | corrected; historical changelog entries left as written, with one marked correction |
+| T3 | Panel help | duplicate keys `wg.dry`, `lic.collect` (the detailed `lic.collect` text was silently overwritten); dead keys for removed views (`dl.reboot`, `dl.reset`, `wg.pkg*`, `wg.ign`, `exp.go`); garbled sentences in `dl.appupdates` and `swf.runcol`; `swf.update` referred to the removed packages view | cleaned up |
+| T4 | Panel | buttons without hover help although keys existed (reset row, deploy rows, CPE rows, asset push, two refresh buttons) | `data-help` added |
+| T5 | Device list | two overlapping info boxes ("Restart and Reset ..." / "Reboot and a reset ..."); "the fleet buttons ... are at the bottom" (they are above the table) | one box, correct position |
+| T6 | PC reset page | "This is the one feature that restarts a device" (two exist since v4.7.0); "idle (no winget, OS, deploy or another reset session)" (incomplete) | corrected |
+| T7 | Settings | hint referred to the removed "OS Updates tab" | "Device list (OS column)" |
+| T8 | Messages | "floating location panel" (removed in v5.4.0), "Settings tab -> License keys", "Settings tab -> Update NVD database now" | current locations |
+| T9 | Help | "the BitLocker recovery key is given/required" - the UI only asks to CONFIRM the key is available; "on AC power" as a gate (battery is only reported) | corrected |
+| T10 | README | "on AC power" listed as a Check gate; "both [reboot and reset] announced to the logged-on user" (a reset announces nothing); "every site admin" (default domain only); Exports "choose" (three links); fleet buttons scope; BIN missing; upgrade restart without the launcher caveat | corrected |
+| T11 | SECURITY.md | "intervals 0-87600 h" (per setting different); 512 KB lifecycle cap (not applied before this release); defaults table without license/asset; "GET routes do not change state" (the live scan) | corrected, audit 4 added to the history |
+| T12 | CONTRIBUTING.md | "the CPE section of the Settings tab"; license table "re-downloaded with every NVD cycle" (only at start - now true) | corrected |
+| T13 | `inventoryscanner.js` header | "No inventory data ever leaves the server; only the public NVD feed is downloaded" (asset connector, CPE/license tables, endoflife.date); "patch inventory" CSV (does not exist); site admin without the default-domain rule | corrected |
+| T14 | lib comments | stale tab names, a winget banner comment inside `nvd.js`, "THE ONE FEATURE THAT REBOOTS" in `devreset.js` | corrected / removed |
+
+No German or other non-English text was found in code, views or docs (the German words in `cpe-table.json`
+(`für`) and `lib/matching.js` (`treiber`) are deliberate match patterns for German product names). British and US
+spellings are mixed in a few places (behaviour/behavior); left as is.
+
+## Update / uninstall / delete paths (checked in detail)
+
+- **winget update**: `upgrade --id <id> --exact --silent --accept-package-agreements --accept-source-agreements
+  --disable-interactivity` - every option exists in winget 1.29 (`winget upgrade --help`). The table parser was run
+  for real: 8/8 upgrades of this machine, identical to winget's own list.
+- **winget uninstall**: `uninstall --id <id> --exact --silent --accept-source-agreements --disable-interactivity` -
+  the options exist, `--accept-package-agreements` (audit 2, H1) is still absent. Run for real against a non-existent
+  id: `not-installed`, exit path correct, nothing changed. Only reachable with a `WINGET_ID_RE` id and never as a dry run.
+- **Ignore / exclude** toggles change one key server-side and keep every other key (tested).
+- **OS update / upgrade**: never a reboot command; policy keys restored; `wuauserv` restart around the search (issue #1).
+- **Deploy**: hash-and-lock (Windows) / private re-hashed copy (Linux), protected run folder (F1) re-verified.
+- **sw_delete_file**: id-validated, refused while an open task references the file, removes index entry + file.
+- **sw_cancel_task**: only queued devices are cancelled, running sessions finish (documented and implemented).
+- **remove_cpe / delete_cpe_table / remove_license**: custom entries only, index/tuple validated.
+- **WU repair**: renames (never deletes) `SoftwareDistribution\Download` and `catroot2`; no winsock/proxy reset, no
+  reboot. This matches Microsoft's documented manual reset steps (learn.microsoft.com, "Reset Windows Update
+  components manually", step 4) minus the invasive steps.
+
+## OWASP Top 10 (2021) - status after 5.5.1
+
+| Category | Status |
+|---|---|
+| A01 Broken Access Control | every route and the toolbar hook gated (now pinned for all 53 POST actions incl. sub-domain admins); S1 fixed (live scan needs the header) |
+| A02 Cryptographic Failures | secrets masked incl. extra headers (S2); https-only downloads and pushes; SHA-256 + CSPRNG names for deploy |
+| A03 Injection | re-verified: ids regex-cleaned before any script, five-quote PowerShell quoting, base64 transport, CSV formula guard, every panel sink escaped (DOM-XSS sweep: no exploitable sink) |
+| A04 Insecure Design | B2 domain traversal fixed; B4 overlapping scans fixed |
+| A05 Security Misconfiguration | MeshCentral's headers; CI least privilege + `persist-credentials: false` |
+| A06 Vulnerable Components | no runtime dependencies; dev dependency pinned by the lockfile; actions SHA-pinned |
+| A07 Identification & Authentication | delegated to MeshCentral |
+| A08 Software & Data Integrity | B3 ReDoS gate hardened; S4 size cap applied; NVD `.meta` mismatch stays a warning by design |
+| A09 Logging & Monitoring | per-engine logs + device events; secrets/keys never logged (re-verified) |
+| A10 SSRF | outbound only to admin-configured https URLs (tables, lifecycle, asset target) and the fixed NVD host; the asset push follows no redirects |
+
+## Checked and found correct (selection)
+
+- **DOM-XSS sweep** (sub-agent, spot-checked by hand): every dynamic value reaches HTML through `esc()` (escapes
+  `& < > " '`), Handlebars `{{ }}` or `textContent`; no inline JS-in-attribute patterns with data, no `{{{`, the only
+  data-built `href` is regex-gated to CVE ids. Raw numeric values are server-computed counts.
+- **Toolbar hook** (`lib/browser.js`): admin gate on `uiCustomEvent`, ids regex-validated, the exported browser
+  functions build DOM with `createElement` only.
+- **Agent reply ownership** for all seven session prefixes (foreign session ids never consumed).
+- **Mutual exclusion**: every pump/dispatch refuses a node that holds any other engine's session.
+- **Asset connector**: https enforced at save AND at request time, no redirects followed, header names RFC 7230
+  tokens, values without control characters, log without payloads/secrets.
+- Two sub-agent claims were downgraded after re-checking: the device-detail id collision of node ids that differ only
+  in `@`/`$` (cosmetic, ids are random 64-character strings) and dialog text with line breaks in device names (the
+  server re-checks the typed name).
+
+## Not verified (honest limits of this audit)
+
+- No live MeshCentral server or agent was run during this audit (the CI does that after the push); agent behaviour
+  was verified against upstream source and by executing the generated scripts locally.
+- The audit machine runs as a standard user without elevation: the scripts ran with user rights, not as SYSTEM.
+  Per-user discovery as SYSTEM may see more profiles; the fix makes the loop robust either way.
+- No real Linux system: the Linux scripts were syntax-reviewed only (`sh -n` runs in CI).
+- Windows Update installs, a real winget upgrade, a PC reset and a restart were NOT executed (they would change the
+  audit machine).
+
+## Remaining risks (accepted, documented in SECURITY.md)
+
+Unchanged from audit 3 (SYSTEM/root by design, Server Files as a trust decision, the cmd.exe line limit for very long
+winget ignore lists, no Windows CI runner). New: report and export GETs can be triggered cross-site (load only,
+the answer cannot be read).
+
+## Re-check of audits 2 and 3
+
+| Earlier finding | Status in 5.5.0 |
+|---|---|
+| Audit 2 H1 uninstall option / H2 PATH lookup / H3 table parser | still fixed - H1 and H3 re-verified by real execution |
+| Audit 2 H4 protected transcript folders | still fixed, used by all PowerShell engines |
+| Audit 2 H5 hot reload / launcher restart | still fixed |
+| Audit 2 M1 request header | still fixed for POSTs; extended to the live scan (S1) |
+| Audit 2 M2 default-domain gate | still fixed - now tested for every POST action |
+| Audit 2 M3 toolbar rights / M4 rights:8 / M5 error answers / M6 session ownership | still fixed |
+| Audit 2 L1 regex gate | **incomplete** - bypassable (B3, fixed) |
+| Audit 3 A1 typographic quotes / A2 hash-and-lock / F1 DLL planting | still fixed (re-verified in the generated scripts) |
+| Audit 3 A3 winget opt-in / A4 rescan / A5 notification domain | still fixed |
+| Audit 3 "Server Files resolve strictly inside `<filespath>`, traversal rejected - tested" | **not true for the domain part** (B2, fixed); the test only covered the file name |
+| Audit 3 test runner guards (watchdog, exit guard, `runPs`) | still in place and effective |
+
+**Sign-off**: all findings above fixed in 5.5.1; the full suite is green locally (check.js 246, test-plugin 732 PASS
++ 3 SKIP / 102 steps, test-views 62); the fixed agent-side paths (license extraction incl. per-user, winget dry run
+and uninstall) were executed through the real transport on Windows 11.

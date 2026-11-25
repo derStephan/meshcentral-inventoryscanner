@@ -1,26 +1,14 @@
         <div class="tab-content" id="tab-devicelist" data-main="devices" data-sub="devicelist">
             <div class="info">
-                One row per device, merged from the data already stored on this server - no command is sent to a
-                device just to show this list. Click a column header to sort. The buttons in a row act on
-                <strong>that one device</strong>; tick several devices and use the batch buttons to run one
-                operation on all of them.
-                <br><br>
-                <strong>Restart</strong> and <strong>Reset</strong> are the only actions that reboot a machine. They are
-                never batched and never automatic: a restart needs a grace period, a message to the logged-on user and
-                the device name typed to confirm; a reset needs a fresh read-only check first. Everything else here
-                (updates, OS updates, upgrades, Windows Update repair, license collection) never reboots - a needed
-                restart is only reported.
-            </div>
-            <div class="info">
                 One row per device, built from the data already stored on this server - opening this page sends no
                 command to any device. Hover any button and its explanation appears in the box at the lower right.
                 <br><br>
                 <strong>Reboot</strong> and a <strong>reset</strong> are the only actions that restart a machine: never
                 batched, never automatic, always per device and with the device name typed to confirm. Everything else
                 here (software updates, OS updates, upgrades, Windows Update repair, license collection) never reboots -
-                a needed restart is only reported. The fleet OS buttons, the upgrade reference and the OS update log are
-                at the bottom of this page; <em>Details</em> opens everything stored about one device on demand and is
-                kept in memory while the page is open (the button inside refreshes it).
+                a needed restart is only reported. The fleet OS buttons and the upgrade reference are above the table,
+                the OS update log is at the bottom of this page; <em>Details</em> opens everything stored about one device
+                on demand and is kept in memory while the page is open (the button inside refreshes it).
             </div>
             <div class="controls">
                 <button id="dlRefreshBtn" class="small" data-help="dl.refresh">Refresh</button>
@@ -69,6 +57,6 @@
             <div id="osMsg"></div>
 
             <h3>OS update log</h3>
-            <div><button id="dlOsLogBtn" class="small">Show / refresh the OS update log</button> <span id="dlOsLogInfo" class="hint"></span></div>
+            <div><button id="dlOsLogBtn" class="small" data-help="dl.oslog">Show / refresh the OS update log</button> <span id="dlOsLogInfo" class="hint"></span></div>
             <pre id="dlOsLog" style="display:none;max-height:260px;overflow:auto;background:#0f1720;color:#cfe3f5;padding:8px;border-radius:6px;font-size:11px;margin-top:6px;white-space:pre-wrap;">(not loaded yet)</pre>
         </div>

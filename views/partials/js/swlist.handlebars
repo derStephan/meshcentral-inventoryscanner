@@ -6,7 +6,8 @@
         // changes only the ignore list server-side - the old wg_save_config path reads the whole Updates-tab form
         // from the DOM and would have wiped the updater settings when called from here.
 
-        var swfApp = { software: [], wgMap: {}, devices: 0, open: {}, details: {} };
+        // maps keyed by a program name are prototype-free (a program called "constructor" must not read Object's member)
+        var swfApp = { software: [], wgMap: Object.create(null), devices: 0, open: Object.create(null), details: Object.create(null) };
 
         function loadSwFleet() {
             var ri = $('swfRunInfo'); if (ri) { ri.textContent = 'building the fleet index...'; }
@@ -14,7 +15,7 @@
                 .then(function (rs) {
                     var data = rs[0] || {};
                     if (data.error) { showMsg('swfMsg', data.error, false); return; }
-                    var map = {};
+                    var map = Object.create(null);
                     var pkgs = (rs[1] && rs[1].packages) || [];
                     for (var i = 0; i < pkgs.length; i++) {
                         var p = pkgs[i];

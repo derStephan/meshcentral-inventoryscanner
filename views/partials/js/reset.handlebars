@@ -46,9 +46,9 @@
                 if (d.pending) {
                     html += '<span class="hint">' + esc(d.pending.kind === 'reset' ? 'reset dispatched' : 'checking') + '…</span>';
                 } else {
-                    html += '<button class="small" data-dract="probe" data-drid="' + esc(d.id) + '">Check</button> ';
-                    if (d.modes.keepfiles) { html += '<button class="small purple" data-dract="keep" data-drid="' + esc(d.id) + '">Keep my files</button>'; }
-                    if (d.modes.clean) { html += ' <button class="small red" data-dract="clean" data-drid="' + esc(d.id) + '">Remove everything</button>'; }
+                    html += '<button class="small" data-dract="probe" data-drid="' + esc(d.id) + '" data-help="dr.check">Check</button> ';
+                    if (d.modes.keepfiles) { html += '<button class="small purple" data-dract="keep" data-drid="' + esc(d.id) + '" data-help="dr.keep">Keep my files</button>'; }
+                    if (d.modes.clean) { html += ' <button class="small red" data-dract="clean" data-drid="' + esc(d.id) + '" data-help="dr.clean">Remove everything</button>'; }
                     else if (!d.hasProbe) { html += ' <span class="hint">reset needs a fresh Check</span>'; }
                 }
                 html += '</td></tr>';

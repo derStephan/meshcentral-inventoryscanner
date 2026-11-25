@@ -44,12 +44,18 @@
     {
       "match": "^mountain duck",
       "label": "Mountain Duck",
-      "_source": "docs.mountainduck.io (registration article, measured on a fleet install, 2026-11-25): the registration is a '*.mountainducklicense' file in the PER-USER application support folder - on Windows that is %APPDATA%\\Mountain Duck, i.e. {{profile}}\\AppData\\Roaming\\Mountain Duck; the file content is the key.",
+      "_source": "docs.mountainduck.io/mountainduck/installation/ (section 'Registration Key', re-read 2026-11-25 in audit 4): the '*.mountainducklicense' key file is installed in %AppData%\\Cyberduck (per user) or C:\\ProgramData\\Cyberduck (machine-wide) - NOT in a 'Mountain Duck' folder as v5.5.0 assumed (that rule never matched; verified on a Windows 11 install where the file sits in %AppData%\\Cyberduck). The file is an XML property list; the registration id is the <string> after <key>Transaction</key>, so the rule extracts that instead of returning the whole signed file.",
       "rules": [
         {
           "type": "file",
-          "path": "{{profile}}\\AppData\\Roaming\\Mountain Duck\\*.mountainducklicense",
-          "perUser": true
+          "path": "{{profile}}\\AppData\\Roaming\\Cyberduck\\*.mountainducklicense",
+          "perUser": true,
+          "regex": "<key>Transaction</key>\\s*<string>([^<]+)</string>"
+        },
+        {
+          "type": "file",
+          "path": "C:\\ProgramData\\Cyberduck\\*.mountainducklicense",
+          "regex": "<key>Transaction</key>\\s*<string>([^<]+)</string>"
         }
       ]
     }

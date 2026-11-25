@@ -17,10 +17,10 @@
                 html += '<td>' + esc(e.product) + '</td>';
                 if (e.source === 'custom') {
                     html += '<td><span class="badge badge-custom">Custom</span></td>';
-                    html += '<td><button class="small red del-cpe-btn">Delete</button></td>';
+                    html += '<td><button class="small red del-cpe-btn" data-help="cpe.del">Delete</button></td>';
                 } else {
                     html += '<td><span class="badge badge-builtin">Remote</span></td>';
-                    html += '<td><button class="small override-cpe-btn">Override</button></td>';
+                    html += '<td><button class="small override-cpe-btn" data-help="cpe.override">Override</button></td>';
                 }
                 html += '</tr>';
             }

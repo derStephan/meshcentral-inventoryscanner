@@ -29,6 +29,21 @@ function runPs(args, opts) {
     }
 }
 
+// audit 4: the old "marker before Stop-Transcript" checks compared indexOf values - a REMOVED marker (-1) passed
+// them. This helper demands that the marker exists and that EVERY marker emission comes before the next
+// Stop-Transcript that follows it (a script may answer on several paths, each must answer before it stops).
+function markerBeforeStop(script, marker) {
+    var s = String(script), at = s.indexOf(marker);
+    if (at < 0) { return false; }
+    while (at >= 0) {
+        var stop = s.indexOf('Stop-Transcript', at);
+        if (stop < 0) { return false; }
+        at = s.indexOf(marker, at + marker.length);
+        if (at >= 0 && at < stop) { continue; }
+    }
+    return true;
+}
+
 function pluginSrc() {
     var s = fs.readFileSync(path.join(PLUGIN_DIR, 'inventoryscanner.js'), 'utf8');
     var libDir = path.join(PLUGIN_DIR, 'lib');
@@ -210,7 +225,11 @@ steps.push(function (next) {
 
 // ---- GET routes ----
 steps.push(function (next) {
-    obj.handleAdminReq({ query: { action: 'scan', mesh: 'mesh//grp1,mesh//grp2' } }, mockRes(function (d) {
+    // v5.5.1 (audit 4): a LIVE scan is an action (it queries every device) - without the panel header it is 403,
+    // the cached read stays a plain GET; the panel's get() sends the header
+    obj.handleAdminReq({ query: { action: 'scan', mesh: 'mesh//grp1' } }, mockRes(function (d0) {
+        check('audit4 S1: a live scan without the X-InvScanner-Request header is refused (403) - a foreign link cannot start a fleet pass', d0._status === 403, d0);
+    obj.handleAdminReq({ query: { action: 'scan', mesh: 'mesh//grp1,mesh//grp2' }, headers: XHDR }, mockRes(function (d) {
         check('route scan: multi-mesh json contract', Array.isArray(d.cves) && Array.isArray(d.meshes) && typeof d.flaggedCount === 'number' && typeof d.lastUpdate === 'string', Object.keys(d || {}));
         obj.handleAdminReq({ query: { action: 'report' } }, mockRes(function (d2) {
             check('route report: renders report with locations', d2._view === 'report' && Array.isArray(d2._data.report.locations));
@@ -229,6 +248,7 @@ steps.push(function (next) {
                 }), user);
             }), user);
         }), user);
+    }), user);
     }), user);
 });
 
@@ -294,8 +314,8 @@ steps.push(function (next) {
             // a real device pass is asynchronous; the mock would otherwise finish inside one turn
             obj.scanMeshCves = function (meshId, cb) { scans++; setTimeout(function () { realMesh(meshId, cb); }, 25); };
             var live = [];
-            obj.handleAdminReq({ query: { action: 'scan', mesh: 'mesh//grp1' } }, mockRes(function (dA) { live.push(dA); }), user);
-            obj.handleAdminReq({ query: { action: 'scan', mesh: 'mesh//grp1' } }, mockRes(function (dB) { live.push(dB); }), user);
+            obj.handleAdminReq({ query: { action: 'scan', mesh: 'mesh//grp1' }, headers: XHDR }, mockRes(function (dA) { live.push(dA); }), user);
+            obj.handleAdminReq({ query: { action: 'scan', mesh: 'mesh//grp1' }, headers: XHDR }, mockRes(function (dB) { live.push(dB); }), user);
             setTimeout(function () {
                 check('live scan: ONE device pass answered BOTH panels that pressed the button (the second joined it)',
                     live.length === 2 && scans === 1 && obj.scanInFlight == null &&
@@ -899,7 +919,7 @@ steps.push(function (next) {
 steps.push(function (next) {
     var sc = obj.wgBuildScript({ ignorePackages: [{ id: 'Foo.Bar' }], pinSync: false }, true);
     check('transcript: script writes and closes a client log', sc.indexOf('Start-Transcript') >= 0 && sc.indexOf('Stop-Transcript') >= 0);
-    check('transcript: answer is emitted BEFORE the transcript stops', sc.indexOf('@@INVWUP@@') < sc.indexOf('Stop-Transcript') || sc.indexOf(obj.WINGET_MARKER) < sc.indexOf('Stop-Transcript'), sc.indexOf(obj.WINGET_MARKER) + ':' + sc.indexOf('Stop-Transcript'));
+    check('transcript: answer is emitted BEFORE the transcript stops', markerBeforeStop(sc, obj.WINGET_MARKER), sc.indexOf(obj.WINGET_MARKER) + ':' + sc.indexOf('Stop-Transcript'));
     check('transcript: rotation guard present', sc.indexOf('-gt 5MB') >= 0);
     check('transcript: agent folder probe + protected ProgramData\\InventoryScanner fallback', sc.indexOf('Get-CimInstance Win32_Process') >= 0 && sc.indexOf("Join-Path $env:ProgramData 'InventoryScanner'") >= 0 && sc.indexOf('SetAccessRuleProtection($true, $false)') >= 0 && sc.indexOf("'S-1-5-18', 'S-1-5-32-544'") >= 0, sc.length);
     next();
@@ -1757,7 +1777,7 @@ steps.push(function (next) {
     var wsG = oO.osBuildWindowsScript('upgrade', '25H2');
     check('os win script: built-in Windows Update agent, feature upgrades skipped on update, marker before transcript stop',
         wsU.indexOf('Microsoft.Update.Session') >= 0 && wsU.indexOf("$invOsMode = 'update'") >= 0 && wsU.indexOf(oO.WU_UPGRADES_CATEGORY) >= 0 &&
-        wsU.indexOf(oO.OS_MARKER) < wsU.indexOf('Stop-Transcript') && wsU.indexOf('invscanner-osupdate.log') >= 0);
+            markerBeforeStop(wsU, oO.OS_MARKER) && wsU.indexOf('invscanner-osupdate.log') >= 0);
     check('os win script: upgrade sets and restores TargetReleaseVersion, never reboots',
         wsG.indexOf("$invTarget = '25H2'") >= 0 && wsG.indexOf("'TargetReleaseVersionInfo' -Value $invTarget") >= 0 && wsG.indexOf('Remove-ItemProperty') >= 0 &&
         !/Restart-Computer|shutdown/i.test(wsG));
@@ -2008,7 +2028,7 @@ steps.push(function (next) {
     var src = obj.osBuildLinuxScript('update');
     var line = src.split(String.fromCharCode(10)).filter(function (l) { return l.indexOf('aptrefresh() {') === 0; })[0];
     if (typeof line !== 'string' || line.length < 100) { check('aptrefresh harness: the function is present in the generated script, so the harness runs the REAL code', false, String(line).substring(0, 60)); return next(); }
-    check('aptrefresh harness: the function is present in the generated script, so the harness runs the REAL code', true);
+    check('aptrefresh harness: the function is present in the generated script, so the harness runs the REAL code', line.indexOf('aptrefresh()') === 0 && line.indexOf('/var/lib/apt/lists') > 0, line.substring(0, 60));
     var dir = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-apt-'));
     var logFile = posix(path.join(dir, 'osupdate.log'));
     if (logFile.indexOf("'") >= 0) { console.log('SKIP aptrefresh harness: temp path holds a quote'); return next(); }
@@ -2044,7 +2064,7 @@ steps.push(function (next) {
         !/Restart-Computer|shutdown/i.test(sW));
     check('deploy win script: single quotes in file name and args are doubled (PowerShell quoting), marker before Stop-Transcript',
         sW.indexOf("$invName = 'Tool''set up.msi'") >= 0 && sW.indexOf("$invArgs = '/qn DIR=''C:\\x'' FOO=1'") >= 0 &&
-        sW.indexOf(obj.SW_MARKER) < sW.indexOf('Stop-Transcript') && sW.indexOf('invscanner-deploy.log') >= 0);
+        markerBeforeStop(sW, obj.SW_MARKER) && sW.indexOf('invscanner-deploy.log') >= 0);
     check('deploy win script: a missing download answers state no-file and is never executed',
         sW.indexOf("state='no-file'") >= 0 && sW.indexOf('break }') >= 0);
     check('deploy win script (7z "no-file" report): the answer names WHICH case happened - nothing appeared vs a file whose hash never matched',
@@ -2668,7 +2688,7 @@ steps.push(function (next) {
     check('devreset reset script: launches systemreset non-interactively and prints the marker BEFORE the launch (the reboot wins the race)',
         rc.indexOf("$invSw = '-cleanpc'") >= 0 && rk.indexOf("$invSw = '-keepfiles'") >= 0 &&
         rc.indexOf("Start-Process -FilePath $invSr -ArgumentList $invSw,'-noUI'") >= 0 &&
-        rc.indexOf(obj.DEV_MARKER) < rc.indexOf('Start-Process') && /-cleanpc|-keepfiles/.test(rc));
+        rc.indexOf(obj.DEV_MARKER) >= 0 && rc.indexOf(obj.DEV_MARKER) < rc.indexOf('Start-Process') && /-cleanpc|-keepfiles/.test(rc));
     check('devreset reset script: re-checks build/WinRE/BitLocker on the device; the only reboot path is systemreset (never Restart-Computer/shutdown)',
         rc.indexOf('-lt ' + obj.DEV_MIN_BUILD) >= 0 && rc.indexOf("reagentc '/info'") >= 0 && rc.indexOf('-inotmatch') >= 0 &&
         rc.indexOf('systemreset') >= 0 && !/Restart-Computer|shutdown/i.test(rc));
@@ -2819,7 +2839,7 @@ steps.push(function (next) {
         rp.indexOf("function invWuStep") >= 0 && rp.indexOf('Stop-Service') >= 0 && rp.indexOf('Start-Service') >= 0 &&
         rp.indexOf("SoftwareDistribution\\Download'") >= 0 && rp.indexOf('catroot2') >= 0 && rp.indexOf('Set-Service') >= 0 &&
         rp.indexOf("-StartupType Automatic") >= 0 && rp.indexOf('$invWu.rebootTriggered = $false') >= 0 &&
-        rp.indexOf(obj.WU_MARKER) < rp.indexOf('Stop-Transcript') &&
+        markerBeforeStop(rp, obj.WU_MARKER) &&
         !/Restart-Computer|shutdown/i.test(rp) && rp.indexOf('winsock') < 0 && rp.indexOf('reset proxy') < 0);
     var openersDg = dg.split(String.fromCharCode(10)).filter(function (l) { return /[({]\s*$/.test(l); });
     var openersRp = rp.split(String.fromCharCode(10)).filter(function (l) { return /[({]\s*$/.test(l); });
@@ -2914,7 +2934,7 @@ steps.push(function (next) {
 // ---- v4.7.0 force restart + user notice (issue #6) ----
 steps.push(function (next) {
     // message sanitizer: control chars + PowerShell/shell quoting chars are removed, length capped.
-    var evil = obj.rbCleanMessage('save your work   $(reboot) `calc` "x" \\ y\n\tEND', 'DEFAULT');
+    var evil = obj.rbCleanMessage('save your work \u0000 $(reboot) `calc` "x" \\ y\n\tEND', 'DEFAULT');
     check('rbCleanMessage: strips $ ` " \\ and control chars, collapses spaces, caps length',
         evil.indexOf('$') < 0 && evil.indexOf('`') < 0 && evil.indexOf('"') < 0 && evil.indexOf('\\') < 0 && evil.indexOf('\n') < 0 &&
         /\s\s/.test(evil) === false && evil.indexOf('END') >= 0 && evil.length <= obj.RB_MAX_MESSAGE, evil);
@@ -3796,13 +3816,15 @@ steps.push(function (next) {
     // a FAILED run must not turn into a retry storm against the rate-limited NVD
     var nvdCalls = 0;
     oN.runNvdUpdate = function (force, cb) { nvdCalls++; cb(new Error('download failed')); };
-    oN.maybeFetchCpeTable = function () { }; oN.maybeFetchOsLifecycle = function () { };
+    var licRefresh = 0;
+    oN.maybeFetchCpeTable = function () { }; oN.maybeFetchOsLifecycle = function () { }; oN.maybeFetchLicenseTable = function () { licRefresh++; };
     oN.lastUpdate = new Date(Date.now() - 285 * hour).toISOString();
     timers.length = 0;
     oN.scheduleUpdate();
     timers[0].fn();   // fires the run, which fails
     check('v5.2.0 NVD timer: a failed run retries after the bounded retry delay (6h), never in a tight loop',
         nvdCalls === 1 && timers.length === 2 && timers[1].ms === oN.NVD_RETRY_MS, timers.map(function (t) { return t.ms; }));
+    check('audit4: the NVD cycle also refreshes the license table (documented, but it only ran at server start before)', licRefresh === 1, licRefresh);
 
     // a successful run refreshes lastUpdate, so the next delay is the normal cycle
     oN.runNvdUpdate = function (force, cb) { oN.lastUpdate = new Date().toISOString(); cb(null); };
@@ -4059,7 +4081,12 @@ steps.push(function (next) {
     check('v5.5.0 script: enumerates users read-only from ProfileList and caps them at LIC_MAX_USERS',
         scr.indexOf('ProfileList') >= 0 && scr.indexOf('ProfileImagePath') >= 0 && scr.indexOf('-ge ' + obj.LIC_MAX_USERS) >= 0, scr.length);
     check('v5.5.0 script: per-user registry reads loaded hives only (HKEY_USERS by SID), HKCU prefix replaced',
-        scr.indexOf("Registry::HKEY_USERS\\") >= 0 && scr.indexOf('-replace \'^HKCU:') >= 0 && scr.indexOf('Test-Path (\'Registry::HKEY_USERS\\\'') >= 0, scr.substring(0, 80));
+        scr.indexOf("Registry::HKEY_USERS\\") >= 0 && scr.indexOf('-replace \'^HKCU:') >= 0 && scr.indexOf('Test-Path -LiteralPath (\'Registry::HKEY_USERS\\\'') >= 0, scr.substring(0, 80));
+    // audit 4 (v5.5.1): ONE unreadable profile (on a real Windows 11 Test-Path on S-1-5-18's systemprofile throws
+    // "access denied") used to end the whole discovery loop - no user was ever found. The try is per profile now.
+    var discLine = scr.split(String.fromCharCode(10)).filter(function (l) { return l.indexOf('foreach ($invPl in $invPls)') === 0; })[0] || '';
+    check('audit4 B1: user discovery isolates every profile in its own try (one denied profile no longer ends the loop) and skips the service SIDs 18/19/20',
+        discLine !== '' && discLine.indexOf('{ break }; try {') > 0 && /catch \{ \} \}$/.test(discLine) && discLine.indexOf("'^S-1-5-(18|19|20)$'") > 0, discLine.substring(0, 160));
     check('v5.5.0 script: the profile placeholder is replaced per user (as an escaped regex) and wildcards are enumerated with caps',
         scr.indexOf('\\{\\{profile\\}\\}') >= 0 && (scr.match(/-ge 20/g) || []).length >= 2 && scr.indexOf('-ge 5') >= 0, scr.length);
     check('v5.5.0 script: NEVER loads or saves a hive (the read-only guarantee incl. offline users)',
@@ -4115,8 +4142,15 @@ steps.push(function (next) {
             var md = tbl.entries.filter(function (e) { return /mountain/i.test(e.label); })[0];
             check('v5.5.0 table: VMware is covered by the version-subkey wildcard (both registry views), with a cited source',
                 !!vm && vm.rules.length === 2 && vm.rules.every(function (r) { return r.type === 'registry' && r.value === 'Serial' && (r.path.match(/\*/g) || []).length === 1; }) && !!vm._source, vm && vm.rules);
-            check('v5.5.0 table: Mountain Duck is a per-user wildcard file rule under the profile, with a cited source',
-                !!md && md.rules.length === 1 && md.rules[0].type === 'file' && md.rules[0].perUser === true && md.rules[0].path.indexOf('{{profile}}') === 0 && md.rules[0].path.indexOf('*') > 0 && !!md._source, md && md.rules);
+            check('v5.5.1 table: Mountain Duck reads the documented %AppData%\\Cyberduck key file per user plus the machine-wide C:\\ProgramData\\Cyberduck copy, extracts the Transaction id and cites its source',
+                !!md && md.rules.length === 2 && md.rules[0].type === 'file' && md.rules[0].perUser === true &&
+                md.rules[0].path === '{{profile}}\\AppData\\Roaming\\Cyberduck\\*.mountainducklicense' &&
+                md.rules[1].path === 'C:\\ProgramData\\Cyberduck\\*.mountainducklicense' && md.rules[1].perUser !== true &&
+                md.rules.every(function (r) { return /Transaction/.test(r.regex || '') && obj.isSafeTableRegex(r.regex); }) && /Cyberduck/.test(md._source || ''), md && md.rules);
+            var mdRx = new RegExp(md.rules[0].regex);
+            var mdHit = mdRx.exec('<plist><dict><key>Email</key>\n\t<string>a@b</string>\n\t<key>Transaction</key>\n\t<string>pi_ABC123</string></dict></plist>');
+            check('v5.5.1 table: the Mountain Duck regex returns the Transaction value of a real-format key file (group 1), not the e-mail or the signed blob',
+                !!mdHit && mdHit[1] === 'pi_ABC123', mdHit);
 
             // 5) add_license stamps perUser from the editor checkbox and still rejects unsafe combos
             oU.handleAdminPostReq({ headers: XHDR, body: { action: 'add_license', match: '^Stamped', label: 'Stamped', perUser: 'true', rules: JSON.stringify([{ type: 'registry', path: 'HKCU:\\Software\\S', value: 'K' }]) } }, mockRes(function (adU) {
@@ -4131,6 +4165,141 @@ steps.push(function (next) {
             }), user);
         });
     }), user);
+});
+
+// ---- audit 4 (v5.5.1): independent full audit - regression tests for every fixed finding ----
+// Ids here are REALISTIC: MeshCentral generates mesh/node ids as 'mesh//' + base64(48 random bytes) with '+' -> '@'
+// and '/' -> '$' (meshuser.js createmesh) - the simplified 'mesh//grp1' ids of the older fixtures hid finding B2.
+function realId(kind) { return kind + '//' + require('crypto').randomBytes(48).toString('base64').replace(/\+/g, '@').replace(/\//g, '$'); }
+steps.push(function (next) {
+    // B3: the regex-safety gate (ReDoS) - every pattern below was measured or is a textbook catastrophic shape
+    var badRx = ['((a+))+$', '(a|a)+$', '(a|aa)+$', '(a+)+$', '(\\w+\\s?)+$', '(a+){2,}', '(?:a+)+$', '([a-z]+)*$', '((ab)*)+', '(?:(?:a|b)c)+', '(?<n>a+)+', '(a)\\1', '(?<n>a)\\k<n>', '((x)?)+'];
+    var goodRx = ['^firefox', 'mozilla firefox|firefox esr', '(x64|x86)?', '^7-zip( \\d+)?', 'notepad\\+\\+', '(?:google )?chrome', '[a-z]+ \\d+', '^(adobe )?acrobat (reader|pro)'];
+    var badPassed = badRx.filter(function (r) { return obj.isSafeTableRegex(r); });
+    var goodFailed = goodRx.filter(function (r) { return !obj.isSafeTableRegex(r); });
+    check('audit4 B3: nested quantifiers at ANY depth, alternation under a quantifier and backreferences are refused (((a+))+$ took 45 s, (a|a)+$ 72 s before)', badPassed.length === 0, badPassed);
+    check('audit4 B3: ordinary patterns (optional groups, top-level alternation, escaped +) stay accepted', goodFailed.length === 0, goodFailed);
+    var shipped = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'cpe-table.json'), 'utf8')).entries.concat(JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'license-table.json'), 'utf8')).entries);
+    var shippedBad = shipped.filter(function (e) { return !obj.isSafeTableRegex(e.match); }).map(function (e) { return e.match; });
+    check('audit4 B3: every shipped cpe-table/license-table regex still passes the stricter gate', shippedBad.length === 0, shippedBad);
+    check('audit4 B3: a tampered remote table with a catastrophic regex is skipped, not applied', obj.applyCpeTableText({ entries: [{ match: '((a+))+$', vendor: 'v', product: 'p' }] }).ok === false);
+
+    // B2: Server Files with REAL mesh ids, plus the domain-traversal guard
+    var grp = realId('mesh'), nodeR = realId('node');
+    var fsp = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-a4sf-'));
+    fs.mkdirSync(path.join(fsp, 'tmp'), { recursive: true });
+    fs.mkdirSync(path.join(fsp, 'domain', 'mesh-' + grp.split('/')[2]), { recursive: true });
+    fs.writeFileSync(path.join(fsp, 'domain', 'mesh-' + grp.split('/')[2], 'tool.msi'), 'MSIDATA');
+    var nodesR = [{ _id: nodeR, meshid: grp, rname: 'rh', name: 'RealOne', osdesc: 'Microsoft Windows 11 Pro' }];
+    var sentR = [];
+    var dbR = { GetAllType: function (t, cb) { cb(null, t === 'node' ? nodesR.slice() : [{ _id: grp, name: 'Real group' }]); }, Get: function (id, cb) { cb(null, nodesR.filter(function (n) { return n._id === id; })); } };
+    var wsa = {}; wsa[nodeR] = { send: function (m) { sentR.push(JSON.parse(m)); } };
+    var oR = factory({ parent: { db: dbR, datapath: fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-a4d-')), filespath: fsp, debug: function () { }, config: { settings: {} },
+        webserver: { meshes: {}, wsagents: wsa }, encodeCookie: function () { return 'COOKIE'; }, loginCookieEncryptionKey: 'k', DispatchEvent: function () { } } });
+    oR.installRouteHook = function () { };
+    check('audit4 B2: swServerFilesDir accepts a real mesh id (@ and $) and resolves INSIDE <filespath>',
+        oR.swServerFilesDir(grp) === path.resolve(fsp, 'domain', 'mesh-' + grp.split('/')[2]), oR.swServerFilesDir(grp));
+    check('audit4 B2: a domain part that is a path (mesh/a\\..\\..\\x/g, mesh/../g) or a dot group is refused',
+        oR.swServerFilesDir('mesh/a\\..\\..\\..\\Windows/grp1') === null && oR.swServerFilesDir('mesh/../grp1') === null && oR.swServerFilesDir('mesh//..') === null && oR.swServerFilesDir('mesh//a/b') === null);
+    oR.handleAdminPostReq({ headers: XHDR, body: { action: 'sw_serverfiles' } }, mockRes(function (sf) {
+        var f = (sf.folders || []).filter(function (x) { return x.meshId === grp; })[0];
+        check('audit4 B2: sw_serverfiles lists the Server Files folder of a group with a REAL id (it was always missing)', !!f && f.files.length === 1 && f.files[0].name === 'tool.msi', sf);
+        oR.handleAdminPostReq({ headers: XHDR, body: { action: 'sw_create_task', source: 'serverfile', meshId: 'mesh/a\\..\\..\\..\\Windows/grp1', fileName: 'x.msi', nodeIds: nodeR } }, mockRes(function (tr) {
+            check('audit4 B2: sw_create_task refuses a server-files group id that would leave <filespath>', /Invalid server-files group id/.test(tr.error || ''), tr);
+            oR.handleAdminPostReq({ headers: XHDR, body: { action: 'sw_create_task', source: 'serverfile', meshId: grp, fileName: 'tool.msi', nodeIds: nodeR } }, mockRes(function (tk) {
+                setTimeout(function () {
+                    var task = oR.swTasks[tk.taskId];
+                    var dev = task ? task.devices[nodeR] : null;
+                    check('audit4 B2: a Server Files deploy with a real group id is staged and dispatched (wget + runcommands), not "invalid server-files group"',
+                        !!dev && dev.state === 'running' && /^[a-f0-9]{64}$/.test(task.sha256) && sentR.map(function (m) { return m.action; }).join(',') === 'wget,runcommands', [dev, sentR.length]);
+                    a4scheduler();
+                }, 300);
+            }), user);
+        }), user);
+    }), user);
+
+    // B4: one scheduled pass at a time - the next run is planned only after the running pass finished
+    function a4scheduler() {
+        var oS = factory({ parent: { db: { GetAllType: function (t, cb) { cb(null, t === 'mesh' ? [{ _id: 'mesh//g', name: 'G' }] : []); }, Get: function (id, cb) { cb(null, []); } },
+            datapath: fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-a4s-')), debug: function () { }, config: { settings: { vulnerabilityScanner: { scanIntervalHours: 24 } } }, webserver: { meshes: {} }, DispatchEvent: function () { } } });
+        var timers = [], passes = 0, finishPass = null;
+        oS.longTimeout = function (cb, ms) { timers.push({ cb: cb, ms: ms }); };
+        oS.saveScans = function () { };
+        oS.scanMeshCves = function (id, cb) { passes++; finishPass = function () { cb(null, []); }; };
+        oS.lastScan = new Date(Date.now() - 25 * 3600 * 1000).toISOString();
+        oS.scheduleScans();
+        check('audit4 B4: a due schedule arms exactly one timer (the 60 s floor)', timers.length === 1 && timers[0].ms === 60000, timers.map(function (t) { return t.ms; }));
+        timers.shift().cb();   // fire: the pass starts and is still running
+        check('audit4 B4: while the pass runs NO next timer is armed (before: a new full fleet pass started every minute)', passes === 1 && timers.length === 0, [passes, timers.length]);
+        finishPass();
+        check('audit4 B4: when the pass finished, the next run is armed one full interval later (lastScan is fresh)',
+            timers.length === 1 && Math.abs(timers[0].ms - 24 * 3600 * 1000) < 5000 && oS.lastScan > new Date(Date.now() - 5000).toISOString(), timers.map(function (t) { return t.ms; }));
+        a4rest();
+    }
+
+    function a4rest() {
+        // S2: generic extra-header values are masked like every other secret, and a masked value keeps the stored one
+        var oA = factory({ parent: { db: db, datapath: fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-a4a-')), debug: function () { }, config: { settings: {} }, webserver: { meshes: {} }, DispatchEvent: function () { } } });
+        oA.handleAdminPostReq({ headers: XHDR, body: { action: 'as_save_config', enabled: 'false', targetType: 'generic', endpointUrl: 'https://am.example.com/i', headersJson: '{"X-Api-Key":"SECRET-KEY-1","X-Host":"{{device.host}}"}', bodyTemplate: '{"a":1}' } }, mockRes(function (s1) {
+            var shown = JSON.parse(s1.config.headersJson);
+            check('audit4 S2: as_get_config masks a literal extra-header value (it can carry an API key) and keeps a placeholder value visible',
+                shown['X-Api-Key'] === oA.AS_MASK && shown['X-Host'] === '{{device.host}}' && JSON.stringify(s1).indexOf('SECRET-KEY-1') < 0, shown);
+            oA.handleAdminPostReq({ headers: XHDR, body: { action: 'as_save_config', enabled: 'false', targetType: 'generic', endpointUrl: 'https://am.example.com/i', headersJson: s1.config.headersJson, bodyTemplate: '{"a":1}' } }, mockRes(function () {
+                check('audit4 S2: re-saving the masked form keeps the stored header value (no secret is lost, none is shown)',
+                    JSON.parse(oA.pluginSettings.assetManagement.headersJson)['X-Api-Key'] === 'SECRET-KEY-1', oA.pluginSettings.assetManagement.headersJson);
+                oA.handleAdminPostReq({ headers: XHDR, body: { action: 'as_save_config', enabled: 'false', targetType: 'generic', endpointUrl: 'https://am.example.com/i', headersJson: '{"X-New":"' + oA.AS_MASK + '"}', bodyTemplate: '{"a":1}' } }, mockRes(function (s3) {
+                    check('audit4 S2: a mask for a header that has no stored value is refused instead of sending "--------"', /no stored value/.test(s3.error || ''), s3);
+
+                    // S3: program names that are Object.prototype keys must not vanish from the unified views
+                    var protoNodes = [{ _id: 'node//pp', meshid: 'mesh//grp1', rname: 'pp', name: 'PP', osdesc: 'Windows 11' }];
+                    var oP = factory({ parent: { db: { GetAllType: function (t, cb) { cb(null, t === 'node' ? protoNodes.slice() : meshes.slice()); }, Get: function (id, cb) { cb(null, id === 'sinode//pp' ? [{ doc: { apps: [{ name: '__proto__', version: '1' }, { name: 'constructor', version: '2' }, { name: 'Firefox', version: '3' }] } }] : protoNodes.filter(function (n) { return n._id === id; })); } },
+                        datapath: fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-a4p-')), debug: function () { }, config: { settings: {} }, webserver: { meshes: {} } } });
+                    oP.scanDeviceSoftware = function (l, cb) { cb([]); }; oP.scanDeviceOs = function () { return []; };
+                    oP.handleAdminPostReq({ headers: XHDR, body: { action: 'sw_fleet', refresh: '1' } }, mockRes(function (fl) {
+                        var names = (fl.software || []).map(function (x) { return x.name; }).sort().join(',');
+                        check('audit4 S3: programs named "__proto__" and "constructor" are listed in sw_fleet (they silently disappeared before)', names === 'Firefox,__proto__,constructor', names);
+                        check('audit4 S3: and Object.prototype stays clean', ({}).devs === undefined && Object.keys(Object.prototype).length === 0);
+
+                        // S4: the lifecycle fetch passes its own 512 KB cap to the shared getter
+                        var seenCap = null, savedGet = obj.cpeTableHttpGet;
+                        obj.cpeTableHttpGet = function (u, cb, cap) { seenCap = cap; cb(null, '[]'); };
+                        obj.osLifecycleHttpGet('https://endoflife.date/api/ubuntu.json', function () { });
+                        obj.cpeTableHttpGet = savedGet;
+                        check('audit4 S4: the OS lifecycle download is capped at OS_LIFECYCLE_MAX_BYTES (512 KB), not the 2 MB table cap', seenCap === obj.OS_LIFECYCLE_MAX_BYTES && seenCap === 512 * 1024, seenCap);
+
+                        // Gate matrix: EVERY POST action of the dispatcher answers 401 without admin, 403 without the header,
+                        // 400 without an object body - pinned for all of them, not just two (the old suite tested 2 of 53)
+                        var src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'routes.js'), 'utf8');
+                        var acts = []; var mre = /req\.body\.action === '([a-z_]+)'/g; var mm;
+                        while ((mm = mre.exec(src)) !== null) { if (acts.indexOf(mm[1]) < 0) { acts.push(mm[1]); } }
+                        var badGate = [];
+                        var subAdmin = { name: 'tenant', _id: 'user/t/x', siteadmin: 0xFFFFFFFF, domain: 't' };
+                        acts.forEach(function (a) {
+                            var r401 = null, r401s = null, r403 = null, r400 = null;
+                            obj.handleAdminPostReq({ headers: XHDR, body: { action: a } }, { sendStatus: function (c) { r401 = c; }, type: function () { return this; }, json: function () { r401 = 'json'; } }, { name: 'x', siteadmin: 0, domain: '' });
+                            obj.handleAdminPostReq({ headers: XHDR, body: { action: a } }, { sendStatus: function (c) { r401s = c; }, type: function () { return this; }, json: function () { r401s = 'json'; } }, subAdmin);
+                            obj.handleAdminPostReq({ headers: {}, body: { action: a } }, { sendStatus: function (c) { r403 = c; }, type: function () { return this; }, json: function () { r403 = 'json'; } }, user);
+                            obj.handleAdminPostReq({ headers: XHDR, body: 'action=' + a }, { sendStatus: function (c) { r400 = c; }, type: function () { return this; }, json: function () { r400 = 'json'; } }, user);
+                            if (r401 !== 401 || r401s !== 401 || r403 !== 403 || r400 !== 400) { badGate.push([a, r401, r401s, r403, r400]); }
+                        });
+                        check('audit4 gates: all ' + acts.length + ' POST actions refuse a non-admin (401), a SUB-DOMAIN full admin (401), a request without the header (403) and a non-object body (400)', acts.length >= 50 && badGate.length === 0, badGate.slice(0, 5));
+
+                        // Direct tests for helpers that had none
+                        check('audit4 helpers: formatCsvField neutralises = + - @ TAB CR at the start and quotes , " CR LF',
+                            obj.formatCsvField('=1+1') === "'=1+1" && obj.formatCsvField('+x') === "'+x" && obj.formatCsvField('-x') === "'-x" && obj.formatCsvField('@x') === "'@x" &&
+                            obj.formatCsvField('\tx') === "'\tx" && obj.formatCsvField('a,b') === '"a,b"' && obj.formatCsvField('a"b') === '"a""b"' && obj.formatCsvField('a\nb') === '"a\nb"' &&
+                            obj.formatCsvField('=HYPERLINK("x")') === '"\'=HYPERLINK(""x"")"' && obj.formatCsvField(null) === '""' && obj.formatCsvField('plain') === 'plain');
+                        check('audit4 helpers: safeNodeDir never returns a path element (.. / \\ : are neutralised)',
+                            ['node//..', 'node//a/../b', 'node//a\\b', 'node//c:x', ''].every(function (x) { var d = obj.safeNodeDir(x); return d !== '..' && d !== '.' && !/[\/\\:]/.test(d) && d !== ''; }),
+                            ['node//..', 'node//a\\b'].map(obj.safeNodeDir));
+                        check('audit4 helpers: rbCleanMessage caps at 200 and strips quotes/control chars', obj.rbCleanMessage(new Array(600).join('x'), '').length === 200 && obj.rbCleanMessage("it's \"a\" `b` $c \\d", '') === 'its a b c d');
+                        check('audit4 helpers: swPsQuote doubles all five PowerShell quote characters', obj.swPsQuote("a'b\u2018c\u2019d\u201Ae\u201Bf") === "a''b\u2018\u2018c\u2019\u2019d\u201A\u201Ae\u201B\u201Bf");
+                        next();
+                    }), user);
+                }), user);
+            }), user);
+        }), user);
+    }
 });
 
 // The runner MUST stay the last statement: every steps.push() above has to be registered before
