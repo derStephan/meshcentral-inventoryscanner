@@ -49,6 +49,11 @@ tools/                         self-contained verification for agents (no MeshCe
                                `overrides` lists the rows whose curated value DELIBERATELY differs from the upstream
                                wording, each with its reason (winget's License field names the copyright TERMS, this
                                table answers "does a license have to be bought?"). Not part of `npm test`.
+  workdir.js                   shared working-directory policy for every tool here (v5.6.0): `install()` redirects all
+                               scratch paths to `INVSCANNER_WORKDIR` when that variable is set (unset = `os.tmpdir()`,
+                               which is what CI uses), registers every directory/file the suite creates and removes
+                               them on exit. Required by test-plugin.js, test-views.js, check.js and
+                               coverage-benchmark.js - without it the suite left its scratch behind (see Testing).
 README.md                      user-facing documentation
 package.json                   repo metadata; `npm test` runs tools/check.js + tools/test-plugin.js + tools/test-views.js
 package-lock.json              committed on purpose: pins the dev dependency tree (handlebars) so `npm ci` gives every
@@ -1294,6 +1299,21 @@ above, and a test assertion. Partial updates are a contract break the tests catc
 npm ci             # once (dev dependency: handlebars, pinned by package-lock.json)
 npm test           # = tools/check.js && tools/test-plugin.js && tools/test-views.js
 ```
+
+**The suite must not fill the disk (v5.6.0, was a real 47.9 GB incident).** Two rules a new step has to follow:
+1. **Never let a step call the real `server_startup()` without seeding a 0-CVE feed first** - call
+   `seedEmptyNvd(inst, datapath)` before it. Otherwise `ensureNvdData()` downloads the COMPLETE NVD feed set
+   (~2.8 GB) into the step's temporary datapath, and `scheduleUpdate()` can arm a second download 60 s later.
+   This is the same trick the CI container test uses; with it a full run takes ~13 s instead of minutes.
+2. **Create scratch space through `tools/workdir.js`**, never by hand: `fs.mkdtempSync` is wrapped and cleaned up
+   automatically, and a self-built timestamped path must go through `workdir.tmpDir(name)` / `workdir.tmpFile(name)`
+   so it is registered too. Before v5.6.0 every directory survived the run - 12,821 of them had piled up
+   (47.9 GB, ~8-9 GB per run). `INVSCANNER_WORKDIR` redirects all of it out of the system temp folder onto a
+   dedicated working directory; unset (the default, and CI) keeps `os.tmpdir()`, so CI behaviour is unchanged.
+   A generated agent script in a test must never hard-code `%TEMP%` and then read the file back via `os.tmpdir()` -
+   those two diverge as soon as the base is redirected (the v4.3.1 dll step did exactly that); use one resolved
+   path on both sides, quoted, so a working folder with spaces works too.
+
 
 CI (`.github/workflows/meshcentral-integration.yml`, pure administration - it never touches plugin code
 or releases): `npm test` on every push/PR (node 18 + 24), plus a live-container run: the current

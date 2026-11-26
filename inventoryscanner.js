@@ -25,7 +25,8 @@
  * @author derStephan
  * @version 5.6.0
  *
- * Transparency: This plugin was created with the assistance of Qwen 3.6 27B and Qwen 3.8 Flash Next.
+ * Transparency: This plugin was created with the assistance of Qwen 3.6 27B and Qwen 3.8 Flash Next;
+ * ongoing development is AI-assisted too (since v5.6.0 by Qwen 3.8 Max), all via opencode.
  * Audits: 2026-11-06 (NVIDIA Nemotron 3 550B A55B), 2026-11-11 (Claude Opus 5.5, v3.0.1), 2026-11-14 (Claude Opus 5.5, v4.3.0)
  * and 2026-11-25 (Claude Opus 5.5, v5.5.1) via opencode - see AUDIT.md.
  */

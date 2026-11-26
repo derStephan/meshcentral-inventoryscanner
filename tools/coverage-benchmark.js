@@ -15,6 +15,11 @@ const path = require('path');
 const os = require('os');
 const factory = require(path.join(__dirname, '..', 'inventoryscanner.js')).inventoryscanner;
 
+// Scratch directories land in INVSCANNER_WORKDIR when it is set and are removed on exit - see
+// tools/workdir.js (this tool is run manually, but it must not leave directories behind either).
+const workdir = require(path.join(__dirname, 'workdir.js'));
+workdir.install();
+
 let nvdDir = null, topN = 200;
 const argv = process.argv.slice(2);
 for (let i = 0; i < argv.length; i++) {

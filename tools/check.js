@@ -14,8 +14,12 @@
 
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const { execFileSync } = require('child_process');
+
+// Scratch files land in INVSCANNER_WORKDIR when it is set (never in the system temp folder then) and are
+// removed on exit even if a check throws - see tools/workdir.js. No npm dependency, still runs anywhere.
+const workdir = require(path.join(__dirname, 'workdir.js'));
+workdir.install();
 
 const root = path.join(__dirname, '..');
 const pluginDir = root; // flat layout: plugin files live at repository root (web installer requirement)
@@ -113,7 +117,7 @@ for (const vf of fs.readdirSync(viewsDir).filter(function (f) { return f.endsWit
         const stray = composed.replace(/\{\{shortName\}\}/g, '').replace(/\{\{\s*>\s*[A-Za-z0-9_.\-/]+[^}]*\}\}/g, '').indexOf('{{');
         report(label + ': no stray {{ (only {{shortName}} and {{> partial }})', stray < 0,
             stray >= 0 ? composed.substring(Math.max(0, stray - 40), stray + 40) : undefined);
-        const tmp = path.join(os.tmpdir(), 'invscanner-inline-check-' + Date.now() + '-' + bi + '.js');
+        const tmp = workdir.tmpFile('invscanner-inline-check-' + Date.now() + '-' + bi + '.js');
         fs.writeFileSync(tmp, composed, 'utf8');
         jsCheck(tmp, label + ' syntax (partials inlined)');
         try { fs.unlinkSync(tmp); } catch (e) { }
@@ -161,7 +165,7 @@ for (const p of partialNames) {
 // and are included inside the shell's IIFE, so wrapping them in a function is the faithful check.
 for (const p of partialNames.filter(function (x) { return x.indexOf('js/') === 0; })) {
     const frag = fs.readFileSync(path.join(partialsDir, p + '.handlebars'), 'utf8');
-    const tmp = path.join(os.tmpdir(), 'invscanner-frag-' + Date.now() + '-' + p.replace(/[\/.]/g, '_') + '.js');
+    const tmp = workdir.tmpFile('invscanner-frag-' + Date.now() + '-' + p.replace(/[\/.]/g, '_') + '.js');
     fs.writeFileSync(tmp, "(function () {\n'use strict';\n" + frag + '\n})();\n', 'utf8');
     jsCheck(tmp, 'partial ' + p + ' is valid JS on its own');
     try { fs.unlinkSync(tmp); } catch (e) { }

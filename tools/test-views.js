@@ -8,6 +8,11 @@
 const fs = require('fs');
 const path = require('path');
 
+// The rendered-view scratch directory lands in INVSCANNER_WORKDIR when it is set and is removed on
+// exit - see tools/workdir.js (the suite used to leave every scratch directory behind in %TEMP%).
+const workdir = require(path.join(__dirname, 'workdir.js'));
+workdir.install();
+
 let Handlebars;
 try {
     Handlebars = require('handlebars');

@@ -258,5 +258,7 @@ See [AUDIT.md](AUDIT.md) for the detailed reports in chronological order.
 ## Transparency Note
 
 This plugin was originally created with the assistance of **Qwen 3.6 27B** and **Qwen 3.8 Flash Next** (AI coding
-assistants). The 2026-11-06 audit was performed by **NVIDIA Nemotron 3 550B A55B**, the 2026-11-11, 2026-11-14 and
+assistants). Ongoing development is AI-assisted as well - since v5.6.0 (2026-11-26) by **Qwen 3.8 Max**, all via the
+opencode agent; every release is committed under the name of the model that produced it. The 2026-11-06 audit was
+performed by **NVIDIA Nemotron 3 550B A55B**, the 2026-11-11, 2026-11-14 and
 2026-11-25 audits by **Claude Opus 5.5**, all via the opencode agent.

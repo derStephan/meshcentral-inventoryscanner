@@ -13,6 +13,27 @@ const os = require('os');
 
 const factory = require(path.join(__dirname, '..', 'inventoryscanner.js')).inventoryscanner;
 
+// Temporary directories are redirected (INVSCANNER_WORKDIR) and ALWAYS removed on exit - see
+// tools/workdir.js for why (the suite used to leave ~8 GB of NVD feeds per run in %TEMP%).
+const workdir = require(path.join(__dirname, 'workdir.js'));
+workdir.install();
+
+/**
+ * Give a plugin instance a 0-CVE NVD feed for the current year, so a real server_startup() LOADS it
+ * instead of downloading every feed year (~2.8 GB) into the temporary datapath. Call this before any
+ * server_startup() in this suite - the same trick the CI container test uses.
+ * @param {object} inst - a plugin instance (for currentYear()).
+ * @param {string} datapath - the instance's datapath.
+ */
+function seedEmptyNvd(inst, datapath) {
+    try {
+        const dir = path.join(datapath, 'nvd');
+        fs.mkdirSync(dir, { recursive: true });
+        const file = path.join(dir, 'nvdcve-2.0-' + inst.currentYear() + '.json');
+        if (!fs.existsSync(file)) { fs.writeFileSync(file, JSON.stringify({ vulnerabilities: [] })); }
+    } catch (e) { console.log('WARNING: seedEmptyNvd failed (' + e.message + ')'); }
+}
+
 // All plugin source (entry + lib/ modules) - for the tests that assert on emitted code text.
 const PLUGIN_DIR = path.join(__dirname, '..');
 /**
@@ -522,7 +543,7 @@ steps.push(function (next) {
 });
 
 steps.push(function (next) {
-    obj.pluginSettingsPath = require('path').join(require('os').tmpdir(), 'invscanner-settest-' + Date.now(), 'scanner-settings.json');
+    obj.pluginSettingsPath = path.join(workdir.tmpDir('invscanner-settest-' + Date.now()), 'scanner-settings.json');
     obj.timerGen = 0;
     obj.lastScan = new Date().toISOString();
     var captured = [];
@@ -718,13 +739,13 @@ steps.push(function (next) {
     check('cpeTable: status shows remote', obj.cpeTableStatus().source === 'remote' && obj.cpeTableStatus().entries === 2, obj.cpeTableStatus());
     check('cpeTable: non-JSON rejected', obj.applyCpeTableText('not json').ok === false);
     check('cpeTable: missing entries array rejected', obj.applyCpeTableText('{"foo":1}').ok === false);
-    var cacheFilePath = require('path').join(require('os').tmpdir(), 'invscanner-cpetable-' + Date.now(), 'cpe-table.json');
+    var cacheFilePath = path.join(workdir.tmpDir('invscanner-cpetable-' + Date.now()), 'cpe-table.json');
     obj.cpeTablePath = cacheFilePath;
     require('fs').mkdirSync(require('path').dirname(obj.cpeTablePath), { recursive: true });
     require('fs').writeFileSync(obj.cpeTablePath, JSON.stringify({ entries: [{ match: '^CacheApp', vendor: 'cv', product: 'cp' }] }));
     obj.remoteCpeEntries = null; obj.loadRemoteCpeTable();
     check('cpeTable: loads cached file at startup', obj.cpeTableStatus().source === 'remote' && obj.cpeTableStatus().origin === 'cache' && !!obj.deriveCpeProduct('', 'CacheApp 1'), obj.cpeTableStatus());
-    obj.cpeTablePath = require('path').join(require('os').tmpdir(), 'invscanner-cpetable-none-' + Date.now(), 'cpe-table.json');
+    obj.cpeTablePath = path.join(workdir.tmpDir('invscanner-cpetable-none-' + Date.now()), 'cpe-table.json');
     obj.remoteCpeEntries = null; obj.loadRemoteCpeTable();
     check('cpeTable: no cache file at the datapath -> the copy beside the code is live (installed servers already have it at the cache path, so no mirroring is ever needed)',
         obj.cpeTableStatus().source === 'remote' && obj.cpeTableStatus().origin === 'bundled' && obj.cpeTableStatus().entries > 40, obj.cpeTableStatus());
@@ -754,7 +775,7 @@ steps.push(function (next) {
 // ---- NVD download log tailer ----
 steps.push(function (next) {
     var savedNvd = obj.nvdDataPath;
-    obj.nvdDataPath = require('path').join(require('os').tmpdir(), 'invscanner-nvdlog-' + Date.now());
+    obj.nvdDataPath = workdir.tmpDir('invscanner-nvdlog-' + Date.now());
     obj.handleAdminPostReq({ headers: XHDR, body: { action: 'get_nvdlog' } }, mockRes(function (d) {
         check('nvdlog: missing file -> note, no lines', Array.isArray(d.lines) && d.lines.length === 0 && !!d.note, d);
         require('fs').mkdirSync(obj.nvdDataPath, { recursive: true });
@@ -966,6 +987,7 @@ steps.push(function (next) {
     var inst = factory(ph);
     inst.PLUGIN_VERSION = '0.0.1';
     ph.plugins.inventoryscanner = inst;
+    seedEmptyNvd(inst, meshServer.datapath);   // never let a real server_startup() download the NVD feeds
     inst.server_startup();
     check('upgrade: stale instance replaced in place', ph.plugins.inventoryscanner !== inst && ph.plugins.inventoryscanner.PLUGIN_VERSION !== '0.0.1', ph.plugins.inventoryscanner && ph.plugins.inventoryscanner.PLUGIN_VERSION);
     check('upgrade: exports point at the fresh instance', ph.exports.inventoryscanner === ph.plugins.inventoryscanner.exports);
@@ -1526,6 +1548,7 @@ steps.push(function (next) {
     var second = require(path.join(pd, 'inventoryscanner.js')).inventoryscanner(ph); // cached module, like pluginHandler
     ph.plugins.inventoryscanner = second; ph.exports.inventoryscanner = second.exports;
     check('upgrade (real installer flow): a new instance of cached code still reports the OLD code version', second.PLUGIN_VERSION === '0.0.1', second.PLUGIN_VERSION);
+    seedEmptyNvd(second, base);   // never let a real server_startup() download the NVD feeds
     second.server_startup();
     var mod = require.cache[require.resolve(path.join(pd, 'inventoryscanner.js'))];
     check('upgrade (real installer flow): server_startup reloads the new code and swaps it in', mod && mod.exports.__upgradedCode === true && ph.plugins.inventoryscanner !== second && ph.plugins.inventoryscanner.PLUGIN_VERSION === '0.0.2', ph.plugins.inventoryscanner.PLUGIN_VERSION);
@@ -1575,6 +1598,7 @@ steps.push(function (next) {
     ms3.args = noLauncher;
     check('restart: canRestartServer only under the MeshCentral launcher', inst.canRestartServer() === true && noLauncherOk);
     var genBefore = inst.timerGen;
+    seedEmptyNvd(inst, ms3.datapath);   // never let a real server_startup() download the NVD feeds
     inst.server_startup();
     check('restart: no hot swap in the old instance, its timers stop', ph.plugins.inventoryscanner === inst && inst.__superseded === true && inst.timerValid(genBefore) === false);
     setTimeout(function () {
@@ -2612,10 +2636,14 @@ steps.push(function (next) {
         var exe = fs.readFileSync(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'cmd.exe'));
         fs.writeFileSync(path.join(d, 'invsw-aa-bb.exe'), exe);
         var sha = require('crypto').createHash('sha256').update(exe).digest('hex');
-        var scr = obj.swBuildWindowsScript({ stageFile: 'invsw-aa-bb.exe', sha256: sha, ext: 'exe', fileName: 'p.exe', args: '/c cd > "%TEMP%\\invscanner-dll-cwd.txt"' })
+        // The proof file must be the SAME resolved path in the generated command line and in the read
+        // below - it used to be "%TEMP%\..." on one side and os.tmpdir() on the other, which silently
+        // broke as soon as the temp base was redirected (INVSCANNER_WORKDIR). Quoted, so a working
+        // folder with spaces works too.
+        var cwdFile = workdir.tmpFile('invscanner-dll-cwd.txt');
+        var scr = obj.swBuildWindowsScript({ stageFile: 'invsw-aa-bb.exe', sha256: sha, ext: 'exe', fileName: 'p.exe', args: '/c cd > "' + cwdFile + '"' })
             .split('C:\\Windows\\Temp\\').join(d + '\\').split("@('S-1-5-18', 'S-1-5-32-544')").join("@('S-1-5-18', 'S-1-5-32-544', '" + sid + "')");
         fs.writeFileSync(path.join(d, 'run.ps1'), scr);
-        var cwdFile = path.join(os.tmpdir(), 'invscanner-dll-cwd.txt');
         try { fs.unlinkSync(cwdFile); } catch (e) { }
         var r = runPs(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(d, 'run.ps1')], { timeout: 120000 });
         var cwd = ''; try { cwd = fs.readFileSync(cwdFile, 'utf8').trim(); } catch (e) { }

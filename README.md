@@ -389,9 +389,12 @@ npm test       # consistency checks + behavioural tests + view render tests
 ## Transparency Note
 
 This plugin was originally created with the assistance of **Qwen 3.6 27B** and **Qwen 3.8 Flash Next** (AI coding
-assistants). The 2026-11-06 audit was performed by **NVIDIA Nemotron 3 550B A55B**, the 2026-11-11, 2026-11-14 and
-2026-11-25 audits by **Claude Opus 5.5**, all via the opencode agent. The audit reports are published in full in
-**[AUDIT.md](AUDIT.md)**; the same note is in [SECURITY.md](SECURITY.md) and machine-readable in `package.json`.
+assistants). Ongoing development is AI-assisted as well - since v5.6.0 (2026-11-26) by **Qwen 3.8 Max**, all via the
+opencode agent. The 2026-11-06 audit was performed by **NVIDIA Nemotron 3 550B A55B**, the 2026-11-11, 2026-11-14 and
+2026-11-25 audits by **Claude Opus 5.5**, all via the opencode agent. Every release is committed under the name of the
+model that produced it, so the [commit history](https://github.com/derStephan/meshcentral-inventoryscanner/commits/main)
+shows who wrote what. The audit reports are published in full in **[AUDIT.md](AUDIT.md)**; the same note is in
+[SECURITY.md](SECURITY.md) and machine-readable in `package.json`.
 
 ## License
 
