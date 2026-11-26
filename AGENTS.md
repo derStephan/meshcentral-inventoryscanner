@@ -38,6 +38,17 @@ tools/                         self-contained verification for agents (no MeshCe
   test-plugin.js               behavioral tests against the real plugin module with mocked MeshCentral
   test-views.js                compiles+renders all three views with Handlebars (needs `npm ci`)
   coverage-benchmark.js        read-only mapping audit against the top NVD products by CVE count (run server-side with --nvd <datapath>/nvd)
+  gen-license-meta.js          evidence tool for the curated `licenseType` field of cpe-table.json (v5.6.0): reads the
+                               winget community manifests (microsoft/winget-pkgs, MIT) through the LOCAL winget client
+                               (`winget show --id <id> --exact --locale en-US`) and reports drift between the evidence
+                               and the curated value; `--write` refreshes the table, `--json` is machine-readable, and
+                               on a machine without winget it prints SKIP and changes nothing. Normalization is an
+                               explicit map (NORMALIZE) - an unmapped upstream string is reported, never written.
+  winget-ids.json              the evidence linkage for that tool: `ids` maps a cpe-table row (keyed by its `match`
+                               regex, so edition-specific rows get their own package) to a winget package id, and
+                               `overrides` lists the rows whose curated value DELIBERATELY differs from the upstream
+                               wording, each with its reason (winget's License field names the copyright TERMS, this
+                               table answers "does a license have to be bought?"). Not part of `npm test`.
 README.md                      user-facing documentation
 package.json                   repo metadata; `npm test` runs tools/check.js + tools/test-plugin.js + tools/test-views.js
 package-lock.json              committed on purpose: pins the dev dependency tree (handlebars) so `npm ci` gives every
@@ -118,8 +129,8 @@ Consequences an agent must respect:
 | `lib/assessments.js` | `assessments` store, `getMeshAssessment`, `save_assessment` / `flag_false_positive` / `unflag_false_positive` handlers, `isFindingId` |
 | `lib/nvd.js` | feed download + `.meta` check, `runNvdUpdate` (`nvdUpdateRunning` guard), `ensureNvdData`, `scheduleUpdate` (**due-aware since v5.2.0**: the delay is measured from `lastUpdate`, a stale/missing feed runs after `NVD_MIN_DELAY_MS` (60 s) and a FAILED run retries after `NVD_RETRY_MS` (6 h) - never a tight loop against the rate-limited NVD), feed loading, `nvdLog`, NVD log tailing |
 | `lib/nvdindex.js` | `processNvdData`, `productIndex`/`cpeProductTokens`/`cpeVendorTokens`/`allCves`, `compareCpeVersions`, `normalizeCveVersion`, `defMatches`, `searchCves*`, the `anyCveMaxAgeYears` age rule |
-| `lib/cpetable.js` | maintained table apply/fetch/cache (`cpe-table.json` - the ONLY curated copy since v4.2.0, the old in-code seed is gone), custom UI entries, `isSafeTableRegex`, the CPE handlers |
-| `lib/matching.js` | `classifySoftware`, `matchTableEntry`, `guessDriverFirmware`, `cpeTokenize`, `autoMatchProductTokens`, publisher→vendor evidence, `scanDeviceSoftware` |
+| `lib/cpetable.js` | maintained table apply/fetch/cache (`cpe-table.json` - the ONLY curated copy since v4.2.0, the old in-code seed is gone), custom UI entries, `isSafeTableRegex`, `sanitizeLicenseType` (v5.6.0: the optional `licenseType` annotation of a row - SPDX id or Proprietary/Freeware/Freeware (non-commercial), capped at 80, charset-restricted, NEVER lowercased, dropped when unusable so a bad annotation cannot cost CVE coverage), the CPE handlers |
+| `lib/matching.js` | `classifySoftware`, `matchTableEntry`, `licenseTypeFor` (v5.6.0: the curated license annotation of a display name - custom row first, then the table, `''` when nothing matches; deliberately NOT derived from the auto token matcher, which proves a CPE product and says nothing about licensing), `guessDriverFirmware`, `cpeTokenize`, `autoMatchProductTokens`, publisher→vendor evidence, `scanDeviceSoftware` |
 | `lib/oslifecycle.js` | endoflife.date cache + sanitizer, `osReleaseOf`, `osSupportState`, `isDistroPackage`/`isDistroMaintained`, `osEolFinding` |
 | `lib/osscan.js` | `OS_CPE_TABLE`, `mapOsToCpe`, `windowsOsTarget`, `searchOsCves`, `scanDeviceOs` |
 | `lib/inventory.js` | stored software/patch maps, `pruneSuperseded` (+ `pruneNameKey`/`pruneArchSig`/`pruneNameToken`), `getStoredSoftware`, `getWindowsUpdates` |
@@ -131,15 +142,15 @@ Consequences an agent must respect:
 | `lib/devreset.js` | per-device Windows PC reset (v4.5.0, one of the TWO rebooting features - the other is `lib/devreboot.js`): `devBuildProbeScript`/`devBuildResetScript`, `devDispatch`, `devModeAllowed`/`devProbeFresh`/`devBitlockerState` gates, `devHandleResponse`/`devResetTimeout`, `dr_status`/`dr_probe`/`dr_reset` handlers, `device-reset.json` + `device-reset.log` |
 | `lib/wutroubleshoot.js` | per-device Windows Update troubleshooter (v4.6.0): `wuBuildDiagnoseScript`/`wuBuildRepairScript`/`wuHead`, `wuDispatch`, `wuHandleResponse`/`wuTimeout`, reboot-state reporting, `wu_diag`/`wu_repair` handlers, `wu-troubleshoot.json` + `wu-troubleshoot.log` |
 | `lib/devreboot.js` | per-device force restart + user notice (v4.7.0): `rbBuild*Script`/`rbBuildScript`/`rbProbeLines`/`rbCleanMessage`/`rbB64`, `rbDispatch`, `rbHandleResponse`/`rbTimeout`, `reboot_now`/`reboot_notify` handlers, `device-reboot.json` + `device-reboot.log` |
-| `lib/license.js` | license keys/info in the software CSV (v4.8.0): curated `license-table.json` + remote fetch + custom rules (`applyLicenseTableText`/`sanitizeLicenseRules`/`licenseRulesForApp`), read-only `licenseBuildScript`, `licenseAppRules(rows)` (since v5.1.0 fed by `obj.fetchNodeSoftware`, so a program that only exists in the sysinfo doc is matched too - it used to see fewer programs than the CSV listed), `licDispatch`/`licHandleResponse`/`licTimeout`, `licSweepOnce` (one pass over all online Windows devices - used by BOTH the `all=true` route and the scheduler, v5.2.0), `scheduleLicenseCollection` (only when the master switch is on AND `licenseCollectIntervalHours` > 0; default 0 = on demand only), per-node `data/<node>/license.json`, `lic_status`/`lic_collect`/`get_license_table`/`add_license`/`remove_license`, `license-collection.log`. Since v5.5.0 (issue #10) rules may carry `perUser:true` (registry path written `HKCU:\...` read from every ALREADY-LOADED hive `Registry::HKEY_USERS\<SID>`; file path with a `{{profile}}` placeholder per profile dir) and ONE `*` wildcard (registry subkey segment enumerated, <=20 matches; file leaf pattern, <=5 files); users come read-only from ProfileList, capped at `LIC_MAX_USERS` (20); offline hives are NEVER loaded (`reg load`/`LoadKey` are rejected by the script-shape test); answer items carry `user`; `licenseMapForNode` is FIRST-OK-WINS (the old last-wins let a failing rule mask a found value) and puts the user into the source string (`registry (user: alice)`) for the CSV |
+| `lib/license.js` | license keys/info in the software CSV (v4.8.0): curated `license-table.json` + remote fetch + custom rules (`applyLicenseTableText`/`sanitizeLicenseRules`/`licenseRulesForApp`), read-only `licenseBuildScript`, `licenseAppRules(rows)` (since v5.1.0 fed by `obj.fetchNodeSoftware`, so a program that only exists in the sysinfo doc is matched too - it used to see fewer programs than the CSV listed), `licDispatch`/`licHandleResponse`/`licTimeout`, `licSweepOnce` (one pass over all online Windows devices - used by BOTH the `all=true` route and the scheduler, v5.2.0), `scheduleLicenseCollection` (only when the master switch is on AND `licenseCollectIntervalHours` > 0; default 0 = on demand only), per-node `data/<node>/license.json`, `lic_status`/`lic_collect`/`get_license_table`/`add_license`/`remove_license`, `license-collection.log`. Since v5.5.0 (issue #10) rules may carry `perUser:true` (registry path written `HKCU:\...` read from every ALREADY-LOADED hive `Registry::HKEY_USERS\<SID>`; file path with a `{{profile}}` placeholder per profile dir) and ONE `*` wildcard (registry subkey segment enumerated, <=20 matches; file leaf pattern, <=5 files); users come read-only from ProfileList, capped at `LIC_MAX_USERS` (20); offline hives are NEVER loaded (`reg load`/`LoadKey` are rejected by the script-shape test); answer items carry `user`; `licenseMapForNode` is FIRST-OK-WINS (the old last-wins let a failing rule mask a found value) and puts the user into the source string (`registry (user: alice)`) for the CSV. Since v5.6.0 the `SoftwareLicensingProduct` read also returns the license TYPE and activation state of every Microsoft license (`Name`/`LicenseFamily` edition, `ProductKeyChannel`, `LicenseStatus`, `GracePeriodRemaining`, `EvaluationEndDate`, `ApplicationID`), translated server-side by `MS_LICENSE_STATUS`/`msLicenseStatusText`/`msLicenseChannelType` and counted by `msLicenseSummary` (a MISSING status counts as `unknown`, never as a violation); still only the last five characters of a key - no `DigitalProductId` decode, no `OA3xOriginalProductKey`, no `slmgr` (pinned by a test) |
 | `lib/fleetindex.js` | READ-ONLY fleet index for the two unified views (v4.9.5, issue #8): `buildFleetIndex` walks `obj.collectNodeInventory` **via `obj.pacedEach`** (v5.4.2 - a bare loop hogged the event loop and unrelated requests died at the proxy with 502) and **coalesces parallel builds** (`_fleetIndexWaiters`, v5.4.2) so two views opening at once walk the fleet once; joins `wgResults` (updatable) + `licenseMapForNode`; `swFleetHandler` (POST `sw_fleet`, 60 s in-memory cache, `?refresh=1`). Since v5.4.0 it also owns the two on-demand detail routes `devDetailsHandler` (`dev_details`) and `swDetailsHandler` (`sw_details`, own 60 s cache per name) - both read-only, both built on `collectNodeInventory`, both reporting license COUNTS/presence and never a value. Per-software CVE attribution uses the software findings only (OS-level findings belong to the device, not to a program); the device badge counts `uniqueFindingIds` = the same distinct ids the CSV/report show. No agent command, no outbound request. |
 | `lib/assetmgmt.js` | OPTIONAL outbound asset-management connector (v5.0.0, issue #5): `assetConfig`, `asBuildRequests` (generic JSON body template with `{{placeholders}}` + Jira and Snipe-IT presets, create-or-update via a stored external id), `asExternalId`, `assetHttp` (https-only, injectable), `asCollectDeviceRecord` (since v5.1.0 a thin shaping of `obj.collectNodeInventory` - the push therefore carries the SAME findings/hardware/software as the CSV: `vulnerabilities` = every finding with an id, `coverage` = the blind-spot rows), `asSendDevice`/`asPushHandler`/`asTestHandler`, `asStatusHandler`, `asGetConfigHandler`/`asSaveConfigHandler` (own `assetManagement` settings section, secrets masked + blank-keeps + `__AS_CLEAR__`), `asLog` (status only, never a payload/secret), `scheduleAssetSync` (off unless enabled AND interval > 0), `asset-sync.json` + `asset-sync.log` |
 | `lib/swstore.js` | deploy foundation: installer library index/folders, resumable upload parts, task store load/save/prune, staging into `<filespath>/tmp`, `swDownloadCookie` (agentdownload), name/args/extension sanitizers, `swEnsureStaged` |
 | `lib/swdeploy.js` | deploy engine: `swBuildWindowsScript`/`swBuildLinuxScript`, `swWgetCommand`, queue/pump/`swDispatchNode`/`swHandleResponse`/watchdogs, `swOnNodeConnect`/`swSweepOnce`/`scheduleSwSweep`, `swTaskDoneCheck`, `swCreateTask`/`swTaskView` |
 | `lib/swdeploy-handlers.js` | `sw_files`, `sw_upload`, `sw_delete_file`, `sw_rescan_library`, `sw_serverfiles`, `sw_devices`, `sw_create_task`, `sw_status`, `sw_retry_task`, `sw_cancel_task` handlers |
 | `lib/reports.js` | `scanMeshCves`, `scanMultiMeshCves`, `assessmentScan` (the `action=scan` route), `summarizeDeviceSwVer`, `buildOverallReport`, `vulnerabilityReport`, `deviceReport` - both scan paths read `obj.collectNodeInventory` (v5.1.0), no own collection |
-| `lib/csv.js` | CSV formatting helpers (`formatCsvField`, `csvCellCompare`, `csvRowCompare`), `buildCsvForNodes` (all three types generated from `obj.collectNodeInventory`, v5.1.0), `formatBytes`, the `action=export` route |
-| `lib/nodes.js` | **THE canonical per-device collection (v5.1.0)**: `fetchNodeSoftware` (the one way to get a device's raw software rows - plugin store AND sysinfo doc) and `collectNodeInventory` (identity + `hardwareSummary` + raw rows + projection + `softwareFindings` + the FULL `findings` list + counts). Plus `fetchSysinfo`, `scanNodeSoftware`, `getGroupName`, `getHostName`, `windowsUpdatesFinding`, `hardwareSummary`, `softwareProjection`. Every consumer (CSV, both reports, fleet index, asset push, license rules) reads this one record - see the "One collection, many consumers" rule below. |
+| `lib/csv.js` | CSV formatting helpers (`formatCsvField`, `csvCellCompare`, `csvRowCompare`), `buildCsvForNodes` (all three types generated from `obj.collectNodeInventory`, v5.1.0; the software export's columns are `... Software Install Date, License Type, License, License Source` since v5.6.0 - License Type is curated and needs no collection run), `formatBytes`, the `action=export` route |
+| `lib/nodes.js` | **THE canonical per-device collection (v5.1.0)**: `fetchNodeSoftware` (the one way to get a device's raw software rows - plugin store AND sysinfo doc) and `collectNodeInventory` (identity + `hardwareSummary` + raw rows + projection + `softwareFindings` + the FULL `findings` list + counts). Plus `fetchSysinfo`, `scanNodeSoftware`, `getGroupName`, `getHostName`, `windowsUpdatesFinding`, `hardwareSummary`, `softwareProjection` (since v5.6.0 it also resolves `licenseType` per row via `obj.licenseTypeFor`, so the CSV, the fleet index, both detail views and the asset push report the SAME curated type without re-deriving it). Every consumer (CSV, both reports, fleet index, asset push, license rules) reads this one record - see the "One collection, many consumers" rule below. |
 | `lib/routes.js` | `handleAdminReq`/`handleAdminPostReq` dispatch, `isAuthorizedAdmin`, `isSameOriginRequest`, panel render, `get_locations`, `get_log`, `parseMeshIds` |
 | `lib/browser.js` | `uiCustomEvent` (server-side) + the three browser-exported functions |
 
@@ -325,11 +336,12 @@ POST body `action=`:
 | `save_assessment` | `meshId` or `meshIds` (comma list), `cveId`, `assessment`, `comment` | comment **mandatory**; id must match `CVE-\d{4}-\d{4,}` or be `WINDOWS-UPDATES` / `OS-EOL`; mesh ids validated `^mesh/[^:]+$`; comment trimmed, ≤1000 chars, stored **raw** |
 | `flag_false_positive` | `meshId(s)`, `cveId`, `comment?` | comment **optional** (empty stays empty); sets `assessment:'UNKNOWN', flagged:true` |
 | `unflag_false_positive` | `meshId(s)`, `cveId` | deletes flagged entries for all given meshes |
-| `get_cpe_table` | — | `{entries:[{match,vendor,product,source:'remote'|'custom'}], cpeTable:{source:'remote'|'none',updated,url,enabled,entries}}`; a `kind`
-    (driver/firmware) table row is shown as `vendor:'-', product:'excluded: <kind>'` instead of a CPE pair; `source:'none'`
+| `get_cpe_table` | — | `{entries:[{match,vendor,product,licenseType,source:'remote'|'custom'}], cpeTable:{source:'remote'|'none',updated,url,enabled,entries}}`; a `kind`
+    (driver/firmware) table row is shown as `vendor:'-', product:'excluded: <kind>'` instead of a CPE pair; `licenseType` is always a
+    string and is `''` when the row carries no curated annotation (v5.6.0); `source:'none'`
     means NO table file could be loaded - the curated stage is then empty (there is no in-code fallback list since v4.2.0) |
 | `delete_cpe_table` | `match`,`vendor`,`product` | custom entries only (table rows live in cpe-table.json and can be shadowed, not deleted) |
-| `add_cpe` | `match`,`vendor`,`product` | regex validated via `new RegExp`; custom wins over the maintained table |
+| `add_cpe` | `match`,`vendor`,`product`, optional `licenseType` | regex validated via `new RegExp`; custom wins over the maintained table; `licenseType` goes through `sanitizeLicenseType` and an unusable value is dropped while the mapping is still saved (v5.6.0) |
 | `wg_get_config` | — | effective wingetUpdater config + per-key sources + queue state |
 | `wg_save_config` | enabled, updateMeshes(csv), excludeNodes(csv), ignorePackages(JSON), pinSync (intervalHours accepted but ignored) | validates EVERYTHING, writes overlay, `rescheduleAll()`; the panel calls it automatically on EVERY Updates-tab change (switches, groups, ignore add/remove, exclusions, "+ ignore" buttons) - no manual-save footgun since v2.7.0 |
 | `wg_run` | optional `nodeIds`(csv; overrides scope+exclusions), `dry`('true'), `pkgId` + `mode`('update'\|'uninstall') | manual batch; per-device or dry test runs; {busy} while one runs. With `pkgId` the whole batch runs restricted to that ONE package (`$invOnly` guard in the script) - `mode:'uninstall'` needs a valid `pkgId`, is never a dry run and never without one (rejected). Scope without `nodeIds` = `wgTargetNodes`: `updateMeshes` gates
@@ -360,13 +372,13 @@ POST body `action=`:
 | `wu_repair` | `nodeId` | (v4.6.0) applies the troubleshooter's "fix" steps DIRECTLY (the `Get/Invoke-TroubleshootingPack` cmdlets are gone since Win10 1709): restart BITS/wuauserv/appidsvc/cryptsvc/msiserver, reset `SoftwareDistribution\Download` + `System32\catroot2`, re-assert Automatic start types. {started} or {error}. **Never reboots** - the answer reports `rebootTriggered=false` and any pending reboot with when Windows handles it; a locked file shows as a `partial` step |
 | `reboot_notify` | `nodeId`, `message` | (v4.7.0, issue #6) sends a message to the logged-on user of a Windows/Linux device WITHOUT rebooting (Windows `msg *`, Linux `wall`); also reports whether a reboot is already pending and who is logged on. {started} or {error} (offline / macOS or no reported OS / busy). Message is sanitized (control chars + quoting chars stripped, ≤200) and travels base64 |
 | `reboot_now` | `nodeId`, `secs` (0..3600, default 60 grace), `message`, `confirm` (typed device name) | (v4.7.0) the SECOND explicit reboot path: after a typed-name confirm, restarts one Windows/Linux device with a grace period, messaging the user through the OS shutdown banner (`shutdown /r /t` / `shutdown -r +m`, plus a `msg`/`wall` heads-up). {started,platform,secs} or {error}. Never batched/scheduled; abort within the grace with `shutdown /a` (Win) / `shutdown -c` (Linux) is noted in the result |
-| `lic_status` | — | (v4.8.0, issue #7) Windows devices `{devices:[{id,host,given,group,os,online,collected:{time,found,ms,apps,error}|null,pending}], enabled, running}` - collected license summary per device, no command sent |
+| `lic_status` | — | (v4.8.0, issue #7) Windows devices `{devices:[{id,host,given,group,os,online,collected:{time,found,ms,apps,error,msLicensed,msNotLicensed,msUnknown}|null,pending}], enabled, running}` - collected license summary per device, no command sent. The three `ms*` counters (v5.6.0) come from `msLicenseSummary` and report the ACTIVATION state of the Microsoft licenses; a missing status code counts as `msUnknown`, never as a violation. No value, no key, no edition string. |
 | `lic_collect` | `nodeId` OR `all:'true'` | (v4.8.0) runs the READ-ONLY license extraction (registry value / file regex-jsonfield-line / WMI property) built from the curated+custom rule table on one (or all online) Windows device(s). Refused while `licenseCollectionEnabled` is off (default). {started} / {started,devices} or {error}; the marker answer is stored in `data/<node>/license.json` |
 | `get_license_table` | — | (v4.8.0) the full license rule table `{entries:[{match,label,rules,source:'table'|'custom'}], licenseTable:{source,origin,updated,url,tableEnabled,entries,custom}}` |
 | `add_license` / `remove_license` | match, label, rules (JSON array) / index | (v4.8.0) custom rule editor; every field validated (`isSafeTableRegex`, type ∈ registry/file/wmi, lengths, ≤8 rules) before storing to `license-custom.json`; custom wins over the table |
-| `sw_fleet` | `refresh` (optional '1') | (v4.9.5, issue #8) READ-ONLY fleet index that powers the two unified views: `{devices, software:[{name, version, versions, publisher, deviceCount, vulnerable, cve, maxSeverity, updatable, hasLicense}], byDevice:{<nodeId>:{cve, maxSeverity}}, generated}`. Built only from data already on the server (stored software + the report/CSV matcher + winget results + local license maps); sends nothing to any agent and makes no new outbound request. Cached ~60 s so switching between the two views does not re-scan. |
-| `dev_details` | `nodeId` | (v5.4.0, issue #9) READ-ONLY everything stored about ONE device, fetched on demand by the Device list's *Details* button: identity + `hardwareSummary` + the installed programs + the FULL `findings` (shaped like the CSV rows) + the `coverage` rows + counts, plus the last run of every engine (`winget.rows`, `os`, `wu`, `rb`, `reset` probe/modes/last) and the license **counts**. Built from `obj.collectNodeInventory` - never a second collection. Contains NO license value and sends NO agent command. |
-| `sw_details` | `name`, optional `pkgId` | (v5.4.0, issue #9) READ-ONLY everything stored about ONE installed program across the fleet: `devices` (with version, capped 300), `versions`, `cves` (capped 200), `coverage` statuses, `licenseDevices` (a COUNT - never a value) and the `winget` aggregate for that package (ready/ok/failed/skipped + per-device rows + whether it is ignored). Paced walk over `collectNodeInventory`, cached ~60 s per name. |
+| `sw_fleet` | `refresh` (optional '1') | (v4.9.5, issue #8) READ-ONLY fleet index that powers the two unified views: `{devices, software:[{name, version, versions, publisher, deviceCount, vulnerable, cve, maxSeverity, updatable, hasLicense, licenseType}], byDevice:{<nodeId>:{cve, maxSeverity}}, generated}`. Built only from data already on the server (stored software + the report/CSV matcher + winget results + local license maps); sends nothing to any agent and makes no new outbound request. Cached ~60 s so switching between the two views does not re-scan. `licenseType` (v5.6.0) is the curated annotation and is independent of `hasLicense` (a collected VALUE) - a known type never pretends a key was read. |
+| `dev_details` | `nodeId` | (v5.4.0, issue #9) READ-ONLY everything stored about ONE device, fetched on demand by the Device list's *Details* button: identity + `hardwareSummary` + the installed programs (each with its curated `licenseType`, v5.6.0) + the FULL `findings` (shaped like the CSV rows) + the `coverage` rows + counts, plus the last run of every engine (`winget.rows`, `os`, `wu`, `rb`, `reset` probe/modes/last) and the license block `{enabled, found, ms, msSummary:{total,licensed,notLicensed,unknown}, msLicenses:[{product,family,channel,channelType,status,statusText,grace,evalEnd}], time, pending}`. Built from `obj.collectNodeInventory` - never a second collection. Contains NO license value and sends NO agent command: `msLicenses` is the Microsoft license METADATA with the partial key deliberately removed on the way out (v5.6.0, pinned by a test). |
+| `sw_details` | `name`, optional `pkgId` | (v5.4.0, issue #9) READ-ONLY everything stored about ONE installed program across the fleet: `devices` (with version, capped 300), `versions`, `cves` (capped 200), `coverage` statuses, `licenseDevices` (a COUNT - never a value), `licenseType` (the curated annotation for that name, v5.6.0) and the `winget` aggregate for that package (ready/ok/failed/skipped + per-device rows + whether it is ignored). Paced walk over `collectNodeInventory`, cached ~60 s per name. |
 | `wg_toggle_exclude` | `nodeId`, `excluded` ('true'/'false') | (v5.4.0, issue #9) puts ONE device on the winget exclusion list or takes it off, changing ONLY that key server-side. Exists because `wg_save_config` reads the whole form from the Updates-tab DOM - calling it from another view would have saved `enabled:false` with empty `updateMeshes`/`ignorePackages`. Keys that came from config.json are not copied into the plugin file. |
 | `wg_toggle_ignore` | `pkgId`, `ignore` ('true'/'false'), optional `note` | (v5.4.0, issue #9) the same for ONE package id on the ignore list (validated against `WINGET_ID_RE`, list capped at 500). Used by the Software list's *Ignore* button. |
 | `as_get_config` / `as_save_config` | full asset-management form | (v5.0.0, issue #5) the connector configuration in its OWN `assetManagement` section of scanner-settings.json (so the Settings-tab save/reset cannot wipe it and vice versa). Since v5.5.1 the literal values of the generic `headersJson` are masked on the way out like every other secret (`asMaskHeadersJson`; placeholder values stay visible) and a masked value on save keeps the stored one. Validated: https-only endpoint, method whitelist, JSON headers + JSON body template, Jira needs a project key, enabling needs a URL. Secrets (token/password/header value) are NEVER returned in the clear - the GET answers with a mask + `has*` flags; on save a blank secret KEEPS the stored value and `__AS_CLEAR__` erases it. |
@@ -410,6 +422,19 @@ Entry regexes compile with the `i` flag ONLY;
 bad JSON/regex → payload rejected, current table keeps running. Keys: `cpeTableEnabled`/`cpeTableUrl` (Vulnerabilities > Reports, NVD & CPE table).
 A table row may replace `vendor`/`product` with **`kind:'driver'|'firmware'`** (out-of-NVD-scope marker, see below);
 `applyCpeTableText` validates that shape and `matchTableEntry` returns it, kind rows win over the name heuristics.
+Since v5.6.0 a CPE row may ALSO carry **`licenseType`** (optional, additive, no effect on matching): an SPDX identifier
+(`MIT`, `Apache-2.0`, `GPL-2.0-only`, `curl`, ...) or one of exactly three descriptors - `Proprietary` (closed source, a
+license must be bought), `Freeware` (closed source, free of charge, incl. hardware/OS-bundled vendor tools),
+`Freeware (non-commercial)`. `obj.sanitizeLicenseType` caps it at 80 characters, restricts the charset to
+`[A-Za-z0-9.+()\- ]` (it lands in a CSV cell and an HTML attribute) and keeps the CASE (SPDX ids are case-sensitive);
+an unusable value is dropped and the mapping row still applies. `kind` rows never carry it. `obj.licenseTypeFor(name)`
+is the single resolver (custom row first, then the table, `''` when nothing matches) and `obj.softwareProjection` calls
+it once per program, so the software CSV column `License Type`, the Software list, `dev_details`/`sw_details`,
+`sw_fleet` and the asset push all report the same value without re-deriving it. **It describes the SOFTWARE license,
+never the purchase model of one installation** - Retail/OEM/Volume and the activation state are per-device facts from
+`SoftwareLicensingProduct` (see the license engine), and seats/expiry belong to the asset system. Evidence, the
+closed vocabulary, the `overrides` mechanism and the regeneration tool are documented in CONTRIBUTING.md
+(`tools/gen-license-meta.js` + `tools/winget-ids.json`).
 
 UI-managed scanner settings in `<datapath>/plugins/inventoryscanner/scanner-settings.json` →
 `{vulnerabilityScanner:{...}, inventoryScanner:{...}}`, merged over `config.settings` by
@@ -1076,10 +1101,26 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
 - **Transport + exclusion**: `invscanner-lic-<node>` runcommands type 1 on the shared hook (`.cbuf` console
   buffering); `licDispatch` reserves the node and refuses if any `lic/rb/wu/dev/wg/os/sw` session holds it,
   and all pumps skip a node with a `licPending` entry. Watchdog `LIC_TIMEOUT_MS` 6 min.
+- **Microsoft license TYPE + activation state (v5.6.0, verified by running the real script on a real Windows 11):**
+  the `SoftwareLicensingProduct` read used to take only `Description` + `PartialProductKey` and threw the rest away,
+  although that class carries exactly the asset-management answer. It now also reads `Name` (product/edition),
+  `LicenseFamily` (e.g. `Office19Professional2019R_OEM_Perp`), `ProductKeyChannel` (`Retail`, `OEM:DM`, `OEM:NONSLP`,
+  `Volume:MAK`, `Volume:KMSCLIENT`, ...), `LicenseStatus`, `GracePeriodRemaining`, `EvaluationEndDate` and
+  `ApplicationID`. The device reports NUMBERS and raw strings only; the server translates them
+  (`MS_LICENSE_STATUS` + `msLicenseStatusText`, `msLicenseChannelType`) so the wording can be corrected without ever
+  touching a device again, and `msLicenseSummary` counts `licensed` / `notLicensed` / `unknown` - a MISSING status code
+  is `unknown`, never a violation. Measured effect on the audit machine: an Office edition in status 5
+  ("notification mode (not activated)") became visible; before it was hidden behind `Description`.
+  **Deliberately still NOT done:** no full product key. `PartialProductKey` (the last five characters) stays the only
+  key material - no `DigitalProductId` decode, no `SoftwareLicensingService.OA3xOriginalProductKey`, no `slmgr` call,
+  no activation change (all pinned by a script-shape test). Rationale: a full key is a usable secret, decoding one is
+  what the AV-flagged key-finder tools do, and osquery (Apache-2.0) has no product-key table for the same reason.
 - **CSV**: the `software` export gains two columns, `License` and `License Source` (`obj.licenseMapForNode`
   joins the collected value to each app by lower-cased name); the toolbar export and `action=export&type=software`
-  both use the same builder. Routes `lic_status`/`lic_collect`/`get_license_table`/`add_license`/`remove_license`;
-  `get_log` accepts `license`.
+  both use the same builder. Since v5.6.0 it also carries `License Type` (curated, from the mapping table, therefore
+  present WITHOUT any collection run) - column order is
+  `... Software Install Date, License Type, License, License Source`. Routes
+  `lic_status`/`lic_collect`/`get_license_table`/`add_license`/`remove_license`; `get_log` accepts `license`.
 
 ## Design decisions (with reasons)
 
@@ -1169,6 +1210,22 @@ for counting (`effectiveSeverity`); `WINDOWS-UPDATES` occurrences count like nor
     queue (that is the user requirement "install when the device is back"); the winget exclusion list is
     deliberately not consulted (selection IS the opt-in, and silent de-selection would be dishonest feedback -
     the picker shows the flag instead).
+18. **License information is split into three layers, each with its own source and its own honesty rule (v5.6.0).**
+    (a) **What a product IS licensed under** - curated once in `cpe-table.json` as `licenseType` (SPDX id or
+    Proprietary / Freeware / Freeware (non-commercial)), evidence = the winget community manifest (MIT) or the
+    project's own LICENSE, re-verifiable with `tools/gen-license-meta.js`. It is device-independent, needs no
+    collection run, and an empty value means "no verified statement" - omitting is allowed, guessing is not (a row
+    without a value must carry `_licenseNote`, asserted by the suite). (b) **What one installation holds** - measured
+    on the device from `SoftwareLicensingProduct` (key channel Retail/OEM/Volume, edition family, activation status);
+    this is the only layer that can say "not activated", and it exists only for Microsoft products because only they
+    expose it. (c) **What was purchased** - seats, expiry, price: NOT on any device, so the plugin does not invent it;
+    it belongs to the asset system the connector pushes to. Mixing the layers was the trap: a static field cannot say
+    "Subscription" for Office (the same product is sold both ways), and a per-device channel cannot say "MIT" for
+    Firefox. Rejected alternatives: a generic registry value-name sweep (measured on a real Windows 11: 16 candidates
+    at depth <= 3 under SOFTWARE, almost all noise - Windows `ProductId`, IE registration, `Schema Library` - so
+    auto-detection would fill the License column with garbage) and per-device `winget show` calls (2.5 s per package,
+    NO JSON output in winget 1.29, and localized labels - the server-side manifest route is both cheaper and stable).
+    Also rejected: decoding full product keys (`DigitalProductId`, `OA3xOriginalProductKey`) - see the license engine.
 
 ## Configuration keys & precedence
 
@@ -1274,7 +1331,7 @@ MeshCentral install folder) and root `/*.txt` + `/*.csv` are gitignored as a gua
   legitimately quotes the partial syntax), each `js/*` fragment is `node --check`ed **on its own** (wrapped in a
   function) and screened for a stray `{{`, and the composed panel script is checked by INLINING the partials
   itself - so the combined-syntax guard survived the split without needing handlebars.
-- `tools/test-plugin.js`: 735 behavioral assertions at v5.5.1 (102 steps; 732 PASS + 3 SKIP on Windows without a POSIX shell) against the real module (mocked MeshCentral DB/webserver):
+- `tools/test-plugin.js`: 793 behavioral assertions at v5.6.0 (105 steps; 790 PASS + 3 SKIP on Windows without a POSIX shell) against the real module (mocked MeshCentral DB/webserver):
   the module wiring itself (every lib file attaches, a fresh instance exposes the same function surface, no
   module-level locals in `lib/`), locations grouping & counting, manual-rating severity override, FP exclusion, host-name preference, coverage
   numbers, multi-mesh scan/`mixed` logic, all POST handlers incl. validation/rejections, routes, admin gating
@@ -1306,13 +1363,22 @@ MeshCentral install folder) and root `/*.txt` + `/*.csv` are gitignored as a gua
   PowerShell is not installed (ENOENT); a parse error or exception is a FAIL (before, every failure was printed
   as "SKIP ... PowerShell not available"). On the Linux CI runner the PowerShell checks are skipped, on a machine
   without a POSIX shell the two `sh -n` checks are: the assertion count therefore depends on the platform
-  (735 on Windows with both shells present at v5.5.1; the v4.3.1 real-run deploy check runs on Windows only).
+  (793 on Windows with both shells present at v5.6.0; the v4.3.1 real-run deploy check runs on Windows only).
   The module-state guard checks COLUMN-0 declarations in `lib/` (only `const x = require(...)` allowed) and
   additionally that the `attach` bodies hold no 4-space-indented locals.
   Requests in tests carry `headers: XHDR` (the panel header); the test admin has `domain: ''`.
   Tests that assert on emitted CODE TEXT use `pluginSrc()` (entry + all `lib/*.js` concatenated) - never read
   `inventoryscanner.js` alone, that file has no implementation any more. The upgrade test copies the whole
   plugin tree including `lib/`, exactly like the installer unpacks it.
+  **An assertion inside a `mockRes` callback must NEVER throw (v5.6.0, learned the hard way).** The route's own
+  `try/catch` answers a second time, so instead of one readable FAIL the suite prints
+  `FAIL response object answered 2x, payload={"error":"Cannot read properties of undefined ..."}` - and because the
+  callbacks are nested on ONE synchronous stack, a throw three levels deep produces three of those lines and the step
+  never calls `next()` (the 120 s watchdog then fails the run). Guard every lookup before indexing it
+  (`var row = pick(entries, m) || {}`, `(rec && rec.ms) || []`) and assert on the guard. Two more traps of the same
+  family: `show_cpe` is a **GET** action (posting it answers an error, not a list - call `obj.showCustomCpe` directly),
+  and the license rules travel in a **plain base64** blob INSIDE the script while `wgTransport` gzips the whole script,
+  so reading the rule values back needs two decode steps, not one.
 - `tools/test-views.js`: compiles all three views and renders them with mock data **and empty data**; without
   handlebars it SKIPs locally but FAILS when the `CI` environment variable is set (v4.3.0). Since v5.3.0 it
   registers `views/partials/**` with the express-handlebars naming rule before rendering, asserts the panel
@@ -1977,7 +2043,7 @@ plus the curated table and the CONTRIBUTING process for it.
   checkbox, the panel explanation and the hover help. The inventory fixture was regenerated (202 ids). check.js
   green. (Correction by audit 4: the live CI integration does NOT call lic_collect - the per-user read path was only
   covered by the mocked suite, which is why its real-Windows failure went unnoticed.) Version 5.4.2 -> 5.5.0.
-v5.5.1 (this release): audit 4 - independent full audit of v5.5.0 by Claude Opus 5.5 (details: AUDIT.md, "Audit 4").
+v5.5.1: audit 4 - independent full audit of v5.5.0 by Claude Opus 5.5 (details: AUDIT.md, "Audit 4").
 - **Per-user license reads never worked on a real Windows 11 (B1, high).** `licenseBuildScript` discovered the users
   inside ONE `try` around the whole ProfileList loop; `Test-Path` on the profile of `S-1-5-18` throws "access denied",
   so the loop ended at its first entry and no user was found - every per-user rule (and the shipped Mountain Duck rule)
@@ -2008,3 +2074,84 @@ v5.5.1 (this release): audit 4 - independent full audit of v5.5.0 by Claude Opus
   already correct (gate matrix, CSV/quote helpers) pass on both, as they should.
 - CI: `persist-credentials: false`, live scans send the header, a 403 check for a header-less live scan, a Server
   Files listing with the REAL CI group id, `grep -F` for the version check. Version 5.5.0 -> 5.5.1.
+
+v5.6.0 (this release): license information as three honest layers - the curated license TYPE of a product, the
+measured license type + activation state of a Microsoft installation, and the fix of a rule that never matched.
+- **`licenseType` in `cpe-table.json` (requested: "so it does not have to be re-derived every time").** A CPE row may
+  now carry an optional `licenseType`: an SPDX identifier (`MIT`, `Apache-2.0`, `MPL-2.0`, `GPL-2.0-only`,
+  `LGPL-2.1-only`, `AGPL-3.0-only`, `PSF-2.0`, `MS-PL`, `MS-RL`, `PHP-3.01`, `curl`, ...) or one of exactly three
+  descriptors - `Proprietary` (closed source, a license must be bought), `Freeware` (closed source, free of charge,
+  including hardware/OS-bundled vendor tools), `Freeware (non-commercial)`. All 124 product rows are filled; the 16
+  `kind` (driver/firmware) rows carry none on purpose (exclusion markers have no product identity), and the single
+  omission (`winpcap`) documents why in a `_licenseNote` - the suite asserts "filled, or documented", not a count.
+  `obj.sanitizeLicenseType` caps it at 80 characters, restricts the charset (it lands in a CSV cell and an HTML
+  attribute) and keeps the case (SPDX ids are case-sensitive); an unusable value is dropped and the MAPPING row still
+  applies, so a bad annotation can never cost CVE coverage. `obj.licenseTypeFor(name)` is the one resolver (custom row
+  first, then the table, `''` when nothing matches) and is deliberately NOT fed by the automatic token matcher: that
+  stage proves a CPE product for CVE lookup, which is no evidence about licensing.
+- **One resolver, many consumers (the v5.1.0 rule applied to the new field):** `obj.softwareProjection` resolves the
+  type once per program, so the software CSV's new `License Type` column, the Software list column, `dev_details`,
+  `sw_details`, `sw_fleet` and the asset push all report the same value - and it is available WITHOUT any collection
+  run, unlike `License`/`License Source`. `licenseType` and `hasLicense` stay separate facts: a curated type never
+  pretends a key was read.
+- **Edition splits use the table's own ordering rule:** `^intellij idea.*community` and `^pycharm.*community`
+  (Apache-2.0) now sit BEFORE the generic IDE rows (Proprietary), so the free Community Edition is no longer reported
+  with the commercial licence of its product family.
+- **Evidence is reproducible, not remembered: `tools/gen-license-meta.js` + `tools/winget-ids.json` (new).** The values
+  were read from the winget community manifests (`microsoft/winget-pkgs`, **MIT** - compatible with this project's MIT,
+  unlike the GPL/AGPL inventory projects whose DATA MODEL was studied but whose code was not) via
+  `winget show --id <id> --exact --locale en-US`; `--locale` matters because the field can come back translated
+  (measured: TeamViewer reported `Proprietäre`). The tool re-reads that evidence and reports drift, `--write` refreshes
+  the table, and on a machine without winget it prints SKIP and changes nothing. Normalization is an explicit map - an
+  unmapped upstream string is reported `UNMAPPED` and never written. Rows whose curated value deliberately differs from
+  the upstream wording are listed in `overrides` WITH their reason (winget names the copyright TERMS, this table answers
+  "does a license have to be bought?"), and are reported as `override` instead of drift. Current state: 69 confirmed,
+  7 documented overrides, 0 drift, 1 documented omission. The tool found a real mistake during its first run (the two
+  Community Edition rows had been filled with the family's commercial value).
+- **Microsoft licenses: type and activation state instead of a description (verified by running the real script on a
+  real Windows 11).** `licenseBuildScript` read only `Description` + `PartialProductKey` from
+  `SoftwareLicensingProduct` and threw away the fields that actually answer the question. It now also reads `Name`,
+  `LicenseFamily` (edition, e.g. `Office19Professional2019R_OEM_Perp`), `ProductKeyChannel` (`Retail`, `OEM:DM`,
+  `OEM:NONSLP`, `Volume:MAK`, `Volume:KMSCLIENT`), `LicenseStatus`, `GracePeriodRemaining`, `EvaluationEndDate` and
+  `ApplicationID`. The device reports numbers and raw strings; the SERVER translates them (`MS_LICENSE_STATUS`,
+  `msLicenseStatusText`, `msLicenseChannelType`) so wording can be fixed without touching a device again, and
+  `msLicenseSummary` counts licensed / notLicensed / unknown - a MISSING status counts as unknown, never as a
+  violation. Measured effect: an Office edition in status 5 ("notification mode (not activated)") became visible on the
+  audit machine; before it hid behind `Description`. The Device list now counts not-activated licenses per device and
+  its Details view lists edition, channel and state.
+- **Still no full product key, on purpose.** `PartialProductKey` (last five characters) remains the only key material:
+  no `DigitalProductId` decode, no firmware `OA3xOriginalProductKey`, no `slmgr`, no activation change - all pinned by
+  a script-shape test. A full key is a usable secret, and decoding one is what the AV-flagged key-finder tools do
+  (osquery, Apache-2.0, has no product-key table for the same reason). The partial key is additionally stripped
+  server-side before `dev_details` answers, so the metadata reaches the browser without it.
+- **Fixed a curated rule that never matched (same class as audit 4 / B5).** The Office row read
+  `...\ClickToRun\Configuration\ProductIds`; a recursive read of every value name under `ClickToRun` on a real Office
+  2019 ClickToRun installation found NO `ProductIds` anywhere - the values are `ProductReleaseIds` (measured
+  `Professional2019Retail`, i.e. product + Retail/Volume channel) and `ProductKeys`. The entry now tries `ProductKeys`
+  first and falls back to `ProductReleaseIds`, with the measurement in `_source`. Verified end to end by running the
+  real script on that machine: the first rule returns empty, first-ok-wins falls through, the second returns the value.
+- **Rejected after measurement (documented so nobody re-does it):** a generic registry value-name sweep to raise the
+  detection rate automatically - on a real Windows 11 it yielded 16 candidates at depth <= 3 under SOFTWARE and almost
+  all were noise (Windows `ProductId`, IE registration, `Schema Library\ActionsPane3`), so it would have filled the
+  License column with garbage; and per-device `winget show` calls - 2.5 s per package, NO JSON output in winget 1.29
+  (`--output` is rejected) and localized labels, where the server-side manifest route is cheaper and stable.
+- Docs: CONTRIBUTING.md gained a full `licenseType` section (closed vocabulary, evidence rule, the tool, overrides,
+  "omit rather than guess", edition splits) and the license section now names the Microsoft fields plus the
+  measure-don't-guess lesson; README explains the three layers and where each comes from; SECURITY.md states the
+  partial-key-only rule and that the new browser-visible Microsoft data is metadata; AGENTS.md module rows, route
+  contracts, the CPE-table paragraph, design decision 18 and the testing traps.
+- Tests: +3 steps / +58 assertions (790 PASS + 3 SKIP / 105 steps on Windows without a POSIX shell): the sanitizer
+  accept/refuse matrix incl. cap and case, apply keeps a valid annotation and drops a bad one WITHOUT losing the row,
+  kind rows carry none, `licenseTypeFor` precedence (custom wins) + empty-is-never-guessed + the Community/Ultimate
+  split, the shipped-table invariants (vocabulary, documented omission, row order, the `_licenseNote` vocabulary text),
+  `add_cpe`/`get_cpe_table`/`show_cpe` round trips, the status/channel/summary helpers incl. the missing-status case,
+  the script shape (reads the type fields, never a full key, still read-only, one statement per line, PS parser, the
+  msKeys gate travels in the blob), the corrected Office rule shipped AND dispatched (decoded through both base64
+  layers), a realistic answer whose first-ok-wins fall-through and translated fields are stored and persisted, the
+  redacted log line naming the not-activated count, `lic_status` counters, the CSV header order + types present with NO
+  collection run, `sw_fleet`/`sw_details`/`dev_details` carrying the type, `dev_details` dropping the partial key, and
+  the push carrying the type but no value. +9 render assertions in test-views (71 PASS): the CPE column + editor field +
+  vocabulary prose, the software list column + hover help + widened colspans (which caught a stale `colspan="9"` in the
+  panel's Loading row), the license panel's Microsoft disclosure, the device-list not-activated rendering, and the
+  asset placeholder doc. The panel inventory fixture was regenerated in the same commit (203 ids).
+- Version bumped in config.json and the inventoryscanner.js `@version` header. Version 5.5.1 -> 5.6.0.

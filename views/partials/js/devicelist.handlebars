@@ -66,6 +66,9 @@
                 ((rs[3] && rs[3].devices) || []).forEach(function (d) {
                     var e = ensure(d); if (!e.platform) { e.platform = 'windows'; }
                     e.isWindows = true; e.license = d.collected ? (d.collected.found || 0) : null;
+                    // v5.6.0: how many Microsoft licenses on this device are NOT activated (LicenseStatus != 1).
+                    // A count only - no key, no value ever reaches this view.
+                    e.licenseBad = d.collected ? (d.collected.msNotLicensed || 0) : null;
                 });
                 var fx = rs[4] || {};
                 for (var id in (fx.byDevice || {})) {
@@ -186,7 +189,8 @@
                         + '<button class="rowbtn warn" data-dlact="rbreboot" data-id="' + esc(d.id) + '" ' + dis + 'data-help="os.rbr">Reboot</button>' : '<span style="color:#888">n/a</span>')
                     + '</div></td>'
                     + '<td>' + dlSevBadge(d.cve || 0, d.cveSev) + '</td>'
-                    + '<td>' + (d.license == null ? '<span style="color:#888">-</span>' : (d.license + ' found')) + '</td>'
+                    + '<td>' + (d.license == null ? '<span style="color:#888">-</span>'
+                        : ((d.license + ' found') + ((d.licenseBad > 0) ? (' <b style="color:#a33" title="Microsoft licenses on this device whose activation state is not \'licensed\' - open Details for the edition, key channel and state.">' + d.licenseBad + ' not activated</b>') : ''))) + '</td>'
                     + '<td><button class="rowbtn" data-dlact="details" data-id="' + esc(d.id) + '" data-help="dl.details">' + (dlApp.open[d.id] ? 'Hide' : 'Details') + '</button></td>'
                     + '</tr>';
                 html += '<tr class="dldetail" style="display:' + (dlApp.open[d.id] ? 'table-row' : 'none') + '"><td colspan="11" style="background:#f6f8fb" id="dld-' + esc(d.id.replace(/[^A-Za-z0-9]/g, '')) + '"><span class="hint">Loading...</span></td></tr>';
@@ -250,7 +254,7 @@
             if (cov.length) { h += sec('Not covered (' + cov.length + ')', '<div class="hint">' + cov.slice(0, 12).map(function (x) { return esc(x.software) + ': ' + esc(x.status); }).join(' · ') + '</div>'); }
             var sw = d.software || [];
             h += sec('Installed programs (' + sw.length + ')', '<div style="max-height:160px;overflow:auto;font-size:11px">'
-                + (sw.length ? sw.map(function (s) { return '<div>' + esc(s.name) + ' <span class="hint">' + esc(s.version) + '</span></div>'; }).join('') : '<span class="hint">nothing collected yet</span>') + '</div>');
+                + (sw.length ? sw.map(function (s) { return '<div>' + esc(s.name) + ' <span class="hint">' + esc(s.version) + (s.licenseType ? (' · ' + esc(s.licenseType)) : '') + '</span></div>'; }).join('') : '<span class="hint">nothing collected yet</span>') + '</div>');
             var wg = d.winget || {};
             h += sec('Last software update run', (!wg.last && !wg.pending) ? '<div class="hint">never run</div>'
                 : (wg.pending ? '<div class="hint">running since ' + esc(fmtLocal(wg.pending.since)) + '</div>'
@@ -273,9 +277,30 @@
                 : '<div class="hint">' + (rs.hasProbe ? ('check passed: ' + (rs.modes && rs.modes.keepfiles ? '"Keep my files" ready' : '') + (rs.modes && rs.modes.clean ? ', "Remove everything" ready' : '')) : 'no fresh check')
                 + (rs.last ? ' · last reset: ' + esc(rs.last.state || '') + ' ' + esc(fmtLocal(rs.last.time || '')) : '') + '</div>');
             var li = d.license || {};
+            // v5.6.0: the Microsoft license METADATA is shown per device - edition, key channel and activation
+            // state answer "what kind of license is on this machine". The collected key values are still never
+            // rendered (the partial key is dropped server-side before this answer is built).
+            var msSum = li.msSummary || {};
+            var msList = li.msLicenses || [];
+            var msHtml = '';
+            if (msList.length) {
+                msHtml = '<div style="max-height:160px;overflow:auto;font-size:11px;margin-top:4px">'
+                    + msList.map(function (m) {
+                        var st = String(m.statusText || '');
+                        var bad = (st !== '' && m.status !== '1');
+                        return '<div><b>' + esc(m.product || '') + '</b>'
+                            + (m.family ? ' <span class="hint">· ' + esc(m.family) + '</span>' : '')
+                            + '<br><span class="hint">' + (m.channelType ? esc(m.channelType) + ' ' : '') + (m.channel ? '(' + esc(m.channel) + ')' : '')
+                            + ' · ' + (st ? '<span style="color:' + (bad ? '#a33' : '#2a7') + '">' + esc(st) + '</span>' : 'activation state not reported')
+                            + (m.evalEnd ? ' · evaluation ends ' + esc(m.evalEnd) : '')
+                            + ((m.grace && m.grace !== '0') ? ' · grace ' + esc(m.grace) + ' min' : '') + '</span></div>';
+                    }).join('') + '</div>';
+            }
             h += sec('License collection', '<div class="hint">' + (li.enabled ? 'enabled' : 'disabled (Software &gt; License keys)')
-                + (li.time ? ' · last: ' + esc(fmtLocal(li.time)) + ', ' + (li.found || 0) + ' key(s) + ' + (li.ms || 0) + ' Microsoft key(s) stored on this server' : ' · never collected')
-                + ' - the values are never shown here</div>'
+                + (li.time ? ' · last: ' + esc(fmtLocal(li.time)) + ', ' + (li.found || 0) + ' key(s) + ' + (li.ms || 0) + ' Microsoft license(s) stored on this server' : ' · never collected')
+                + ((msSum.total > 0) ? (' · ' + (msSum.licensed || 0) + ' activated' + ((msSum.notLicensed || 0) > 0 ? (', <b style="color:#a33">' + msSum.notLicensed + ' NOT activated</b>') : '') + ((msSum.unknown || 0) > 0 ? (', ' + msSum.unknown + ' without a readable state') : '')) : '')
+                + ' - the collected key values are never shown here</div>'
+                + msHtml
                 + '<div style="margin-top:4px"><button class="small purple" data-dlact="liccollect" data-id="' + esc(d.device.id) + '" data-help="lic.collect"'
                 + (d.device.online ? '' : ' disabled') + '>Collect licenses on this device</button></div>');
             return h;

@@ -1,6 +1,6 @@
 # MeshCentral Inventory & Vulnerability Scanner
 
-One admin panel for MeshCentral that answers three questions about your fleet: **what is installed**, **what is
+One admin panel for [MeshCentral](https://github.com/Ylianst/MeshCentral) that answers three questions about your fleet: **what is installed**, **what is
 vulnerable**, and **what needs updating**. It collects the hardware and software inventory of every device, matches
 the installed programs against the public NVD vulnerability feeds **offline on your server**, lets you rate findings
 per location, prints audit-ready reports, exports CSV lists - and can, if you want it to, install updates and
@@ -32,8 +32,11 @@ Everything is opt-in and admin-only. Nothing runs on a device unless you start i
   for machines whose update service is stuck.
 * **Restart and PC reset** - restart a device with a message to its user, or reset a Windows PC to factory state.
   Both are per device, both need the device name typed to confirm, and neither ever happens automatically.
-* **License keys** - optionally read the license of a program from the registry, a file or WMI, so the software
-  export carries a `License` column for asset management.
+* **License keys and license types** - optionally read the license of a program from the registry, a file or WMI, so
+  the software export carries a `License` column for asset management. Every program also gets a curated
+  `License Type` (SPDX identifier, or Proprietary / Freeware / Freeware (non-commercial)) without any device read, and
+  for Microsoft products the collection reports the **license type and activation state** of the installation itself
+  (Retail / OEM / Volume, licensed or not).
 * **Asset-management connector** - optionally push the three lists to an external REST system (generic mapping, or
   presets for **Jira** and **Snipe-IT**). Off by default; the only feature that ever sends data off the server.
 
@@ -122,9 +125,10 @@ finding counts, one page per location.
 ### Software
 
 **Software list** - every distinct program across the fleet: how many devices have it, which versions, which
-findings matched it, whether a license was collected, and what the last winget run reported. Per row: **Ignore**
+findings matched it, its **license type**, whether a license value was collected, and what the last winget run
+reported. Per row: **Ignore**
 (never upgrade it automatically), **Update everywhere**, **Uninstall everywhere** and **Details** (devices,
-versions, findings, license, the per-device winget results). The three package actions need a winget package id -
+versions, findings, license type and presence, the per-device winget results). The three package actions need a winget package id -
 rows without one show them disabled, because winget manages ids and not display names.
 
 **Software updates** - the winget configuration: the master switch, the device groups that are updated
@@ -148,6 +152,22 @@ loaded, so the extraction stays strictly read-only. Reading is **read-only**, th
 this server and are **never displayed in the panel** - they appear only in the software CSV export, whose License
 Source column names the rule type and the user a value came from. Off by default;
 you can collect on demand, on a schedule, per device from the device list, or for all online Windows devices here.
+
+Two things this page does **not** give you, on purpose:
+
+* The **license type of a product** (is it open source, proprietary, free?) is curated in the mapping table under
+  Vulnerabilities › CPE table and appears as `License Type` in the software list and the software CSV - no collection
+  needed. An empty value means "no verified statement", never "no license".
+* The **license type of one installation** (Retail, OEM or Volume, and whether it is activated) is measured on the
+  device: the *Include Microsoft product keys* switch reads `SoftwareLicensingProduct` and stores the edition
+  (`LicenseFamily`), the key channel (`ProductKeyChannel`), the activation state (`LicenseStatus`: licensed, grace,
+  notification mode, unlicensed) and an evaluation end date. The **Device list** counts the licenses that are *not*
+  activated per device, and its **Details** button lists edition, channel and state. Only the last five characters of a
+  key are ever read - a full product key is a usable secret, so the plugin does not decode `DigitalProductId` and does
+  not read the firmware `OA3xOriginalProductKey` (that is what the AV-flagged key-finder tools do).
+
+Seats, expiry dates and purchase records are not on a device at all; they belong to your asset-management system
+(Settings › Asset management).
 
 ### Vulnerabilities
 
@@ -175,7 +195,8 @@ hammering the rate-limited source.
 Three links - **hardware**, **software** and **vulnerabilities** - download the CSV for all devices with one click. Every export is
 sorted column by column, so a device block stays together and versions read in natural order (Firefox 9 before
 Firefox 121). For a **selection** of devices use the hardware/software buttons on MeshCentral's own device list
-toolbar - same columns, only the ticked machines.
+toolbar - same columns, only the ticked machines. The software export carries `License Type` (curated, always
+available) plus `License` and `License Source` (only filled when a collection ran).
 
 ### Settings
 
@@ -272,6 +293,14 @@ pull requests that touch only that file; the rules (including how to verify a ma
 guessing is not allowed) are in [CONTRIBUTING.md](CONTRIBUTING.md). Your own entries in **Vulnerabilities → CPE
 table** always win over it.
 
+The same file carries the curated **`licenseType`** per product (an SPDX identifier such as `MIT` or
+`GPL-2.0-only`, or `Proprietary` / `Freeware` / `Freeware (non-commercial)`), which is what fills the *License Type*
+column of the software list and CSV. Its evidence is the winget community manifest of the product
+(`microsoft/winget-pkgs`, MIT) or the project's own license statement, and
+[tools/gen-license-meta.js](tools/gen-license-meta.js) re-reads that evidence and reports drift - so the values can be
+re-verified instead of being trusted forever. A product without a verifiable statement keeps an empty value and shows
+as `unknown`: omitting is allowed, guessing is not.
+
 ## Privacy & security
 
 * **By default no inventory data leaves your server.** The outbound requests go to `nvd.nist.gov` (feeds),
@@ -285,7 +314,11 @@ table** always win over it.
   in a push.
 * License keys are treated as secrets: read-only collection, stored only in
   `<datapath>/plugins/inventoryscanner/data/<node>/license.json`, never logged, never displayed - they appear only
-  in your own software CSV export.
+  in your own software CSV export. For Microsoft products only the **last five characters** of a key are read
+  (`PartialProductKey`); the full key is never reconstructed - no `DigitalProductId` decode, no firmware
+  `OA3xOriginalProductKey`, no `slmgr` call. What the panel and the *Details* views show about a Microsoft license is
+  metadata (edition, key channel, activation state), and the partial key is dropped server-side before that answer is
+  built. The curated `License Type` is public product information and contains nothing from your devices.
 * Admin-only everywhere: every endpoint re-checks your site-administrator rights server-side, and every changing
   request - including a live *Scan & Review* - must come from the plugin's own page (a cross-site request is refused).
 * Deployed packages are verified by SHA-256 on the device before they run, and the verified bytes are the executed
@@ -352,6 +385,13 @@ described there in full.
 npm ci         # dev dependency only (handlebars, for the view tests)
 npm test       # consistency checks + behavioural tests + view render tests
 ```
+
+## Transparency Note
+
+This plugin was originally created with the assistance of **Qwen 3.6 27B** and **Qwen 3.8 Flash Next** (AI coding
+assistants). The 2026-11-06 audit was performed by **NVIDIA Nemotron 3 550B A55B**, the 2026-11-11, 2026-11-14 and
+2026-11-25 audits by **Claude Opus 5.5**, all via the opencode agent. The audit reports are published in full in
+**[AUDIT.md](AUDIT.md)**; the same note is in [SECURITY.md](SECURITY.md) and machine-readable in `package.json`.
 
 ## License
 

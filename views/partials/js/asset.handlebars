@@ -67,7 +67,7 @@
             var parts = [];
             for (var i = 0; i < names.length; i++) { parts.push(asPlaceholder(names[i].replace(' (array)', ''))); }
             $('asTemplateHint').innerHTML = 'Available placeholders: <code>' + parts.join('</code> <code>') + '</code>. A placeholder alone in a value injects the whole list; inside text it is inserted as text.'
-                + ' <br><code>software</code> = the installed programs (name, version, publisher, location, date) - the same rows the software CSV has.'
+                + ' <br><code>software</code> = the installed programs (name, version, publisher, location, date, licenseType) - the same rows the software CSV has. <code>licenseType</code> is the curated SPDX identifier or Proprietary / Freeware / Freeware (non-commercial), empty when the mapping table has no verified statement. No collected license VALUE is ever part of a push.'
                 + ' <code>vulnerabilities</code> = every actionable finding (a CVE, WINDOWS-UPDATES or OS-EOL) - the same rows the vulnerability CSV has.'
                 + ' <code>coverage</code> = the honest blind spots of the same scan (not assessable, distribution-managed, driver/firmware).';
             asShowTargetFields();

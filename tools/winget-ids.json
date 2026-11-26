@@ -1,0 +1,112 @@
+{
+  "_comment": "Evidence linkage for the curated licenseType field of cpe-table.json: the winget community manifest (microsoft/winget-pkgs, MIT license) that states each product's license. Keyed by the table row's `match` regex (unique per row) so edition-specific rows - e.g. the JetBrains Community Editions - map to their own package. tools/gen-license-meta.js reads this file, runs `winget show --id <id> --exact --locale en-US` and reports (or with --write, refreshes) the licenseType values. A row that is absent here has no winget package: its value came from the project's own license statement instead, and the tool leaves it alone. Verified 2026-11-26.",
+  "ids": {
+    "mozilla firefox": "Mozilla.Firefox",
+    "mozilla thunderbird": "Mozilla.Thunderbird",
+    "google chrome": "Google.Chrome",
+    "^google-chrome": "Google.Chrome",
+    "webview2": "Microsoft.EdgeWebView2Runtime",
+    "microsoft edge": "Microsoft.Edge",
+    "microsoft teams": "Microsoft.Teams",
+    "adobe acrobat reader": "Adobe.Acrobat.Reader.64-bit",
+    "microsoft 365|microsoft office|office 16|microsoft onenote": "Microsoft.Office",
+    "microsoft onedrive": "Microsoft.OneDrive",
+    "microsoft visual studio code": "Microsoft.VisualStudioCode",
+    "^visual studio build tools 2022|^microsoft visual studio (community|professional|enterprise) 2022": "Microsoft.VisualStudio.2022.Community",
+    "microsoft sql server": "Microsoft.SQLServer.2022.Developer",
+    "^service pack \\d+ (für|for) sql server": "Microsoft.SQLServer.2022.Developer",
+    "^copilot": "Microsoft.Copilot",
+    "oracle java|^java": "Oracle.JavaRuntimeEnvironment",
+    "java.*development kit": "Oracle.JDK.21",
+    "virtualbox": "Oracle.VirtualBox",
+    "mysql workbench": "Oracle.MySQLWorkbench",
+    "apache netbeans": "Apache.NetBeans",
+    "openoffice": "Apache.OpenOffice",
+    "^7-zip": "7zip.7zip",
+    "notepad\\+\\+": "Notepad++.Notepad++",
+    "vlc media player": "VideoLAN.VLC",
+    "^python \\d+\\.\\d+": "Python.Python.3.12",
+    "node\\.js": "OpenJS.NodeJS",
+    "^libreoffice": "TheDocumentFoundation.LibreOffice",
+    "^irfanview": "IrfanSkiljan.IrfanView",
+    "tortoisesvn": "TortoiseSVN.TortoiseSVN",
+    "tortoisegit": "TortoiseGit.TortoiseGit",
+    "pdf-xchange": "TrackerSoftware.PDF-XChangeEditor",
+    "winscp": "WinSCP.WinSCP",
+    "foxit pdf editor": "Foxit.PhantomPDF",
+    "screentogif": "NickeManarin.ScreenToGif",
+    "^gimp": "GIMP.GIMP",
+    "audacity": "Audacity.Audacity",
+    "^inkscape": "Inkscape.Inkscape",
+    "keepassxc": "KeePassXCTeam.KeePassXC",
+    "keepass(?!xc)": "DominikReichl.KeePass",
+    "mremoteng": "mRemoteNG.mRemoteNG",
+    "teamviewer": "TeamViewer.TeamViewer",
+    "anydesk": "AnyDesk.AnyDesk",
+    "^putty": "PuTTY.PuTTY",
+    "wireshark": "WiresharkFoundation.Wireshark",
+    "^curl": "cURL.cURL",
+    "^php ": "PHP.PHP.8.2",
+    "^nextcloud( desktop)?( \\d|$)": "Nextcloud.NextcloudDesktop",
+    "^git(?!hub)": "Git.Git",
+    "brave browser|brave \\d": "Brave.Brave",
+    "docker desktop": "Docker.DockerDesktop",
+    "electron": "OpenJS.Electron.33",
+    "power bi report server": "Microsoft.PowerBIReportServer",
+    "sumatrapdf": "SumatraPDF.SumatraPDF",
+    "asp\\.net core": "Microsoft.DotNet.AspNetCore.8",
+    "microsoft \\.net core": "Microsoft.DotNet.Runtime.8",
+    "microsoft \\.net (runtime|host|app host)": "Microsoft.DotNet.Runtime.8",
+    "windows desktop runtime": "Microsoft.DotNet.Runtime.8",
+    "microsoft visual c\\+\\+": "Microsoft.VCRedist.2015+.x64",
+    "^jetbrains teamcity": "JetBrains.TeamCity",
+    "^jetbrains youtrack": "JetBrains.YouTrack",
+    "^intellij idea.*community": "JetBrains.IntelliJIDEA.Community",
+    "^pycharm.*community": "JetBrains.PyCharm.Community",
+    "^jetbrains rider": "JetBrains.Rider",
+    "^pl/sql developer": "AllroundAutomations.PLSQLDeveloper",
+    "^xampp": "ApacheFriends.Xampp.8.2",
+    "^adobe creative cloud": "Adobe.CreativeCloud",
+    "^hmailserver": "hMailServer.hMailServer",
+    "^k-lite codec pack": "CodecGuide.K-LiteCodecPack.Full",
+    "edrawmax": "EdrawSoft.EdrawMax",
+    "^gnu privacy guard": "GnuPG.GnuPG",
+    "^gpg4win": "GnuPG.Gpg4win",
+    "^nero burning rom": "Nero.NeroBurningROM",
+    "^wix toolset": "WiXToolset.WiXToolset",
+    "^epsonnet print": "EPSON.EpsonNetPrint",
+    "^cuda-toolkit": "Nvidia.CUDA",
+    "^advanced installer": "Caphyon.AdvancedInstaller"
+  },
+  "_overridesComment": "Rows whose curated licenseType DELIBERATELY differs from the winget manifest string, each with the reason. The rule in CONTRIBUTING.md decides the value, not the upstream wording: winget's `License` field states the copyright/licensing TERMS (it writes 'Proprietary' for anything closed source), while this table answers the asset-management question 'does using this product require a purchased license?'. The evidence tool reports such a row as `override` instead of DRIFT, and reports DRIFT only when the curated value matches neither the evidence nor an override listed here - that is how it caught the two JetBrains Community Edition rows being filled with the commercial value of their product family.",
+  "overrides": {
+    "webview2": {
+      "licenseType": "Freeware",
+      "why": "Closed source, but shipped and redistributable free of charge (winget says 'Proprietary', which is true of the terms and useless for a license count)."
+    },
+    "microsoft edge": {
+      "licenseType": "Freeware",
+      "why": "Closed source, preinstalled with Windows and free of charge - no license has to be bought or counted."
+    },
+    "adobe acrobat reader": {
+      "licenseType": "Freeware",
+      "why": "The free reader, not the paid Acrobat; winget's 'Proprietary' describes the terms, not a purchase obligation."
+    },
+    "microsoft onedrive": {
+      "licenseType": "Freeware",
+      "why": "The client is preinstalled and free of charge; only the STORAGE behind it is a paid subscription, which is not a per-install software license."
+    },
+    "^copilot": {
+      "licenseType": "Freeware",
+      "why": "The Copilot app itself is free of charge; a Copilot subscription is a tenant licence, not a per-device software key."
+    },
+    "^curl": {
+      "licenseType": "curl",
+      "why": "The winget package 'cURL.cURL' is marked 'Freeware', but curl the software is open source under its own SPDX-registered permissive license ('curl'); the CPE row maps the product, not one binary distributor's packaging."
+    },
+    "^cuda-toolkit": {
+      "licenseType": "Freeware",
+      "why": "Free download under a proprietary NVIDIA EULA - no purchase, so it must not appear in a license-count report as needing one."
+    }
+  }
+}

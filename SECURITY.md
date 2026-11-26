@@ -177,6 +177,24 @@ Please report security vulnerabilities by opening an issue.
   devices that hold another agent session (the one-session-per-agent rule is unchanged), never writes to a device
   and never reboots one. The schedule does not widen what leaves the server: the keys still stay local - the only
   off-server path remains the separately opt-in asset-management connector.
+  **Microsoft license metadata (v5.6.0)** widens what is READ on the device but not what is secret: the same single
+  `Get-CimInstance SoftwareLicensingProduct` call now also returns the edition (`Name`/`LicenseFamily`), the key
+  channel (`ProductKeyChannel`: Retail / OEM:DM / OEM:NONSLP / Volume:MAK / Volume:KMSCLIENT), the activation state
+  (`LicenseStatus`), the remaining grace minutes, an evaluation end date and the application id. These are
+  configuration facts about the installation, not credentials, and they are what makes an unlicensed machine visible.
+  **The key material is unchanged: only `PartialProductKey` (the last five characters) is ever read.** The plugin
+  deliberately does NOT decode `DigitalProductId`, does NOT read the firmware-embedded
+  `SoftwareLicensingService.OA3xOriginalProductKey` and does NOT call `slmgr` or any activation path - a full product
+  key is a usable secret, reconstructing one is what the AV-flagged key-finder tools do, and the read-only guarantee
+  above would no longer be the whole story. A script-shape test pins all four absences. On the way to the browser the
+  partial key is dropped as well: `dev_details` reports the Microsoft entries as metadata plus counts
+  (`msSummary.licensed` / `notLicensed` / `unknown`) and `lic_status` reports counts only, so no key fragment reaches
+  a page, a log or the asset push. A missing `LicenseStatus` counts as `unknown`, never as a violation - the plugin
+  does not accuse a device on the basis of an unreadable value.
+  **The curated `licenseType`** (v5.6.0, in `cpe-table.json`) is public product information - an SPDX identifier or
+  Proprietary / Freeware / Freeware (non-commercial). It is derived from no device data at all, contains nothing about
+  your fleet, and is sanitized (`obj.sanitizeLicenseType`: 80 characters, `[A-Za-z0-9.+()\- ]` only) before it reaches
+  a CSV cell or an HTML attribute, because it is rendered into both.
 
 ### Input validation
 - Severity values whitelisted (CRITICAL, HIGH, MEDIUM, LOW, UNKNOWN); numeric settings range-checked
@@ -212,8 +230,13 @@ Please report security vulnerabilities by opening an issue.
 - Generated scripts are executed by tests only partially: the deploy flow was run end to end on Windows 11 and
   with a POSIX shell during audit 3; audit 4 ran the winget dry run, the winget uninstall of a non-existent package
   and the license extraction (machine, per-user registry wildcard, per-user file) through the real cmd.exe transport
-  on Windows 11; the CI runs one live Linux `.sh` deploy. Windows Update installs, real winget upgrades and
-  `dpkg`/`rpm`/`apt` are verified against their documentation and by syntax parsers, not executed by CI.
+  on Windows 11; the CI runs one live Linux `.sh` deploy. For v5.6.0 the license script was again built by the real
+  module and **executed on a real Windows 11** (read-only): the PowerShell parser reported 0 errors, the corrected
+  Office rule fell through from the empty `ProductKeys` to `ProductReleaseIds`, and the three
+  `SoftwareLicensingProduct` entries came back with family, channel, status, grace, evaluation date and application id
+  - which is how the audit machine's Office edition in notification mode became visible. Windows Update installs,
+  real winget upgrades and `dpkg`/`rpm`/`apt` are verified against their documentation and by syntax parsers, not
+  executed by CI.
 
 ---
 

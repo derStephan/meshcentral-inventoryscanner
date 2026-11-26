@@ -23,7 +23,7 @@
  * endoflife.date support dates.
  *
  * @author derStephan
- * @version 5.5.1
+ * @version 5.6.0
  *
  * Transparency: This plugin was created with the assistance of Qwen 3.6 27B and Qwen 3.8 Flash Next.
  * Audits: 2026-11-06 (NVIDIA Nemotron 3 550B A55B), 2026-11-11 (Claude Opus 5.5, v3.0.1), 2026-11-14 (Claude Opus 5.5, v4.3.0)
@@ -55,8 +55,11 @@ try { MODULE_CODE_VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, 'con
  *   lib/assessments.js      group ratings + false-positive flags, their store and write handlers
  *   lib/nvd.js              NVD feed download/cache/load + download log
  *   lib/nvdindex.js         CVE index built from the feeds, CPE criteria parsing, version compare
- *   lib/cpetable.js         name -> CPE tables: maintained cpe-table.json (the only curated copy), custom UI rows
- *   lib/matching.js         software name -> CPE resolution incl. automatic product-token matching
+ *   lib/cpetable.js         name -> CPE tables: maintained cpe-table.json (the only curated copy), custom UI rows;
+ *                           since v5.6.0 a row may also carry its curated licenseType (SPDX id or
+ *                           Proprietary / Freeware / Freeware (non-commercial))
+ *   lib/matching.js         software name -> CPE resolution incl. automatic product-token matching, and
+ *                           licenseTypeFor (the one resolver for that annotation)
  *   lib/oslifecycle.js      distro packages judged by the OS lifecycle (endoflife.date) + OS-EOL
  *   lib/osscan.js           OS -> CPE mapping and the OS CVE scan (Windows release CPEs + build)
  *   lib/inventory.js        stored software/patches + coexistence-aware pruning
@@ -74,7 +77,9 @@ try { MODULE_CODE_VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, 'con
  *   lib/license.js          license keys/info in the software CSV (issue #7, v4.8.0): a curated + remote +
  *                           custom rule table (name -> registry/file/WMI extraction), read-only collection per
  *                           Windows device (on demand, optionally scheduled since v5.2.0), stored locally and
- *                           added to the software CSV
+ *                           added to the software CSV. Since v5.6.0 the Microsoft read also returns the license
+ *                           TYPE and activation state (key channel, edition family, LicenseStatus) - still only
+ *                           the last five characters of a key, never a decoded full product key
  *   lib/fleetindex.js       read-only fleet index for the two unified views (issue #8, v4.9.5): a distinct
  *                           software table and a per-device CVE count, built only from data already on this
  *                           server (stored software + the same matcher the CSV/reports use + winget + licenses);

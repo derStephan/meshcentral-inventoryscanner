@@ -7,14 +7,17 @@
             for (var i = 0; i < state.cpeEntries.length; i++) {
                 var e = state.cpeEntries[i];
                 if (txt) {
-                    var hay = (e.match + ' ' + e.vendor + ' ' + e.product).toLowerCase();
+                    var hay = (e.match + ' ' + e.vendor + ' ' + e.product + ' ' + (e.licenseType || '')).toLowerCase();
                     if (hay.indexOf(txt) < 0) { continue; }
                 }
                 shown++;
-                html += '<tr data-match="' + esc(e.match) + '" data-vendor="' + esc(e.vendor) + '" data-product="' + esc(e.product) + '">';
+                html += '<tr data-match="' + esc(e.match) + '" data-vendor="' + esc(e.vendor) + '" data-product="' + esc(e.product) + '" data-licensetype="' + esc(e.licenseType || '') + '">';
                 html += '<td><code>' + esc(e.match) + '</code></td>';
                 html += '<td>' + esc(e.vendor) + '</td>';
                 html += '<td>' + esc(e.product) + '</td>';
+                // v5.6.0: the curated license annotation. An empty cell is the honest "no verified statement",
+                // so it is rendered pale instead of being filled with a guess.
+                html += '<td>' + (e.licenseType ? ('<code>' + esc(e.licenseType) + '</code>') : '<span style="color:#999">unknown</span>') + '</td>';
                 if (e.source === 'custom') {
                     html += '<td><span class="badge badge-custom">Custom</span></td>';
                     html += '<td><button class="small red del-cpe-btn" data-help="cpe.del">Delete</button></td>';
@@ -25,7 +28,7 @@
                 html += '</tr>';
             }
             if (shown === 0) {
-                html = '<tr><td colspan="5" style="color:#888">No mappings match the filter.</td></tr>';
+                html = '<tr><td colspan="6" style="color:#888">No mappings match the filter.</td></tr>';
             }
             $('cpeTableBody').innerHTML = html;
         }
@@ -69,6 +72,7 @@
                 $('cpeRegex').value = match;
                 $('cpeVendor').value = vendor;
                 $('cpeProduct').value = product;
+                $('cpeLicenseType').value = tr.getAttribute('data-licensetype') || '';
                 $('cpeProduct').focus();
                 showMsg('cpeMsg', 'Values copied to the form below. Adjust them and press Add - your custom entry takes precedence over the maintained table.', true);
             }
@@ -78,6 +82,7 @@
             var match = $('cpeRegex').value.trim();
             var vendor = $('cpeVendor').value.trim().toLowerCase();
             var product = $('cpeProduct').value.trim().toLowerCase();
+            var licenseType = $('cpeLicenseType').value.trim();
             if (!match || !vendor || !product) {
                 showMsg('cpeMsg', 'Regex, vendor and product are required.', false);
                 return;
@@ -86,11 +91,12 @@
                 showMsg('cpeMsg', 'Invalid regex: ' + err.message, false);
                 return;
             }
-            post('add_cpe', { match: match, vendor: vendor, product: product }).then(function (data) {
+            post('add_cpe', { match: match, vendor: vendor, product: product, licenseType: licenseType }).then(function (data) {
                 if (data.error) { showMsg('cpeMsg', data.error, false); return; }
                 $('cpeRegex').value = '';
                 $('cpeVendor').value = '';
                 $('cpeProduct').value = '';
+                $('cpeLicenseType').value = '';
                 showMsg('cpeMsg', 'Mapping saved to custom-cpe.json (takes precedence over the maintained table).', true);
                 loadCpeTable();
             }).catch(function (err) { showMsg('cpeMsg', 'Save failed: ' + err.message, false); });

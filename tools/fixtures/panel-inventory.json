@@ -44,6 +44,7 @@
   "asTokenHint",
   "asUsername",
   "cpeFilter",
+  "cpeLicenseType",
   "cpeMsg",
   "cpeProduct",
   "cpeRegex",
@@ -264,7 +265,7 @@
   },
   {
    "head": "Every NVD CVE names the affected software with a technical code, a CPE like cpe:",
-   "len": 961
+   "len": 1548
   },
   {
    "head": "The curated table is maintained as cpe-table.json in this plugin's GitHub reposi",
@@ -308,11 +309,11 @@
   },
   {
    "head": "For asset management the software-inventory CSV can also carry a License and Lic",
-   "len": 2291
+   "len": 3885
   },
   {
-   "head": "Per device: the Device list shows how many keys were collected on each machine, ",
-   "len": 336
+   "head": "Per device: the Device list shows how many keys were collected on each machine a",
+   "len": 479
   },
   {
    "head": "One row per device, built from the data already stored on this server - opening ",
@@ -432,7 +433,7 @@
   },
   {
    "head": "' + (li.enabled ? 'enabled' : 'disabled (Software &gt; License keys)') + (li.tim",
-   "len": 281
+   "len": 551
   },
   {
    "head": "' + vs.map(function (v) { return esc(v.version) + ' on ' + v.count + ' device(s)",
@@ -447,8 +448,8 @@
    "len": 90
   },
   {
-   "head": "' + (d.licenseDevices > 0 ? ('collected on ' + d.licenseDevices + ' device(s) - ",
-   "len": 225
+   "head": "' + (d.licenseType ? ('type: ' + esc(d.licenseType) + ' (curated in the mapping ",
+   "len": 464
   },
   {
    "head": "' + esc(wg.pkgId) + ' · ' + (wg.ready || 0) + ' ready, ' + (wg.ok || 0) + ' ok, ",

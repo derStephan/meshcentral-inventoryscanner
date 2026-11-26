@@ -52,6 +52,29 @@
                 subkeys such as <code>License.ws.*</code>, at most 20 matches, first non-empty value wins), in a file
                 path it is a leaf pattern (at most 5 candidate files). At most 20 user profiles are considered per run.
                 <br><br>
+                <strong>Microsoft licenses: type and activation state (v5.6.0):</strong> the <em>Include Microsoft
+                product keys</em> switch reads the <code>SoftwareLicensingProduct</code> WMI class, which carries far
+                more than the key. Besides the last five characters of the key the collection now stores the
+                <strong>edition</strong> (<code>LicenseFamily</code>, e.g. <code>Office19Professional2019R_OEM_Perp</code>),
+                the <strong>key channel</strong> (<code>Retail</code>, <code>OEM:DM</code>, <code>OEM:NONSLP</code>,
+                <code>Volume:MAK</code>, <code>Volume:KMSCLIENT</code>, &hellip; - that is the license TYPE of the
+                installation), the <strong>activation state</strong> (<code>LicenseStatus</code>: licensed,
+                out-of-box/out-of-tolerance/extended grace, non-genuine grace, notification mode, unlicensed) and an
+                evaluation end date. The <strong>Device list</strong> counts the licenses that are not activated per
+                device and its <em>Details</em> button lists edition, channel and state. Still strictly read-only: one
+                <code>Get-CimInstance</code>, no <code>slmgr</code> call, no activation change, and the full product key
+                is never read - a <code>DigitalProductId</code> decode and the firmware
+                <code>OA3xOriginalProductKey</code> are deliberately not used, because a full key is a usable secret
+                and decoding it is what the AV-flagged key-finder tools do.
+                <br><br>
+                <strong>License type of a product</strong> (independent of any device) is curated in the mapping table:
+                Vulnerabilities &rsaquo; CPE table carries a <em>License type</em> per row - an SPDX identifier
+                (<code>MIT</code>, <code>GPL-2.0-only</code>, &hellip;) or <code>Proprietary</code> /
+                <code>Freeware</code> / <code>Freeware (non-commercial)</code>. It appears as the <em>License Type</em>
+                column of the software CSV and of the software list without any collection run. Seats, expiry and
+                purchase data are not on a device at all - they belong to the asset-management system
+                (Settings &rsaquo; Asset management).
+                <br><br>
                 <strong>Rules JSON</strong> example:
                 <code>[{"type":"registry","path":"HKLM:\\SOFTWARE\\Vendor\\App","value":"LicenseKey"}]</code>
                 &middot; file: <code>[{"type":"file","path":"C:\\ProgramData\\App\\lic.dat","regex":"KEY=([A-Z0-9-]+)"}]</code>
@@ -64,8 +87,10 @@
                 <span id="licRunInfo" class="hint"></span>
             </div>
             <div class="hint">Per device: the <strong>Device list</strong> shows how many keys were collected on each
-            machine, collects for the devices you tick there, and its <em>Details</em> button offers the collection
-            for that single device. The values themselves are never displayed - they stay in
+            machine and how many Microsoft licenses are <strong>not activated</strong>, collects for the devices you
+            tick there, and its <em>Details</em> button offers the collection for that single device plus the edition,
+            key channel and activation state of every Microsoft license. The collected key values themselves are never
+            displayed - they stay in
             <code>data/&lt;node&gt;/license.json</code> on this server and appear only in the software CSV export.</div>
             <h4 style="font-size:13px;color:#0b3d6b;margin:14px 0 6px 0;">Custom rules (you can add your own)</h4>
             <div class="table-container"><table>

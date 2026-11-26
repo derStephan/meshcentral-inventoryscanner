@@ -1,620 +1,756 @@
 {
-  "updated": "2026-11-25",
+  "updated": "2026-11-26",
+  "_licenseNote": "Optional field since v5.6.0: \"licenseType\" states how the matched product is LICENSED, so an asset report does not have to re-derive it per device. Values are either an SPDX license identifier (open source: MIT, Apache-2.0, MPL-2.0, GPL-2.0-only, GPL-3.0-or-later, LGPL-2.1-only, AGPL-3.0-only, PSF-2.0, MS-PL, MS-RL, PHP-3.01, curl, ...) or one of exactly three descriptors: \"Proprietary\" (closed source, a purchased license is required for the use in question), \"Freeware\" (closed source, free of charge - this includes hardware/OS-bundled vendor tools such as the Dell, Intel, Lenovo, Logitech, Epson, NVIDIA, APC and NETGEAR companions) and \"Freeware (non-commercial)\" (free only for private, non-commercial use - a business fleet needs a paid license, e.g. IrfanView). The field describes the SOFTWARE license, never the purchase model of one installation: whether a specific machine holds a Retail, OEM or Volume key and whether it is activated comes from the device (SoftwareLicensingProduct LicenseStatus/ProductKeyChannel, see license-table.json) and seats/expiry/purchase data comes from the asset-management system. Omit the field when there is no verifiable statement - never guess. \"kind\" (driver/firmware) rows carry no licenseType on purpose: they are exclusion markers without a product identity. Evidence and regeneration: the values were read from the winget community manifests (microsoft/winget-pkgs, MIT license) with \"winget show --id <id> --exact --locale en-US\" and, where winget has no package, from the project's own LICENSE statement; \"node tools/gen-license-meta.js --refresh\" repeats that lookup and reports drift. Changing only this file needs no release (running servers re-download it).",
   "entries": [
     {
       "match": "mozilla firefox",
       "vendor": "mozilla",
-      "product": "firefox"
+      "product": "firefox",
+      "licenseType": "MPL-2.0"
     },
     {
       "match": "mozilla thunderbird",
       "vendor": "mozilla",
-      "product": "thunderbird"
+      "product": "thunderbird",
+      "licenseType": "MPL-2.0"
     },
     {
       "match": "google chrome",
       "vendor": "google",
-      "product": "chrome"
+      "product": "chrome",
+      "licenseType": "Freeware"
     },
     {
       "match": "webview2",
       "vendor": "microsoft",
-      "product": "edge_webview2"
+      "product": "edge_webview2",
+      "licenseType": "Freeware"
     },
     {
       "match": "microsoft edge",
       "vendor": "microsoft",
-      "product": "edge"
+      "product": "edge",
+      "licenseType": "Freeware"
     },
     {
       "match": "teams meeting add-in",
       "vendor": "microsoft",
-      "product": "teams_meeting_add-in"
+      "product": "teams_meeting_add-in",
+      "licenseType": "Freeware"
     },
     {
       "match": "microsoft teams",
       "vendor": "microsoft",
-      "product": "teams"
+      "product": "teams",
+      "licenseType": "Proprietary"
     },
     {
       "match": "adobe acrobat reader",
       "vendor": "adobe",
-      "product": "acrobat_reader"
+      "product": "acrobat_reader",
+      "licenseType": "Freeware"
     },
     {
       "match": "adobe acrobat( \\(64-bit\\))?",
       "vendor": "adobe",
-      "product": "acrobat"
+      "product": "acrobat",
+      "licenseType": "Proprietary"
     },
     {
       "match": "^adobe acrobat",
       "vendor": "adobe",
-      "product": "acrobat"
+      "product": "acrobat",
+      "licenseType": "Proprietary"
     },
     {
       "match": "microsoft 365|microsoft office|office 16|microsoft onenote",
       "vendor": "microsoft",
-      "product": "office"
+      "product": "office",
+      "licenseType": "Proprietary"
     },
     {
       "match": "microsoft onedrive",
       "vendor": "microsoft",
-      "product": "onedrive"
+      "product": "onedrive",
+      "licenseType": "Freeware"
     },
     {
       "match": "microsoft visual studio code",
       "vendor": "microsoft",
-      "product": "visual_studio_code"
+      "product": "visual_studio_code",
+      "licenseType": "Freeware"
     },
     {
       "match": "^visual studio build tools 2019|^microsoft visual studio (community|professional|enterprise) 2019",
       "vendor": "microsoft",
-      "product": "visual_studio_2019"
+      "product": "visual_studio_2019",
+      "licenseType": "Proprietary"
     },
     {
       "match": "^visual studio build tools 2022|^microsoft visual studio (community|professional|enterprise) 2022",
       "vendor": "microsoft",
-      "product": "visual_studio_2022"
+      "product": "visual_studio_2022",
+      "licenseType": "Proprietary"
     },
     {
       "match": "^microsoft visual studio team foundation server",
       "vendor": "microsoft",
-      "product": "visual_studio_team_foundation_server"
+      "product": "visual_studio_team_foundation_server",
+      "licenseType": "Proprietary"
     },
     {
       "match": "team foundation server",
       "vendor": "microsoft",
-      "product": "team_foundation_server"
+      "product": "team_foundation_server",
+      "licenseType": "Proprietary"
     },
     {
       "match": "microsoft visual studio",
       "vendor": "microsoft",
-      "product": "visual_studio"
+      "product": "visual_studio",
+      "licenseType": "Proprietary"
     },
     {
       "match": "microsoft sql server",
       "vendor": "microsoft",
-      "product": "sql_server"
+      "product": "sql_server",
+      "licenseType": "Proprietary"
     },
     {
       "match": "^copilot",
       "vendor": "microsoft",
-      "product": "copilot"
+      "product": "copilot",
+      "licenseType": "Freeware"
     },
     {
       "match": "oracle java|^java",
       "vendor": "oracle",
-      "product": "jre"
+      "product": "jre",
+      "licenseType": "Proprietary"
     },
     {
       "match": "java.*development kit",
       "vendor": "oracle",
-      "product": "jdk"
+      "product": "jdk",
+      "licenseType": "Proprietary"
     },
     {
       "match": "virtualbox",
       "vendor": "oracle",
-      "product": "vm_virtualbox"
+      "product": "vm_virtualbox",
+      "licenseType": "GPL-3.0-only"
     },
     {
       "match": "apache netbeans",
       "vendor": "apache",
-      "product": "netbeans"
+      "product": "netbeans",
+      "licenseType": "Apache-2.0"
     },
     {
       "match": "openoffice",
       "vendor": "apache",
-      "product": "openoffice"
+      "product": "openoffice",
+      "licenseType": "Apache-2.0"
     },
     {
       "match": "^7-zip",
       "vendor": "7-zip",
-      "product": "7-zip"
+      "product": "7-zip",
+      "licenseType": "LGPL-2.1-only"
     },
     {
       "match": "notepad\\+\\+",
       "vendor": "notepad-plus-plus",
-      "product": "notepad\\+\\+"
+      "product": "notepad\\+\\+",
+      "licenseType": "GPL-3.0-or-later"
     },
     {
       "match": "vlc media player",
       "vendor": "videolan",
-      "product": "vlc_media_player"
+      "product": "vlc_media_player",
+      "licenseType": "GPL-2.0-only"
     },
     {
       "match": "^python \\d+\\.\\d+",
       "vendor": "python",
-      "product": "python"
+      "product": "python",
+      "licenseType": "PSF-2.0"
     },
     {
       "match": "node\\.js",
       "vendor": "nodejs",
-      "product": "node.js"
+      "product": "node.js",
+      "licenseType": "MIT"
     },
     {
       "match": "^libreoffice",
       "vendor": "libreoffice",
-      "product": "libreoffice"
+      "product": "libreoffice",
+      "licenseType": "MPL-2.0"
     },
     {
       "match": "^irfanview",
       "vendor": "irfanview",
-      "product": "irfanview"
+      "product": "irfanview",
+      "licenseType": "Freeware (non-commercial)"
     },
     {
       "match": "tortoisesvn",
       "vendor": "tigris",
-      "product": "tortoisesvn"
+      "product": "tortoisesvn",
+      "licenseType": "GPL-2.0-only"
     },
     {
       "match": "tortoisegit",
       "vendor": "tortoisegit",
-      "product": "tortoisegit"
+      "product": "tortoisegit",
+      "licenseType": "GPL-2.0-only"
     },
     {
       "match": "pdf-xchange",
       "vendor": "pdf-xchange",
-      "product": "pdf-xchange_editor"
+      "product": "pdf-xchange_editor",
+      "licenseType": "Proprietary"
     },
     {
       "match": "winscp",
       "vendor": "winscp",
-      "product": "winscp"
+      "product": "winscp",
+      "licenseType": "GPL-3.0-or-later"
     },
     {
       "match": "foxit pdf editor",
       "vendor": "foxit",
-      "product": "pdf_editor"
+      "product": "pdf_editor",
+      "licenseType": "Proprietary"
     },
     {
       "match": "screentogif",
       "vendor": "screentogif",
-      "product": "screentogif"
+      "product": "screentogif",
+      "licenseType": "MS-PL"
     },
     {
       "match": "^gimp",
       "vendor": "gimp",
-      "product": "gimp"
+      "product": "gimp",
+      "licenseType": "GPL-3.0-or-later"
     },
     {
       "match": "audacity",
       "vendor": "audacityteam",
-      "product": "audacity"
+      "product": "audacity",
+      "licenseType": "GPL-3.0-or-later"
     },
     {
       "match": "^inkscape",
       "vendor": "inkscape",
-      "product": "inkscape"
+      "product": "inkscape",
+      "licenseType": "GPL-2.0-only"
     },
     {
       "match": "keepassxc",
       "vendor": "keepassxc",
-      "product": "keepassxc"
+      "product": "keepassxc",
+      "licenseType": "GPL-2.0-or-later"
     },
     {
       "match": "keepass(?!xc)",
       "vendor": "keepass",
-      "product": "keepass"
+      "product": "keepass",
+      "licenseType": "GPL-2.0-only"
     },
     {
       "match": "mremoteng",
       "vendor": "mremoteng",
-      "product": "mremoteng"
+      "product": "mremoteng",
+      "licenseType": "GPL-2.0-only"
     },
     {
       "match": "forticlient",
       "vendor": "fortinet",
-      "product": "forticlient"
+      "product": "forticlient",
+      "licenseType": "Proprietary"
     },
     {
       "match": "teamviewer",
       "vendor": "teamviewer",
-      "product": "teamviewer"
+      "product": "teamviewer",
+      "licenseType": "Proprietary"
     },
     {
       "match": "anydesk",
       "vendor": "anydesk",
-      "product": "anydesk"
+      "product": "anydesk",
+      "licenseType": "Proprietary"
     },
     {
       "match": "^putty",
       "vendor": "putty",
-      "product": "putty"
+      "product": "putty",
+      "licenseType": "MIT"
     },
     {
       "match": "filezilla server",
       "vendor": "filezilla-project",
-      "product": "filezilla_server"
+      "product": "filezilla_server",
+      "licenseType": "GPL-2.0-or-later"
     },
     {
       "match": "filezilla",
       "vendor": "filezilla-project",
-      "product": "filezilla_client"
+      "product": "filezilla_client",
+      "licenseType": "GPL-2.0-or-later"
     },
     {
       "match": "wireshark",
       "vendor": "wireshark",
-      "product": "wireshark"
+      "product": "wireshark",
+      "licenseType": "GPL-2.0-only"
     },
     {
       "match": "^curl",
       "vendor": "haxx",
-      "product": "curl"
+      "product": "curl",
+      "licenseType": "curl"
     },
     {
       "match": "openssl",
       "vendor": "openssl",
-      "product": "openssl"
+      "product": "openssl",
+      "licenseType": "Apache-2.0"
     },
     {
       "match": "^php ",
       "vendor": "php",
-      "product": "php"
+      "product": "php",
+      "licenseType": "PHP-3.01"
     },
     {
       "match": "^nextcloud( desktop)?( \\d|$)",
       "vendor": "nextcloud",
-      "product": "desktop"
+      "product": "desktop",
+      "licenseType": "GPL-2.0-only"
     },
     {
       "match": "^git(?!hub)",
       "vendor": "git",
-      "product": "git"
+      "product": "git",
+      "licenseType": "GPL-2.0-only"
     },
     {
       "match": "brave browser|brave \\d",
       "vendor": "brave",
-      "product": "brave"
+      "product": "brave",
+      "licenseType": "MPL-2.0"
     },
     {
       "match": "docker desktop",
       "vendor": "docker",
-      "product": "docker_desktop"
+      "product": "docker_desktop",
+      "licenseType": "Proprietary"
     },
     {
       "match": "electron",
       "vendor": "electronjs",
-      "product": "electron"
+      "product": "electron",
+      "licenseType": "MIT"
     },
     {
       "match": "power bi report server",
       "vendor": "microsoft",
-      "product": "power_bi_report_server"
+      "product": "power_bi_report_server",
+      "licenseType": "Proprietary"
     },
     {
       "match": "globalprotect",
       "vendor": "paloaltonetworks",
-      "product": "globalprotect"
+      "product": "globalprotect",
+      "licenseType": "Proprietary"
     },
     {
       "match": "sumatrapdf",
       "vendor": "sumatrapdfreader",
-      "product": "sumatrapdf"
+      "product": "sumatrapdf",
+      "licenseType": "GPL-3.0-only"
     },
     {
       "match": "securepoint (ssl vpn|vpn client)",
       "vendor": "securepoint",
-      "product": "openvpn-client"
+      "product": "openvpn-client",
+      "licenseType": "Freeware"
     },
     {
       "match": "asp\\.net core",
       "vendor": "microsoft",
-      "product": "asp.net_core"
+      "product": "asp.net_core",
+      "licenseType": "MIT"
     },
     {
       "match": "\\.net framework",
       "vendor": "microsoft",
-      "product": ".net_framework"
+      "product": ".net_framework",
+      "licenseType": "Freeware"
     },
     {
       "match": "microsoft \\.net core",
       "vendor": "microsoft",
-      "product": ".net_core"
+      "product": ".net_core",
+      "licenseType": "MIT"
     },
     {
       "match": "microsoft \\.net (runtime|host|app host)",
       "vendor": "microsoft",
-      "product": ".net"
+      "product": ".net",
+      "licenseType": "MIT"
     },
     {
       "match": "windows desktop runtime",
       "vendor": "microsoft",
-      "product": ".net"
+      "product": ".net",
+      "licenseType": "MIT"
     },
     {
       "match": "microsoft visual c\\+\\+",
       "vendor": "microsoft",
-      "product": "visual_c\\+\\+"
+      "product": "visual_c\\+\\+",
+      "licenseType": "Freeware"
     },
     {
       "match": "^dell supportassist",
       "vendor": "dell",
-      "product": "supportassist"
+      "product": "supportassist",
+      "licenseType": "Freeware"
     },
     {
       "match": "dell command \\|? ?update",
       "vendor": "dell",
-      "product": "command_update"
+      "product": "command_update",
+      "licenseType": "Freeware"
     },
     {
       "match": "^docker(\\.io|-ce|-cli|-buildx-plugin|-compose-plugin)",
       "vendor": "docker",
-      "product": "docker"
+      "product": "docker",
+      "licenseType": "Apache-2.0"
     },
     {
       "match": "dell display manager",
       "vendor": "dell",
-      "product": "display_manager"
+      "product": "display_manager",
+      "licenseType": "Freeware"
     },
     {
       "match": "^dell peripheral manager",
       "vendor": "dell",
-      "product": "peripheral_manager"
+      "product": "peripheral_manager",
+      "licenseType": "Freeware"
     },
     {
       "match": "^dell power manager",
       "vendor": "dell",
-      "product": "power_manager"
+      "product": "power_manager",
+      "licenseType": "Freeware"
     },
     {
       "match": "^dell pair$",
       "vendor": "dell",
-      "product": "pair"
+      "product": "pair",
+      "licenseType": "Freeware"
     },
     {
       "match": "^dell digital delivery",
       "vendor": "dell",
-      "product": "digital_delivery"
+      "product": "digital_delivery",
+      "licenseType": "Freeware"
     },
     {
       "match": "^dell trusted device",
       "vendor": "dell",
-      "product": "trusted_device_agent"
+      "product": "trusted_device_agent",
+      "licenseType": "Freeware"
     },
     {
       "match": "^dell update( for windows| - supportassist|$)",
       "vendor": "dell",
-      "product": "update"
+      "product": "update",
+      "licenseType": "Freeware"
     },
     {
       "match": "^dell precision optimizer",
       "vendor": "dell",
-      "product": "precision_optimizer"
+      "product": "precision_optimizer",
+      "licenseType": "Freeware"
     },
     {
       "match": "integrated sensor solution",
       "vendor": "intel",
-      "product": "integrated_sensor_solution"
+      "product": "integrated_sensor_solution",
+      "licenseType": "Freeware"
     },
     {
       "match": "connectivity performance suite",
       "vendor": "intel",
-      "product": "connectivity_performance_suite"
+      "product": "connectivity_performance_suite",
+      "licenseType": "Freeware"
     },
     {
       "match": "^lenovo vantage",
       "vendor": "lenovo",
-      "product": "vantage"
+      "product": "vantage",
+      "licenseType": "Freeware"
     },
     {
       "match": "^logi options\\+",
       "vendor": "logitech",
-      "product": "options\\+"
+      "product": "options\\+",
+      "licenseType": "Freeware"
     },
     {
       "match": "^jetbrains teamcity",
       "vendor": "jetbrains",
-      "product": "teamcity"
+      "product": "teamcity",
+      "licenseType": "Proprietary"
     },
     {
       "match": "^jetbrains youtrack",
       "vendor": "jetbrains",
-      "product": "youtrack"
+      "product": "youtrack",
+      "licenseType": "Proprietary"
+    },
+    {
+      "match": "^intellij idea.*community",
+      "vendor": "jetbrains",
+      "product": "intellij_idea",
+      "licenseType": "Apache-2.0"
     },
     {
       "match": "^intellij idea",
       "vendor": "jetbrains",
-      "product": "intellij_idea"
+      "product": "intellij_idea",
+      "licenseType": "Proprietary"
+    },
+    {
+      "match": "^pycharm.*community",
+      "vendor": "jetbrains",
+      "product": "pycharm",
+      "licenseType": "Apache-2.0"
     },
     {
       "match": "^pycharm",
       "vendor": "jetbrains",
-      "product": "pycharm"
+      "product": "pycharm",
+      "licenseType": "Proprietary"
     },
     {
       "match": "^jetbrains rider",
       "vendor": "jetbrains",
-      "product": "rider"
+      "product": "rider",
+      "licenseType": "Proprietary"
     },
     {
       "match": "^pl/sql developer",
       "vendor": "allroundautomations",
-      "product": "pl\\/sql_developer"
+      "product": "pl\\/sql_developer",
+      "licenseType": "Proprietary"
     },
     {
       "match": "^xampp",
       "vendor": "apachefriends",
-      "product": "xampp"
+      "product": "xampp",
+      "licenseType": "GPL-2.0-only"
     },
     {
       "match": "^adobe lightroom",
       "vendor": "adobe",
-      "product": "lightroom"
+      "product": "lightroom",
+      "licenseType": "Proprietary"
     },
     {
       "match": "^adobe photoshop",
       "vendor": "adobe",
-      "product": "photoshop"
+      "product": "photoshop",
+      "licenseType": "Proprietary"
     },
     {
       "match": "^adobe creative cloud",
       "vendor": "adobe",
-      "product": "creative_cloud_desktop_application"
+      "product": "creative_cloud_desktop_application",
+      "licenseType": "Proprietary"
     },
     {
       "match": "^adobe genuine service",
       "vendor": "adobe",
-      "product": "genuine_service"
+      "product": "genuine_service",
+      "licenseType": "Freeware"
     },
     {
       "match": "^hmailserver",
       "vendor": "hmailserver",
-      "product": "hmailserver"
+      "product": "hmailserver",
+      "licenseType": "AGPL-3.0-only"
     },
     {
       "match": "^k-lite codec pack",
       "vendor": "codecguide",
-      "product": "k-lite_codec_pack"
+      "product": "k-lite_codec_pack",
+      "licenseType": "Freeware"
     },
     {
       "match": "edrawmax",
       "vendor": "wondershare",
-      "product": "edraw-max"
+      "product": "edraw-max",
+      "licenseType": "Proprietary"
     },
     {
       "match": "^gnu privacy guard",
       "vendor": "gnupg",
-      "product": "gnupg"
+      "product": "gnupg",
+      "licenseType": "GPL-3.0-or-later"
     },
     {
       "match": "^gpg4win",
       "vendor": "gpg4win",
-      "product": "gpg4win"
+      "product": "gpg4win",
+      "licenseType": "GPL-2.0-only"
     },
     {
       "match": "^nero burning rom",
       "vendor": "nero",
-      "product": "nero"
+      "product": "nero",
+      "licenseType": "Proprietary"
     },
     {
       "match": "^nero mediahome",
       "vendor": "nero",
-      "product": "mediahome"
+      "product": "mediahome",
+      "licenseType": "Proprietary"
     },
     {
       "match": "^wix toolset",
       "vendor": "firegiant",
-      "product": "wix_toolset"
+      "product": "wix_toolset",
+      "licenseType": "MS-RL"
     },
     {
       "match": "^epsonnet print",
       "vendor": "epson",
-      "product": "net_print"
+      "product": "net_print",
+      "licenseType": "Freeware"
     },
     {
       "match": "^sas 9\\.",
       "vendor": "sas",
-      "product": "base_sas"
+      "product": "base_sas",
+      "licenseType": "Proprietary"
     },
     {
       "match": "^fotos$",
       "vendor": "microsoft",
-      "product": "photos"
+      "product": "photos",
+      "licenseType": "Freeware"
     },
     {
       "match": "^microsoft visual basic \\d",
       "vendor": "microsoft",
-      "product": "visual_basic"
+      "product": "visual_basic",
+      "licenseType": "Proprietary"
     },
     {
       "match": "^microsoft asp\\.net mvc",
       "vendor": "microsoft",
-      "product": "asp.net_model_view_controller"
+      "product": "asp.net_model_view_controller",
+      "licenseType": "Apache-2.0"
     },
     {
       "match": "^service pack \\d+ (für|for) sql server",
       "vendor": "microsoft",
-      "product": "sql_server"
+      "product": "sql_server",
+      "licenseType": "Proprietary"
     },
     {
       "match": "dell ?optimizer",
       "vendor": "dell",
-      "product": "optimizer"
+      "product": "optimizer",
+      "licenseType": "Freeware"
     },
     {
       "match": "^nvidia grafiktreiber|^nvidia display driver",
       "vendor": "nvidia",
-      "product": "display_driver"
+      "product": "display_driver",
+      "licenseType": "Freeware"
     },
     {
       "match": "^cuda-toolkit",
       "vendor": "nvidia",
-      "product": "cuda_toolkit"
+      "product": "cuda_toolkit",
+      "licenseType": "Freeware"
     },
     {
       "match": "^nvidia-container-toolkit",
       "vendor": "nvidia",
-      "product": "nvidia_container_toolkit"
+      "product": "nvidia_container_toolkit",
+      "licenseType": "Apache-2.0"
     },
     {
       "match": "^containerd",
       "vendor": "linuxfoundation",
-      "product": "containerd"
+      "product": "containerd",
+      "licenseType": "Apache-2.0"
     },
     {
       "match": "^google-chrome",
       "vendor": "google",
-      "product": "chrome"
+      "product": "chrome",
+      "licenseType": "Freeware"
     },
     {
       "match": "mysql workbench",
       "vendor": "oracle",
-      "product": "mysql_workbench"
+      "product": "mysql_workbench",
+      "licenseType": "GPL-2.0-only"
     },
     {
       "match": "^vmware workstation",
       "vendor": "vmware",
-      "product": "workstation"
+      "product": "workstation",
+      "licenseType": "Proprietary"
     },
     {
       "match": "^bluestacks",
       "vendor": "bluestacks",
-      "product": "bluestacks"
+      "product": "bluestacks",
+      "licenseType": "Freeware"
     },
     {
       "match": "^winpcap",
       "vendor": "winpcap",
-      "product": "winpcap"
+      "product": "winpcap",
+      "_licenseNote": "licenseType deliberately omitted (2026-11-26): the project has no reachable license statement any more (winpcap.org is offline, no public source repository, the successor npcap is proprietary) and winget has no package - guessing would violate the evidence rule in CONTRIBUTING.md. Do not re-research this one; add a value only with a citable source."
     },
     {
       "match": "^advanced installer",
       "vendor": "caphyon",
-      "product": "advanced_installer"
+      "product": "advanced_installer",
+      "licenseType": "Proprietary"
     },
     {
       "match": "^adobe cs\\d|adobe creative suite",
       "vendor": "adobe",
-      "product": "creative_suite"
+      "product": "creative_suite",
+      "licenseType": "Proprietary"
     },
     {
       "match": "powerchute network shutdown",
       "vendor": "apc",
-      "product": "powerchute_network_shutdown"
+      "product": "powerchute_network_shutdown",
+      "licenseType": "Freeware"
     },
     {
       "match": "prosafe plus",
       "vendor": "netgear",
-      "product": "prosafe_plus_configuration_utility"
+      "product": "prosafe_plus_configuration_utility",
+      "licenseType": "Freeware"
     },
     {
       "match": "^realtek usb audio",

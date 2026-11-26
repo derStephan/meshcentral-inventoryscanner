@@ -7,6 +7,14 @@
                 <ul style="margin:6px 0 6px 18px;padding:0;">
                     <li><strong>Regex</strong> is matched case-insensitively against the installed program name.</li>
                     <li><strong>Vendor / Product</strong> is the CPE code that gets searched in the CVE database.</li>
+                    <li><strong>License type</strong> is how that product is licensed - an SPDX identifier
+                    (<code>MIT</code>, <code>GPL-2.0-only</code>, &hellip;) or one of <code>Proprietary</code>
+                    (a license has to be bought), <code>Freeware</code> (closed source, free of charge) or
+                    <code>Freeware (non-commercial)</code>. It is curated once in the table, so the software CSV,
+                    the software list and the asset push report it without re-deriving anything per device - and
+                    an empty cell honestly means "no verified statement about this product". What a
+                    <em>specific</em> machine holds (Retail / OEM / Volume, activated or not) is measured on that
+                    device instead: see Software &rsaquo; License keys.</li>
                 </ul>
                 Rows labelled <em>Remote</em> come from the maintained table file <code>cpe-table.json</code>
                 (shipped with the plugin, refreshed from its repository URL); rows labelled <em>Custom</em> are
@@ -40,6 +48,7 @@
                             <th style="cursor:default">Regex (display name)</th>
                             <th style="cursor:default">Vendor</th>
                             <th style="cursor:default">Product</th>
+                            <th style="cursor:default">License type</th>
                             <th style="cursor:default">Source</th>
                             <th style="cursor:default"></th>
                         </tr>
@@ -52,6 +61,7 @@
                 <input id="cpeRegex" type="text" placeholder="Regex, e.g. ^SAS Studio" style="min-width:220px;">
                 <input id="cpeVendor" type="text" placeholder="CPE vendor, e.g. mozilla" style="min-width:160px;">
                 <input id="cpeProduct" type="text" placeholder="CPE product, e.g. firefox" style="min-width:160px;">
+                <input id="cpeLicenseType" type="text" placeholder="License type, e.g. MPL-2.0 / Proprietary / Freeware (optional)" style="min-width:220px;">
                 <button id="addCpeBtn" data-help="cpe.add">Add</button>
             </div>
             <div id="cpeMsg"></div>

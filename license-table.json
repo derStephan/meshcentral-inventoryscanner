@@ -1,15 +1,21 @@
 {
-  "updated": "2026-11-25",
+  "updated": "2026-11-26",
   "_comment": "License-key extraction rules per software, the asset-management counterpart of cpe-table.json. Each entry: a case-insensitive 'match' regex against the installed-software display name, a human 'label', and 'rules' - one or more of: {type:'registry', path:'HKLM:\\...', value:'<name>'}, {type:'file', path:'<file>', regex:'<regex with group 1 = the key>' | jsonfield:'<name>' | line:<n>}, {type:'wmi', class:'<ClassName>', property:'<Prop>', filter:'<WQL filter>'}. Since v5.5.0 three optional extensions exist, all data-only like the rest: 'perUser':true on a registry rule means the path is written 'HKCU:\\...' and read from every ALREADY-LOADED user hive (HKEY_USERS\\<SID>; hives of logged-off users are never loaded - the extraction stays read-only); 'perUser':true on a file rule allows the placeholder {{profile}} in the path, which becomes each user's profile directory; and exactly ONE '*' per path - in a registry path a whole subkey segment that is enumerated (version-dependent subkeys like 'License.ws.*', at most 20 matches, first non-empty value wins), in a file path a leaf pattern (at most 5 candidate files). At most 20 user profiles are considered per run. Answers carry the user they came from; the first successful read per program wins, and the software CSV's License Source column shows e.g. 'registry (user: alice)'. The script only ever uses these as a registry value / file content / CIM property - never as code. Microsoft keys come from SoftwareLicensingProduct (the 'include Microsoft keys' switch), not from here. Keep the curated set small and correct - ONLY entries with a documented, researched path (cite the source in the pull request); products whose vendors store encrypted blobs are deliberately NOT in this table. Add your own per-program rules in the panel (Software > License keys), they win over every row here.",
   "entries": [
     {
       "match": "^microsoft office|^microsoft 365|office 201[0-9]|^office ltsc",
       "label": "Microsoft Office",
+      "_source": "Measured on a real Office 2019 ClickToRun installation (Windows 11, 2026-11-26): a recursive read of every value name under HKLM:\\SOFTWARE\\Microsoft\\Office\\ClickToRun found NO 'ProductIds' anywhere - the rule shipped since v4.8.0 therefore never returned anything on a ClickToRun install. The Configuration key does carry 'ProductReleaseIds' (measured value 'Professional2019Retail' - the product id plus its Retail/Volume channel) and 'ProductKeys' (the product key(s); empty on an OEM-perpetual install that activates through SoftwareLicensingProduct). Both names are also the ones Microsoft's own Office deployment documentation uses for the ClickToRun Configuration key.",
       "rules": [
         {
           "type": "registry",
           "path": "HKLM:\\SOFTWARE\\Microsoft\\Office\\ClickToRun\\Configuration",
-          "value": "ProductIds"
+          "value": "ProductKeys"
+        },
+        {
+          "type": "registry",
+          "path": "HKLM:\\SOFTWARE\\Microsoft\\Office\\ClickToRun\\Configuration",
+          "value": "ProductReleaseIds"
         }
       ]
     },

@@ -3942,9 +3942,16 @@ steps.push(function (next) {
     };
     var sentD2 = [];
     var oD2 = factory({ parent: { db: dbD2, datapath: dpD2, debug: function () { }, config: { settings: {} }, webserver: { meshes: { 'mesh//grp1': { name: 'HQ' } }, wsagents: { 'node//d1': {} } }, DispatchEvent: function () { } } });
+    oD2.loadRemoteCpeTable();   // v5.6.0: the curated licenseType comes from the shipped table
     oD2.softwareInventory = { d1: { apps: [{ name: 'Firefox', version: '120.0', publisher: 'Mozilla' }, { name: 'Notepad', version: '11' }] } };
     oD2.windowsUpdates = { d1: { count: 2, updates: [] } };
-    oD2.licenseInventory = { d1: { time: 'x', items: [{ name: 'Firefox', license: 'SUPER-SECRET-KEY', source: 'registry' }], ms: [{ name: 'Windows', key: 'MS-SECRET' }] } };
+    // the Microsoft entry carries the v5.6.0 license-TYPE fields (measured on a real Windows 11) beside the key
+    oD2.licenseInventory = {
+        d1: {
+            time: 'x', items: [{ name: 'Firefox', license: 'SUPER-SECRET-KEY', source: 'registry' }],
+            ms: [{ name: 'Windows(R) Operating System, OEM_DM channel', key: 'MS-SECRET', product: 'Windows(R), Professional edition', family: 'Professional', channel: 'OEM:DM', channelType: 'OEM', status: '1', statusText: 'licensed', grace: '0', evalEnd: '', appId: '55c92734-d682-4d71-983e-d6ec3f16059f' }]
+        }
+    };
     oD2.scanDeviceSoftware = function (list, cb) {
         var out = [];
         for (var i = 0; i < (list || []).length; i++) {
@@ -3994,6 +4001,18 @@ steps.push(function (next) {
                                     d.software.length === 2 && d.counts.software === 2, d.software);
                                 check('dev_details: SECURITY - it reports license COUNTS only, never a collected key',
                                     d.license.found === 1 && d.license.ms === 1 && all.indexOf('SUPER-SECRET-KEY') < 0 && all.indexOf('MS-SECRET') < 0, d.license);
+                                var ml = (d.license && d.license.msLicenses) || [];
+                                var ml0 = ml[0] || {};
+                                var msS = (d.license && d.license.msSummary) || {};
+                                check('v5.6.0 dev_details: the Microsoft license TYPE is reported - edition, key channel and activation state',
+                                    ml.length === 1 && ml0.channel === 'OEM:DM' && ml0.channelType === 'OEM' &&
+                                    ml0.statusText === 'licensed' && ml0.family === 'Professional', ml0);
+                                check('v5.6.0 dev_details: SECURITY - the Microsoft entry loses its key on the way out (metadata only, no value)',
+                                    ml.length === 1 && !Object.prototype.hasOwnProperty.call(ml0, 'key') &&
+                                    msS.licensed === 1 && msS.notLicensed === 0, ml0);
+                                check('v5.6.0 dev_details: every installed program carries a licenseType field, and a display name no curated row matches stays EMPTY (the fixture name is the bare "Firefox", the row is "mozilla firefox") - unknown is never guessed',
+                                    (d.software || []).every(function (s) { return typeof s.licenseType === 'string'; }) &&
+                                    (d.software || []).filter(function (s) { return s.name === 'Firefox'; })[0].licenseType === '', d.software);
                                 check('dev_details: it is read-only - no agent command is sent', sentD2.length === 0, sentD2.length);
                                 oD2.handleAdminPostReq({ headers: XHDR, body: { action: 'dev_details', nodeId: 'bogus' } }, mockRes(function (d2) {
                                     check('dev_details: an invalid node id is refused', !!d2.error, d2);
@@ -4008,6 +4027,8 @@ steps.push(function (next) {
                                             s.cves.length === 1 && s.cves[0].id === 'CVE-2024-0001' && s.cves[0].severity === 'CRITICAL', s.cves);
                                         check('sw_details: SECURITY - a collected license is reported as presence, never as a value',
                                             s.licenseDevices === 1 && sall.indexOf('SUPER-SECRET-KEY') < 0, s.licenseDevices);
+                                        check('v5.6.0 sw_details: reports the curated license type of the program (device-independent) - empty here because the bare name "Firefox" matches no curated row',
+                                            typeof s.licenseType === 'string' && s.licenseType === '', s.licenseType);
                                         check('sw_details: read-only - no agent command is sent', sentD2.length === 0, sentD2.length);
                                         oD2.handleAdminPostReq({ headers: XHDR, body: { action: 'sw_details', name: '' } }, mockRes(function (s2) {
                                             check('sw_details: an empty name is refused', !!s2.error, s2);
@@ -4300,6 +4321,303 @@ steps.push(function (next) {
             }), user);
         }), user);
     }
+});
+
+// ---- v5.6.0: the curated license type in the CPE table (SPDX / Proprietary / Freeware) ----
+steps.push(function (next) {
+    // the sanitizer is the single gate for table, remote and custom rows
+    check('v5.6.0 licenseType: SPDX ids keep their case and the three descriptors pass',
+        obj.sanitizeLicenseType('GPL-2.0-or-later') === 'GPL-2.0-or-later' && obj.sanitizeLicenseType('MIT') === 'MIT' &&
+        obj.sanitizeLicenseType('curl') === 'curl' && obj.sanitizeLicenseType('LGPL-2.1-only') === 'LGPL-2.1-only' &&
+        obj.sanitizeLicenseType('Proprietary') === 'Proprietary' && obj.sanitizeLicenseType('Freeware') === 'Freeware' &&
+        obj.sanitizeLicenseType('Freeware (non-commercial)') === 'Freeware (non-commercial)' &&
+        obj.sanitizeLicenseType('  MIT  ') === 'MIT');
+    check('v5.6.0 licenseType: path, quote and angle-bracket characters are refused (it reaches a CSV cell and an HTML attribute)',
+        ['C:\\lic', 'a"b', "a'b", 'a<b>c', 'a,b', 'a\nb', '{}'].every(function (v) { return obj.sanitizeLicenseType(v) === ''; }),
+        ['C:\\lic', 'a"b', 'a<b>c'].map(obj.sanitizeLicenseType));
+    check('v5.6.0 licenseType: a non-string or an empty value yields empty, and the value is capped at 80 characters',
+        obj.sanitizeLicenseType(null) === '' && obj.sanitizeLicenseType(undefined) === '' && obj.sanitizeLicenseType('') === '' &&
+        obj.sanitizeLicenseType(42) === '' && obj.sanitizeLicenseType({}) === '' &&
+        obj.sanitizeLicenseType(new Array(200).join('A')).length === 80);
+
+    // apply: the field is optional, survives on CPE rows, is dropped on kind rows and never kills a row
+    var savedCpe = obj.remoteCpeEntries;
+    var ap = obj.applyCpeTableText({
+        entries: [
+            { match: '^lic-a', vendor: 'V', product: 'P', licenseType: 'MIT' },
+            { match: '^lic-b', vendor: 'V', product: 'P', licenseType: 'EVIL"; DROP' },
+            { match: '^lic-c', kind: 'driver', licenseType: 'MIT' },
+            { match: '^lic-d', vendor: 'V', product: 'P' },
+            { match: '^lic-e', vendor: 'V', product: 'P', licenseType: 42 }
+        ]
+    });
+    var rows = obj.remoteCpeEntries;
+    check('v5.6.0 applyCpeTableText: a valid licenseType is kept verbatim (no lowercasing - SPDX ids are case-sensitive)',
+        ap.ok === true && ap.applied === 5 && rows[0].licenseType === 'MIT', rows[0]);
+    check('v5.6.0 applyCpeTableText: an unusable licenseType is dropped but the MAPPING row still applies (a bad annotation must not lose CVE coverage)',
+        rows[1].vendor === 'v' && rows[1].licenseType === undefined && rows[4].licenseType === undefined, [rows[1], rows[4]]);
+    check('v5.6.0 applyCpeTableText: a kind (driver/firmware) row carries no license annotation - it is an exclusion marker, not a product',
+        rows[2].kind === 'driver' && rows[2].licenseType === undefined, rows[2]);
+    obj.remoteCpeEntries = savedCpe;
+
+    // resolution: the table answers, custom wins, unknown stays unknown
+    check('v5.6.0 licenseTypeFor: the curated row answers for a real display name',
+        obj.licenseTypeFor('Mozilla Firefox 120.0 (x64 en-US)') === 'MPL-2.0' &&
+        obj.licenseTypeFor('Notepad++ (64-bit x64)') === 'GPL-3.0-or-later' &&
+        obj.licenseTypeFor('7-Zip 24.09 (x64)') === 'LGPL-2.1-only', obj.licenseTypeFor('Mozilla Firefox 120.0'));
+    check('v5.6.0 licenseTypeFor: a name with no row answers EMPTY - unknown is never guessed (the auto matcher proves a CPE, not a license)',
+        obj.licenseTypeFor('Chrome') === '' && obj.licenseTypeFor('Some Mystery Tool 3.1') === '' && obj.licenseTypeFor('') === '');
+    check('v5.6.0 licenseTypeFor: a driver/firmware kind row has no license type', obj.licenseTypeFor('Realtek USB Audio') === '');
+    check('v5.6.0 licenseTypeFor: the free Community Edition is not reported with the commercial licence of its product family',
+        obj.licenseTypeFor('IntelliJ IDEA 2024.1 (Community Edition)') === 'Apache-2.0' &&
+        obj.licenseTypeFor('PyCharm Community Edition 2024.1') === 'Apache-2.0' &&
+        obj.licenseTypeFor('IntelliJ IDEA 2024.1 (Ultimate Edition)') === 'Proprietary',
+        [obj.licenseTypeFor('IntelliJ IDEA 2024.1 (Community Edition)'), obj.licenseTypeFor('IntelliJ IDEA 2024.1 (Ultimate Edition)')]);
+    var savedCustom = obj.customCpeEntries.slice();
+    obj.customCpeEntries = [{ match: '^mozilla firefox', vendor: 'mozilla', product: 'firefox', licenseType: 'Proprietary' }];
+    check('v5.6.0 licenseTypeFor: a custom entry wins over the curated table (same precedence as the CPE mapping itself)',
+        obj.licenseTypeFor('Mozilla Firefox 120.0') === 'Proprietary', obj.licenseTypeFor('Mozilla Firefox 120.0'));
+    obj.customCpeEntries = savedCustom;
+    check('v5.6.0 matchTableEntry: the license type travels with the mapping hit and a kind hit stays a kind hit',
+        obj.matchTableEntry('Mozilla Firefox 120.0').licenseType === 'MPL-2.0' &&
+        obj.matchTableEntry('Realtek USB Audio').kind === 'driver' &&
+        obj.matchTableEntry('Realtek USB Audio').licenseType === undefined, obj.matchTableEntry('Mozilla Firefox 120.0'));
+    check('v5.6.0 classifySoftware: the annotation reaches the scan result without changing the CPE target',
+        obj.classifySoftware('Mozilla Firefox 120.0', 'Mozilla').search.vendor === 'mozilla' &&
+        obj.classifySoftware('Mozilla Firefox 120.0', 'Mozilla').search.licenseType === 'MPL-2.0' &&
+        obj.classifySoftware('Realtek USB Audio', 'Realtek').kind === 'driver');
+
+    // the shipped table: the invariant is "filled, or documented why not" - not a frozen count
+    var tbl = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'cpe-table.json'), 'utf8'));
+    var cpeRows = tbl.entries.filter(function (e) { return e.kind == null; });
+    var kindRows = tbl.entries.filter(function (e) { return e.kind != null; });
+    var VOCAB = /^(Proprietary|Freeware|Freeware \(non-commercial\))$|^[A-Za-z0-9][A-Za-z0-9.+-]{0,63}$/;
+    var badVocab = cpeRows.filter(function (e) { return e.licenseType && !VOCAB.test(e.licenseType); }).map(function (e) { return e.licenseType; });
+    check('v5.6.0 shipped table: every licenseType is an SPDX identifier or one of the three documented descriptors', badVocab.length === 0, badVocab);
+    var unfilled = cpeRows.filter(function (e) { return !e.licenseType; });
+    check('v5.6.0 shipped table: a CPE row without a licenseType must DOCUMENT why (evidence rule - omit, never guess)',
+        unfilled.every(function (e) { return typeof e._licenseNote === 'string' && e._licenseNote.length > 20; }),
+        unfilled.map(function (e) { return e.match; }));
+    check('v5.6.0 shipped table: the license type is curated for essentially every product row', unfilled.length <= 2 && cpeRows.length - unfilled.length >= 120,
+        [cpeRows.length, unfilled.length]);
+    check('v5.6.0 shipped table: kind (driver/firmware) rows carry no licenseType', kindRows.length > 0 && kindRows.every(function (e) { return e.licenseType === undefined; }), kindRows.length);
+    var idxComm = tbl.entries.map(function (e) { return e.match; }).indexOf('^intellij idea.*community');
+    var idxGen = tbl.entries.map(function (e) { return e.match; }).indexOf('^intellij idea');
+    check('v5.6.0 shipped table: the edition-specific Community row sits BEFORE the generic IDE row (first hit wins)',
+        idxComm >= 0 && idxGen >= 0 && idxComm < idxGen, [idxComm, idxGen]);
+    check('v5.6.0 shipped table: the note documents the vocabulary and that the field is not the purchase model of one installation',
+        typeof tbl._licenseNote === 'string' && /SPDX/.test(tbl._licenseNote) && /Proprietary/.test(tbl._licenseNote) &&
+        /Freeware \(non-commercial\)/.test(tbl._licenseNote) && /ProductKeyChannel/.test(tbl._licenseNote), (tbl._licenseNote || '').length);
+
+    // custom entries: the editor route accepts, sanitizes and persists the annotation
+    var dpLT = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-lt-'));
+    var oLT = factory({ parent: { db: db, datapath: dpLT, debug: function () { }, config: { settings: {} }, webserver: { meshes: {}, wsagents: {} }, DispatchEvent: function () { } } });
+    oLT.loadRemoteCpeTable();
+    // an assertion inside a response callback must NEVER throw: the route's catch would answer a second time
+    // and the suite would report "answered 2x" plus a hung step instead of the real failure.
+    var pickRow = function (arr, m) { for (var i = 0; i < (arr || []).length; i++) { if (arr[i] && arr[i].match === m) { return arr[i]; } } return null; };
+    oLT.handleAdminPostReq({ headers: XHDR, body: { action: 'add_cpe', match: '^Acme Tool', vendor: 'acme', product: 'tool', licenseType: 'GPL-3.0-only' } }, mockRes(function (a1) {
+        check('v5.6.0 add_cpe: stores the license type with the custom mapping', a1.success === true && a1.entries[0].licenseType === 'GPL-3.0-only', a1.entries[0]);
+        oLT.handleAdminPostReq({ headers: XHDR, body: { action: 'add_cpe', match: '^Acme Two', vendor: 'acme', product: 'two', licenseType: 'bad/value"here' } }, mockRes(function (a2) {
+            check('v5.6.0 add_cpe: an unusable license type is dropped but the mapping is still saved',
+                a2.success === true && a2.entries[1].licenseType === '' && oLT.customCpeEntries[1].licenseType === undefined, a2.entries[1]);
+            oLT.handleAdminPostReq({ headers: XHDR, body: { action: 'add_cpe', match: '^Acme Three', vendor: 'acme', product: 'three' } }, mockRes(function (a3) {
+                check('v5.6.0 add_cpe: the field is optional - a mapping without it stays valid', a3.success === true && a3.entries[2].licenseType === '', a3.entries[2]);
+                var stored = JSON.parse(fs.readFileSync(oLT.customCpePath, 'utf8'));
+                check('v5.6.0 custom-cpe.json: the annotation is persisted and reloaded', stored[0].licenseType === 'GPL-3.0-only' && !Object.prototype.hasOwnProperty.call(stored[1], 'licenseType'), stored);
+                oLT.loadCustomCpe();
+                check('v5.6.0 loadCustomCpe: the reloaded entry answers through licenseTypeFor and a dropped one does not resurrect',
+                    oLT.licenseTypeFor('Acme Tool 1.0') === 'GPL-3.0-only' && oLT.licenseTypeFor('Acme Two 1.0') === '', oLT.licenseTypeFor('Acme Tool 1.0'));
+                oLT.handleAdminPostReq({ headers: XHDR, body: { action: 'get_cpe_table' } }, mockRes(function (gt) {
+                    var acme = pickRow(gt.entries, '^Acme Tool');
+                    var ff = pickRow(gt.entries, 'mozilla firefox');
+                    var realtek = pickRow(gt.entries, '^realtek usb audio');
+                    check('v5.6.0 get_cpe_table: every row reports a licenseType string, the custom annotation and the maintained one both arrive',
+                        Array.isArray(gt.entries) && gt.entries.every(function (e) { return typeof e.licenseType === 'string'; }) &&
+                        acme != null && acme.licenseType === 'GPL-3.0-only' && acme.source === 'custom' &&
+                        ff != null && ff.licenseType === 'MPL-2.0' && ff.source === 'remote', [acme, ff]);
+                    check('v5.6.0 get_cpe_table: a kind row is still shown as an exclusion and carries no license type',
+                        realtek != null && realtek.product === 'excluded: driver' && realtek.licenseType === '', realtek);
+                    // show_cpe is a legacy GET action, not a POST one - call the handler directly (synchronous,
+                    // so a throwing assertion cannot cascade into the outer response callbacks).
+                    var scPayload = null;
+                    oLT.showCustomCpe({}, { type: function () { return this; }, json: function (d) { scPayload = d; } }, user);
+                    check('v5.6.0 show_cpe: the legacy GET list carries the annotation too',
+                        scPayload != null && Array.isArray(scPayload.entries) && scPayload.entries.length > 0 &&
+                        scPayload.entries[0].licenseType === 'GPL-3.0-only', scPayload && scPayload.entries[0]);
+                    next();
+                }), user);
+            }), user);
+        }), user);
+    }), user);
+});
+
+// ---- v5.6.0: the Microsoft license TYPE + activation state from SoftwareLicensingProduct ----
+steps.push(function (next) {
+    // the server-side translation of what the device reports (numbers stay numbers on the device)
+    check('v5.6.0 msLicenseStatusText: the documented codes become words',
+        obj.msLicenseStatusText(0) === 'unlicensed' && obj.msLicenseStatusText('1') === 'licensed' &&
+        obj.msLicenseStatusText(2) === 'out-of-box grace period' && obj.msLicenseStatusText(3) === 'out-of-tolerance grace period' &&
+        obj.msLicenseStatusText(4) === 'non-genuine grace period' && obj.msLicenseStatusText('5') === 'notification mode (not activated)' &&
+        obj.msLicenseStatusText(6) === 'extended grace period', obj.msLicenseStatusText(5));
+    check('v5.6.0 msLicenseStatusText: a missing or unknown code stays EMPTY - never reported as "unlicensed" (that would accuse a device on a missing value)',
+        obj.msLicenseStatusText('') === '' && obj.msLicenseStatusText(null) === '' && obj.msLicenseStatusText(undefined) === '' &&
+        obj.msLicenseStatusText('99') === '' && obj.msLicenseStatusText('abc') === '', obj.msLicenseStatusText('99'));
+    check('v5.6.0 msLicenseChannelType: the channels measured on a real Windows 11 normalize to the license type',
+        obj.msLicenseChannelType('Retail') === 'Retail' && obj.msLicenseChannelType('OEM:DM') === 'OEM' &&
+        obj.msLicenseChannelType('OEM:NONSLP') === 'OEM' && obj.msLicenseChannelType('Volume:MAK') === 'Volume (MAK)' &&
+        obj.msLicenseChannelType('Volume:KMSCLIENT') === 'Volume (KMS)' && obj.msLicenseChannelType('Volume:GVLK') === 'Volume (KMS)' &&
+        obj.msLicenseChannelType('Volume:CSVLK') === 'Volume (KMS)' && obj.msLicenseChannelType('Volume:SOMETHING') === 'Volume' &&
+        obj.msLicenseChannelType('Subscription') === 'Subscription', obj.msLicenseChannelType('Volume:KMSCLIENT'));
+    check('v5.6.0 msLicenseChannelType: empty stays empty, an unknown channel is passed through instead of being invented',
+        obj.msLicenseChannelType('') === '' && obj.msLicenseChannelType(null) === '' && obj.msLicenseChannelType('SomethingNew') === 'SomethingNew');
+    check('v5.6.0 msLicenseSummary: counts by activation state and is null-safe',
+        JSON.stringify(obj.msLicenseSummary({ ms: [{ status: '1' }, { status: '5' }, { status: '1' }, { status: '' }] })) === '{"total":4,"licensed":2,"notLicensed":1,"unknown":1}' &&
+        obj.msLicenseSummary(null).total === 0 && obj.msLicenseSummary({}).total === 0 && obj.msLicenseSummary({ ms: [] }).total === 0,
+        obj.msLicenseSummary({ ms: [{ status: '1' }, { status: '5' }] }));
+
+    // the device script: reads the type, never a full key, never activates anything
+    var scrM = obj.licenseBuildScript([{ name: 'Microsoft Office', label: 'Microsoft Office', rules: [{ type: 'registry', path: 'HKLM:\\SOFTWARE\\Microsoft\\Office\\ClickToRun\\Configuration', value: 'ProductReleaseIds' }] }], true);
+    check('v5.6.0 license script: reads the license TYPE fields of SoftwareLicensingProduct (family, channel, status, grace, evaluation end, application id)',
+        ['LicenseFamily', 'ProductKeyChannel', 'LicenseStatus', 'GracePeriodRemaining', 'EvaluationEndDate', 'ApplicationID'].every(function (k) { return scrM.indexOf(k) >= 0; }),
+        ['LicenseFamily', 'ProductKeyChannel', 'LicenseStatus'].filter(function (k) { return scrM.indexOf(k) < 0; }));
+    check('v5.6.0 license script: SECURITY - still only the PARTIAL key: no DigitalProductId decode, no firmware OA3xOriginalProductKey, no slmgr, no activation',
+        scrM.indexOf('DigitalProductId') < 0 && scrM.indexOf('OA3xOriginalProductKey') < 0 &&
+        !/slmgr/i.test(scrM) && !/\/ato\b/i.test(scrM) && scrM.indexOf('PartialProductKey') >= 0);
+    check('v5.6.0 license script: still read-only and one statement per line (the shape the transport needs)',
+        !/Set-|New-Item|Remove-Item|shutdown|Restart-Computer/i.test(scrM) &&
+        scrM.split(String.fromCharCode(10)).filter(function (l) { return /[({]\s*$/.test(l); }).length === 0);
+    // the Microsoft block is gated by the msKeys switch - the gate travels in the base64 rule blob, not in the
+    // script text (the read line is always present and does nothing while the blob says ms:false). Inside the
+    // script the blob is PLAIN base64; only wgTransport gzips the whole script afterwards.
+    var blobOf = function (s) { return JSON.parse(Buffer.from(String(s).match(/FromBase64String\('([A-Za-z0-9+\/=]+)'\)/)[1], 'base64').toString('utf8')); };
+    check('v5.6.0 license script: the Microsoft block is still behind the msKeys switch (blob ms:false / ms:true)',
+        blobOf(obj.licenseBuildScript([], false)).ms === false && blobOf(scrM).ms === true,
+        [blobOf(obj.licenseBuildScript([], false)).ms, blobOf(scrM).ms]);
+
+    // the shipped license-table rule that never matched: Office reads ProductKeys then ProductReleaseIds
+    var dpM = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-ms-'));
+    var mNodes = [{ _id: 'node//m1', meshid: 'mesh//grp1', rname: 'mh1', name: 'MsWin', osdesc: 'Microsoft Windows 11 Pro' }];
+    var dbM = { GetAllType: function (t, cb) { cb(null, t === 'node' ? mNodes.slice() : (t === 'mesh' ? meshes.slice() : [])); }, Get: function (id, cb) { cb(null, mNodes.filter(function (n) { return n._id === id; })); } };
+    var sentM = [];
+    var oM = factory({ parent: { db: dbM, datapath: dpM, debug: function () { }, config: { settings: {} }, webserver: { meshes: { 'mesh//grp1': { name: 'HQ' } }, wsagents: { 'node//m1': { send: function (m) { sentM.push(JSON.parse(m)); } } } }, DispatchEvent: function () { } } });
+    oM.loadLicenseTable();   // the shipped license-table.json, exactly like server_startup
+    oM.loadRemoteCpeTable();
+    var offRules = oM.licenseRulesForApp('Microsoft Office Professional Plus 2019');
+    check('v5.6.0 shipped license-table: Office reads ProductKeys and ProductReleaseIds - NOT the ProductIds value that does not exist on a ClickToRun install (measured)',
+        offRules != null && offRules.rules.length === 2 && offRules.rules[0].value === 'ProductKeys' && offRules.rules[1].value === 'ProductReleaseIds' &&
+        offRules.rules.every(function (r) { return r.value !== 'ProductIds'; }), offRules && offRules.rules.map(function (r) { return r.value; }));
+    var offTbl = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'license-table.json'), 'utf8')).entries.filter(function (e) { return e.label === 'Microsoft Office'; })[0];
+    check('v5.6.0 shipped license-table: the corrected Office entry cites its evidence (_source), like every curated row must',
+        typeof offTbl._source === 'string' && /ProductReleaseIds/.test(offTbl._source) && /ClickToRun/.test(offTbl._source), (offTbl._source || '').length);
+
+    // a dispatched run whose answer carries the real measured shape
+    oM.pluginSettings = { inventoryScanner: { licenseCollectionEnabled: true, licenseMsKeys: true } };
+    oM.softwareInventory = { m1: { time: new Date().toISOString(), apps: [{ name: 'Microsoft Office Professional Plus 2019', version: '16.0' }, { name: 'Mozilla Firefox 120.0', version: '120.0', publisher: 'Mozilla' }] } };
+    oM.handleAdminPostReq({ headers: XHDR, body: { action: 'lic_collect', nodeId: 'node//m1' } }, mockRes(function (d1) {
+        check('v5.6.0 lic_collect: dispatches with the corrected Office rule inside the base64 blob', d1.started === true && sentM.length === 1, d1);
+        // two levels: wgTransport gzips the whole script, and the script itself carries the rules as base64 JSON
+        var script = require('zlib').gunzipSync(Buffer.from(String(sentM[0].cmds).match(/FromBase64String\('([A-Za-z0-9+\/=]+)'\)/)[1], 'base64')).toString('utf8');
+        var rulesBlob = JSON.parse(Buffer.from(script.match(/FromBase64String\('([A-Za-z0-9+\/=]+)'\)/)[1], 'base64').toString('utf8'));
+        var sentValues = (rulesBlob.apps[0].rules || []).map(function (r) { return r.value; });
+        check('v5.6.0 lic_collect: the Office rules travel to the device as ProductKeys + ProductReleaseIds, never as the nonexistent "ProductIds"',
+            rulesBlob.ms === true && sentValues.join(',') === 'ProductKeys,ProductReleaseIds', sentValues);
+        var answer = '{"collect":true,"items":[{"name":"Microsoft Office Professional Plus 2019","label":"Microsoft Office","source":"registry","license":"","ok":false},{"name":"Microsoft Office Professional Plus 2019","label":"Microsoft Office","source":"registry","license":"Professional2019Retail","ok":true}],"ms":[' +
+            '{"name":"Office 19, RETAIL channel","key":"AAAAA","product":"Office 19, Office19HomeBusiness2019R_Grace edition","family":"Office19HomeBusiness2019R_Grace","channel":"Retail","status":"5","grace":"0","evalEnd":"","appId":"0ff1ce15-a989-479d-af46-f275c6370663"},' +
+            '{"name":"Office 19, RETAIL channel","key":"BBBBB","product":"Office 19, Office19Professional2019R_OEM_Perp edition","family":"Office19Professional2019R_OEM_Perp","channel":"OEM:NONSLP","status":"1","grace":"0","evalEnd":"","appId":"0ff1ce15-a989-479d-af46-f275c6370663"},' +
+            '{"name":"Windows(R) Operating System, OEM_DM channel","key":"CCCCC","product":"Windows(R), Professional edition","family":"Professional","channel":"OEM:DM","status":"1","grace":"0","evalEnd":"","appId":"55c92734-d682-4d71-983e-d6ec3f16059f"}],"error":""}';
+        oM.onAgentResponse({ action: 'msg', type: 'runcommands', sessionid: sentM[0].sessionid, result: 'x' + oM.LIC_MARKER + answer + String.fromCharCode(10) }, '', 'node//m1');
+        var rec = oM.licenseInventory['m1'];
+        var ms = (rec && rec.ms) || [];
+        var msAt = function (i) { return ms[i] || {}; };
+        var mapM = oM.licenseMapForNode('node//m1')['microsoft office professional plus 2019'] || {};
+        check('v5.6.0 lic answer: the first successful read wins, so an EMPTY ProductKeys no longer masks the ProductReleaseIds value',
+            mapM.license === 'Professional2019Retail', mapM);
+        check('v5.6.0 lic answer: the Microsoft entries keep the license TYPE beside the partial key',
+            ms.length === 3 && msAt(0).family === 'Office19HomeBusiness2019R_Grace' && msAt(0).channel === 'Retail' &&
+            msAt(1).channel === 'OEM:NONSLP' && msAt(2).channel === 'OEM:DM' && msAt(2).product === 'Windows(R), Professional edition', msAt(0));
+        check('v5.6.0 lic answer: the server translates status and channel (the device only reports numbers and raw strings)',
+            ms.length === 3 && msAt(0).statusText === 'notification mode (not activated)' && msAt(1).statusText === 'licensed' &&
+            msAt(0).channelType === 'Retail' && msAt(1).channelType === 'OEM' && msAt(2).channelType === 'OEM', [msAt(0).statusText, msAt(1).channelType]);
+        check('v5.6.0 lic answer: the stored record is persisted with the new fields',
+            JSON.parse(fs.readFileSync(path.join(oM.inventoryDataPath, 'm1', 'license.json'), 'utf8')).ms[0].channelType === 'Retail');
+        var logTxt = fs.readFileSync(oM.licenseLogPath, 'utf8');
+        check('v5.6.0 license log: names the NOT-activated count and still records no key and no value',
+            /1 not activated/.test(logTxt) && logTxt.indexOf('AAAAA') < 0 && logTxt.indexOf('Professional2019Retail') < 0 && logTxt.indexOf('Office19HomeBusiness') < 0, logTxt.split('\n').slice(-2));
+        oM.handleAdminPostReq({ headers: XHDR, body: { action: 'lic_status' } }, mockRes(function (st) {
+            var w = (st.devices || []).filter(function (x) { return x.id === 'node//m1'; })[0] || {};
+            var col = w.collected || {};
+            check('v5.6.0 lic_status: reports the activation state as COUNTS (2 licensed, 1 not, 0 unknown) and never a value',
+                col.ms === 3 && col.msLicensed === 2 && col.msNotLicensed === 1 && col.msUnknown === 0 &&
+                JSON.stringify(st).indexOf('AAAAA') < 0 && JSON.stringify(st).indexOf('Office19HomeBusiness') < 0, col);
+            next();
+        }), user);
+    }), user);
+});
+
+
+// ---- v5.6.0: the license type reaches the collection, the CSV, the fleet index and the push WITHOUT any collection run ----
+steps.push(function (next) {
+    var dpW = fs.mkdtempSync(path.join(os.tmpdir(), 'invscanner-ltwire-'));
+    var wNodes = [{ _id: 'node//w1', meshid: 'mesh//grp1', rname: 'wh1', name: 'WireWin', osdesc: 'Microsoft Windows 11 Pro' }];
+    var dbW = {
+        GetAllType: function (t, cb) { cb(null, t === 'node' ? wNodes.slice() : (t === 'mesh' ? meshes.slice() : [])); },
+        Get: function (id, cb) { if (id === 'sinode//w1') { cb(null, [{ _id: id, doc: { apps: wApps } }]); return; } cb(null, wNodes.filter(function (n) { return n._id === id; })); }
+    };
+    var wApps = [
+        { name: 'Mozilla Firefox 120.0', version: '120.0', publisher: 'Mozilla' },
+        { name: 'Microsoft Office Professional Plus 2019', version: '16.0', publisher: 'Microsoft Corporation' },
+        { name: '7-Zip 24.09 (x64)', version: '24.09', publisher: 'Igor Pavlov' },
+        { name: 'Mystery Tool', version: '9.9', publisher: 'Some OEM' },
+        { name: 'Realtek USB Audio', version: '1.0', publisher: 'Realtek' }
+    ];
+    var sentW = [];
+    var oW = factory({ parent: { db: dbW, datapath: dpW, debug: function () { }, config: { settings: {} }, webserver: { meshes: { 'mesh//grp1': { name: 'HQ' } }, wsagents: { 'node//w1': { send: function (m) { sentW.push(JSON.parse(m)); } } } }, DispatchEvent: function () { } } });
+    oW.loadRemoteCpeTable();
+    oW.scanDeviceSoftware = function (list, cb) {
+        cb((list || []).map(function (s) { return { status: 'not assessable', isCve: false, cve: '', severity: '', cvss: '', description: '', software: String(s.name || ''), version: String(s.version || '') }; }));
+    };
+    oW.scanDeviceOs = function () { return []; };
+    oW.osSupportState = function () { return { state: 'supported', label: 'Windows 11 Pro', reason: 'fixture' }; };
+    // NO licenseInventory at all: the license TYPE must be known without ever touching a device
+    oW.licenseInventory = {};
+
+    var proj = oW.softwareProjection(wApps);
+    check('v5.6.0 projection: every row carries the curated license type - SPDX, descriptor, and empty where the table has no statement',
+        proj[0].licenseType === 'MPL-2.0' && proj[1].licenseType === 'Proprietary' && proj[2].licenseType === 'LGPL-2.1-only' &&
+        proj[3].licenseType === '' && proj[4].licenseType === '', proj.map(function (p) { return p.licenseType; }));
+    check('v5.6.0 projection: a driver/firmware kind row is NOT annotated (it is an exclusion marker) and the other fields are unchanged',
+        proj[4].name === 'Realtek USB Audio' && proj[0].version === '120.0' && proj[0].publisher === 'Mozilla', proj[4]);
+
+    oW.buildCsvForNodes(wNodes, 'software', function (cerr, csv) {
+        var head = (csv || '').split('\r\n')[0];
+        check('v5.6.0 software CSV: gains a License Type column, placed with the other license columns',
+            head === 'Group,Host Name,Software Name,Software Version,Software Publisher,Software Location,Software Install Date,License Type,License,License Source', head);
+        check('v5.6.0 software CSV: the curated types appear although NO license collection ever ran, and the collected License columns stay empty',
+            /MPL-2\.0/.test(csv) && /LGPL-2\.1-only/.test(csv) && /Proprietary/.test(csv) &&
+            !/FIRE-KEY|AA-BB-CC/.test(csv) && csv.split('\r\n')[1].split(',').slice(-2).join(',') === ',', csv.split('\r\n').slice(1, 3));
+        oW.handleAdminPostReq({ headers: XHDR, body: { action: 'sw_fleet' } }, mockRes(function (fx) {
+            var byName = {};
+            (fx.software || []).forEach(function (s) { byName[s.name] = s; });
+            var lt = function (n) { return byName[n] ? byName[n].licenseType : '<missing row>'; };
+            check('v5.6.0 sw_fleet: the browser software list carries the same license type as the CSV (one collection, many consumers)',
+                lt('Mozilla Firefox 120.0') === 'MPL-2.0' && lt('7-Zip 24.09 (x64)') === 'LGPL-2.1-only' &&
+                lt('Microsoft Office Professional Plus 2019') === 'Proprietary' && lt('Mystery Tool') === '',
+                (fx.software || []).map(function (s) { return s.name + '=' + s.licenseType; }));
+            check('v5.6.0 sw_fleet: hasLicense stays a separate fact - a curated type does NOT pretend a key was collected',
+                byName['Mozilla Firefox 120.0'] != null && byName['Mozilla Firefox 120.0'].hasLicense === false && sentW.length === 0,
+                byName['Mozilla Firefox 120.0']);
+            oW.asCollectDeviceRecord(wNodes[0], function (aerr, rec) {
+                var sw = (rec && rec.software) || [];
+                check('v5.6.0 asset push: the pushed software rows carry licenseType, so an external asset system gets the type without a device read',
+                    !aerr && sw.length === 5 && sw[0].licenseType === 'MPL-2.0' && sw[1].licenseType === 'Proprietary', sw.map(function (s) { return s.licenseType; }));
+                check('v5.6.0 asset push: SECURITY - the record carries the curated TYPE only, never a collected license value, and no agent command is sent',
+                    sw.every(function (s) { return !Object.prototype.hasOwnProperty.call(s, 'license'); }) &&
+                    JSON.stringify(sw).indexOf('"license"') < 0 && sentW.length === 0, sw[0]);
+                next();
+            });
+        }), user);
+    });
 });
 
 // The runner MUST stay the last statement: every steps.push() above has to be registered before
