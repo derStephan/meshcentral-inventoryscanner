@@ -23,7 +23,7 @@
  * endoflife.date support dates.
  *
  * @author derStephan
- * @version 5.6.0
+ * @version 5.6.1
  *
  * Transparency: This plugin was created with the assistance of Qwen 3.6 27B and Qwen 3.8 Flash Next;
  * ongoing development is AI-assisted too (since v5.6.0 by Qwen 3.8 Max), all via opencode.

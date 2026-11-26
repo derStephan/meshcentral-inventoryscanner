@@ -217,6 +217,10 @@ try {
     console.log(((a.indexOf('msLicenses') >= 0 && a.indexOf('msSummary') >= 0 && a.indexOf('not activated') >= 0 && a.indexOf('licenseBad') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v5.6.0: the device list counts licenses that are not activated and its Details show edition, channel and state');
     console.log(((a.indexOf("'swf.lictypecol'") >= 0 && an.indexOf('the curated License Type') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v5.6.0: hover help covers the new column and the software CSV help names the License Type column');
     console.log(((a.indexOf('s.licenseType') >= 0 && a.indexOf('licenseType') >= 0 && an.indexOf('licenseType') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v5.6.0: the asset-management placeholder documentation names the pushed licenseType field');
+    // v5.6.1: the software list must not squeeze its action buttons into one clipped button per line
+    console.log(((an.indexOf('<table class="swftable">') >= 0 && an.indexOf('table.swftable { table-layout: fixed') >= 0 && an.indexOf('min-width: 1200px') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v5.6.1: the software list table uses a fixed layout with a readable minimum width (the auto layout let Software/Version squeeze Actions)');
+    console.log(((an.indexOf('.swfacts { display: grid') >= 0 && an.indexOf('repeat(2, minmax(0, 1fr))') >= 0 && a.indexOf('cellacts swfacts') >= 0 && an.indexOf('.swfacts .rowbtn { width: 100%; }') >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v5.6.1: the four row buttons sit in a 2x2 grid - at most two lines, never clipped');
+    console.log(((an.indexOf('width:290px;') < 0 && an.indexOf('white-space:nowrap">\' + run') < 0 && an.indexOf("style=\"width:24%;\" class=\"nosort\">Actions") >= 0) ? 'PASS ' : (failed++, 'FAIL ')) + 'v5.6.1: the old pixel widths and the nowrap run cell (which overflowed under fixed layout) are gone, Actions keeps a real share of the table');
 } catch (e) { failed++; console.log('FAIL nav checks: ' + e.message); }
 
 console.log(failed === 0 ? '\ntest-views: ALL PASSED' : '\ntest-views: ' + failed + ' FAILURE(S)');

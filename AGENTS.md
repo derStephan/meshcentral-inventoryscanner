@@ -2095,7 +2095,7 @@ v5.5.1: audit 4 - independent full audit of v5.5.0 by Claude Opus 5.5 (details: 
 - CI: `persist-credentials: false`, live scans send the header, a 403 check for a header-less live scan, a Server
   Files listing with the REAL CI group id, `grep -F` for the version check. Version 5.5.0 -> 5.5.1.
 
-v5.6.0 (this release): license information as three honest layers - the curated license TYPE of a product, the
+v5.6.0: license information as three honest layers - the curated license TYPE of a product, the
 measured license type + activation state of a Microsoft installation, and the fix of a rule that never matched.
 - **`licenseType` in `cpe-table.json` (requested: "so it does not have to be re-derived every time").** A CPE row may
   now carry an optional `licenseType`: an SPDX identifier (`MIT`, `Apache-2.0`, `MPL-2.0`, `GPL-2.0-only`,
@@ -2175,3 +2175,25 @@ measured license type + activation state of a Microsoft installation, and the fi
   panel's Loading row), the license panel's Microsoft disclosure, the device-list not-activated rendering, and the
   asset placeholder doc. The panel inventory fixture was regenerated in the same commit (203 ids).
 - Version bumped in config.json and the inventoryscanner.js `@version` header. Version 5.5.1 -> 5.6.0.
+
+v5.6.1: the software list stops clipping its own action buttons (reported with a screenshot).
+- **The defect:** the software list table used the browser's AUTOMATIC table layout, in which a column is as
+  wide as its greediest content. A version can be a full timestamp (`2026-02-16 01:43:44.000+01:00`) and a
+  program name plus its winget id can be long, so Software and Version widened and the Actions column -
+  requested at 290 px - collapsed to roughly one button width. The four row buttons then stacked into four
+  lines and "Update everywhere" was cut off mid-word at the cell edge.
+- **The fix is deterministic instead of negotiated:** the table is now `table-layout: fixed` with percentage
+  columns (`table.swftable`, min-width 1200 px so the percentages resolve against a readable floor and the
+  `.table-container` scrolls horizontally on narrow screens instead of crushing anything), long values wrap
+  INSIDE their cell (`overflow-wrap: anywhere`) instead of widening it, and the four buttons sit in a 2x2
+  grid (`.swfacts`, `repeat(2, minmax(0, 1fr))`, buttons at 100 % of their track) - at most two lines, never
+  clipped, which is what the report asked for. Actions keeps 24 % of the table.
+- **One trap fixed on the way:** the "Last winget run" cell carried `white-space:nowrap`, which under a fixed
+  layout overflows its cell instead of wrapping - it is gone, the run summary wraps like every other cell.
+  The device list keeps the old flex `.cellacts` wrapper; only the software list uses the grid, so the
+  v5.4.1 "calm row buttons" language and the shared button height are untouched.
+- Tests: +3 render assertions in test-views (74 PASS) pin the fixed layout + minimum width, the 2x2 grid and
+  the removal of the old pixel widths / the nowrap cell; test-plugin unchanged (790 PASS + 3 SKIP / 105 steps,
+  no route, handler, engine or data shape moved). The panel inventory fixture is unchanged (203 ids, 63 help
+  texts) - no control was added or removed, only widths. Version bumped in config.json, package.json and the
+  inventoryscanner.js @version header. Version 5.6.0 -> 5.6.1.

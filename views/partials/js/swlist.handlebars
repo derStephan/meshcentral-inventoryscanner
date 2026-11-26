@@ -61,10 +61,12 @@
                     + '<td style="font-size:12px">' + esc(s.publisher || '') + '</td>'
                     + '<td>' + s.deviceCount + '</td>'
                     + '<td>' + vuln + '</td>'
-                    + '<td style="font-size:11px;white-space:nowrap">' + run + '</td>'
+                    + '<td style="font-size:11px">' + run + '</td>'
                     + '<td style="font-size:11px">' + ltype + '</td>'
                     + '<td>' + lic + '</td>'
-                    + '<td><div class="cellacts">'
+                    // v5.6.1: 2x2 grid instead of a wrapping flex row - the old flex wrapper collapsed to one
+                    // clipped button per line once the Software/Version columns ate the table width.
+                    + '<td><div class="cellacts swfacts">'
                     + '<button class="rowbtn" data-swfact="ignore" data-pkg="' + esc(pkgId) + '" data-name="' + esc(s.name) + '" ' + (noId ? 'disabled ' : '') + 'data-help="swf.ignore"' + why + '>Ignore</button>'
                     + '<button class="rowbtn act" data-swfact="update" data-pkg="' + esc(pkgId) + '" data-name="' + esc(s.name) + '" ' + (noId ? 'disabled ' : '') + 'data-help="swf.update"' + why + '>Update everywhere</button>'
                     + '<button class="rowbtn warn" data-swfact="uninstall" data-pkg="' + esc(pkgId) + '" data-name="' + esc(s.name) + '" ' + (noId ? 'disabled ' : '') + 'data-help="swf.uninstall"' + why + '>Uninstall</button>'
